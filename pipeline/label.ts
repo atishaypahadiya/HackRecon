@@ -3,9 +3,9 @@
 // classifier or reads data/, and it doesn't send the `pool` column (a miss_check row may be a
 // classifier-flagged one), so nothing the classifier said can reach the page.
 import { randomBytes } from "node:crypto";
-import { readFileSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { LABEL_COLUMNS, labelProblems, readLabels, type LabelColumn, type LabelRow } from "./labels.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { HAND_LABELER, LABEL_COLUMNS, labelProblems, readLabels, type LabelColumn, type LabelRow } from "./labels.ts";
 import { writeSheet } from "./pool.ts";
 
 /** What the page gets for a row: context to read, plus the label columns it edits. */
@@ -20,6 +20,7 @@ export const PAGE_COLUMNS = [
   "permalink",
   "text",
   ...LABEL_COLUMNS,
+  "labeler",
 ] as const;
 
 export function pageRow(r: LabelRow): Record<string, string> {
@@ -58,10 +59,9 @@ export function saveRow(path: string, messageId: string, values: Record<string, 
     ...labelProblems(next),
   ];
   if (problems.length) return { ok: false, status: 422, problems };
-  Object.assign(row, next);
-  const tmp = join(dirname(path), `.labels.${process.pid}.tmp`);
-  writeSheet(tmp, rows);
-  renameSync(tmp, path);
+  // A hand save takes the row over from the Opus judge, even when nothing changed: a person checked it.
+  Object.assign(row, next, { labeler: HAND_LABELER });
+  writeSheet(path, rows);
   return { ok: true, done: rows.filter(isDone).length, total: rows.length };
 }
 

@@ -1,7 +1,8 @@
 // `hr gate`: the day-2 gate (design doc, "Day-2 gate"), scored on review/labels.csv against
 // data/items.json. Only labeled rows are ever scored or shown: nothing the classifier said about
-// an unlabeled row is reported, not even in aggregate, so labeling stays blind.
-import { labelProblems, type LabelRow } from "./labels.ts";
+// an unlabeled row is reported, not even in aggregate, so labeling stays blind. When the labels
+// come from the Opus judge (D21), every number is agreement with Opus, and the report says so.
+import { labelerOf, labelProblems, OPUS_LABELER, type LabelRow } from "./labels.ts";
 import type { Item } from "./schema.ts";
 import { eventDate } from "./time.ts";
 
@@ -64,6 +65,8 @@ export interface GateInput {
   currentPromptHash: string;
   /** Set once `hr pool --add-flagged` ran over the whole capture. */
   flaggedCheckRan: boolean;
+  /** The Opus judge's run record (review/prelabel_run.json) and the prompt hash the config gives now. */
+  judge?: { model: string; promptHash: string; currentPromptHash: string } | null;
 }
 
 export interface Miss {
@@ -76,6 +79,16 @@ export interface Miss {
 export interface GateReport {
   prompt_hash: string;
   stale: boolean;
+  /** What the classifier is scored against: Opus judge labels, hand labels, or both. */
+  reference: {
+    kind: "opus" | "hand" | "mixed" | "none";
+    /** Labeled rows by labeler. */
+    labelers: Record<string, number>;
+    judge_model: string | null;
+    judge_prompt_hash: string | null;
+    /** Opus labels in the sheet with no run record, or from a prompt the config no longer gives. */
+    judge_stale: boolean;
+  };
   rows: number;
   labeled: number;
   skipped: { unlabeled: number; incomplete: number; invalid: { message_id: string; problems: string[] }[] };
@@ -181,9 +194,20 @@ export function scoreGate(g: GateInput): GateReport {
   const found = (rows: LabelRow[], col: "is_credit" | "is_dated", by: "credit" | "dated") =>
     ratio(rows.filter((r) => yes(r[col])).map((r) => ({ r, ok: pred(r)[by] })));
 
+  const labelers: Record<string, number> = {};
+  for (const r of labeled) labelers[labelerOf(r)] = (labelers[labelerOf(r)] ?? 0) + 1;
+  const opusRows = labelers[OPUS_LABELER] ?? 0;
+  const otherRows = labeled.length - opusRows;
   const report: GateReport = {
     prompt_hash: g.promptHash,
     stale: g.promptHash !== g.currentPromptHash,
+    reference: {
+      kind: opusRows && otherRows ? "mixed" : opusRows ? "opus" : otherRows ? "hand" : "none",
+      labelers,
+      judge_model: g.judge?.model ?? null,
+      judge_prompt_hash: g.judge?.promptHash ?? null,
+      judge_stale: opusRows > 0 && (!g.judge || g.judge.promptHash !== g.judge.currentPromptHash),
+    },
     rows: g.rows.length,
     labeled: labeled.length,
     skipped: {
@@ -244,7 +268,7 @@ export function scoreGate(g: GateInput): GateReport {
     deadline_accuracy: meets(report.deadline.all, THRESHOLDS.field),
   };
   const allLabeled = report.skipped.unlabeled + report.skipped.incomplete + report.skipped.invalid.length === 0;
-  report.complete = allLabeled && report.not_classified === 0 && !report.stale && g.flaggedCheckRan;
+  report.complete = allLabeled && report.not_classified === 0 && !report.stale && !report.reference.judge_stale && g.flaggedCheckRan;
   return report;
 }
 
@@ -254,10 +278,31 @@ const show = (x: Ratio) => `${pct(x)} (${x.n}/${x.d}${split(x)})`;
 const count = (x: Ratio) => `${x.d}${x.broadcast[1] ? ` (top-level ${x.top[1]}, broadcast ${x.broadcast[1]})` : ""}`;
 const verdict = (ok: boolean, x: Ratio, min: number) => (x.d === 0 ? "no positives yet" : ok ? `ok (≥ ${min * 100}%)` : `FAIL (< ${min * 100}%)`);
 
+/** How the report names its reference: agreement with Opus is never called accuracy. */
+function referenceWording(rep: GateReport): { line: string; label: string; measure: string } {
+  const ref = rep.reference;
+  const judge = `${ref.judge_model ?? "claude-opus-5-5"} as an LLM judge, prompt ${ref.judge_prompt_hash ?? "unknown"}` +
+    (ref.judge_stale ? "; STALE: no run record or the rules/config now give a different prompt, rerun hr prelabel" : "");
+  const by = Object.entries(ref.labelers).map(([k, n]) => `${n} by ${k}`).join(", ");
+  if (ref.kind === "opus") {
+    return {
+      line: `reference labels: ${by} (${judge}). Every percentage below is agreement with Opus, not accuracy: the judge is a demo-time eval, not human ground truth.`,
+      label: "opus",
+      measure: "agreement with Opus",
+    };
+  }
+  if (ref.kind === "mixed") {
+    return { line: `reference labels: ${by} (${judge}). Every percentage below is agreement with these labels, not accuracy.`, label: "label", measure: "agreement with the labels" };
+  }
+  return { line: `reference labels: ${by || "none yet"}`, label: "label", measure: "accuracy" };
+}
+
 export function formatGate(rep: GateReport): string {
   const L: string[] = [];
   const t = THRESHOLDS;
+  const ref = referenceWording(rep);
   L.push(`day-2 gate, classifier prompt ${rep.prompt_hash}${rep.stale ? " (STALE: config now gives a different prompt; rerun hr classify)" : ""}`);
+  L.push(ref.line);
   L.push(
     `labeled ${rep.labeled}/${rep.rows} rows; skipped ${rep.skipped.unlabeled} unlabeled, ${rep.skipped.incomplete} incomplete ` +
       `(is_credit or is_dated empty), ${rep.skipped.invalid.length} with label problems`,
@@ -292,7 +337,7 @@ export function formatGate(rep: GateReport): string {
   const list = (title: string, xs: Miss[]) => {
     if (!xs.length) return;
     L.push("", `${title} (${xs.length}):`);
-    for (const m of xs) L.push(`  ${m.permalink}  label: ${m.label}  classifier: ${m.classifier}`);
+    for (const m of xs) L.push(`  ${m.permalink}  ${ref.label}: ${m.label}  classifier: ${m.classifier}`);
   };
   list("credit missed", rep.misses.credit_fn);
   list("credit false positives", rep.misses.credit_fp);
@@ -301,13 +346,15 @@ export function formatGate(rep: GateReport): string {
   list("amount_usd_per_person wrong", rep.misses.amount);
   list("deadline_iso wrong", rep.misses.deadline);
   L.push("");
-  const failed = Object.entries(rep.pass).filter(([, ok]) => !ok).map(([k]) => k);
+  const failed = Object.entries(rep.pass).filter(([, ok]) => !ok).map(([k]) => (ref.measure === "accuracy" ? k : k.replace(/_accuracy$/, "_agreement")));
   L.push(
     `${failed.length ? `FAIL: ${failed.join(", ")}` : "PASS"}` +
+      (ref.measure === "accuracy" ? "" : ` (${ref.measure}, same thresholds; not accuracy)`) +
       (rep.complete ? "" : " (provisional: " + [
         rep.skipped.unlabeled + rep.skipped.incomplete + rep.skipped.invalid.length ? "rows still unlabeled" : "",
         rep.not_classified ? "rows not classified" : "",
         rep.stale ? "items are stale" : "",
+        rep.reference.judge_stale ? "Opus labels are stale" : "",
         rep.flagged.ran ? "" : "miss check 1 not run",
       ].filter(Boolean).join(", ") + ")"),
   );

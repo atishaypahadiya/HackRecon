@@ -86,7 +86,7 @@ describe("hr label: saving and resuming", () => {
     const res = await call("/api/save", { message_id: before[1]!.message_id, labels: credit });
     expect(await res.json()).toEqual({ ok: true, done: 2, total: 3 });
     const after = readLabels(path);
-    expect(after[1]).toEqual({ ...before[1]!, ...credit, deadline_iso: "", deadline_status: "", window_end: "", notes: "" });
+    expect(after[1]).toEqual({ ...before[1]!, ...credit, deadline_iso: "", deadline_status: "", window_end: "", notes: "", labeler: "hand" });
     expect([after[0], after[2]]).toEqual([before[0], before[2]]);
     expect(((await (await call("/api/rows")).json()) as { resume: number }).resume).toBe(2);
   });

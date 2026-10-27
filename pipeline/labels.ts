@@ -1,5 +1,6 @@
 // review/labels.csv: the day-2 labeled set (D12, D13). Context columns are written by `hr pool`;
-// label columns are human-owned and never overwritten. Label columns reuse the credit sheet's
+// label columns are written by `hr prelabel` (the Opus judge, D21) or by hand in `hr label`, and
+// `hr pool` never overwrites them. `labeler` says which. Label columns reuse the credit sheet's
 // names (review/credits.csv, D13) so `hr sheet` can pre-fill from them. Rules: docs/labeling.md.
 import { existsSync, readFileSync } from "node:fs";
 import { readTable } from "./csv.ts";
@@ -36,11 +37,17 @@ export const LABEL_COLUMNS = [
   "notes",
 ] as const;
 
-export const COLUMNS = [...CONTEXT_COLUMNS, ...LABEL_COLUMNS] as const;
+/** Who wrote a row's label columns: OPUS_LABELER (hr prelabel) or HAND_LABELER (hr label, or a
+ *  spreadsheet edit). Empty on unlabeled rows. */
+export const LABELER_COLUMN = "labeler";
+export const OPUS_LABELER = "opus-5-5";
+export const HAND_LABELER = "hand";
+
+export const COLUMNS = [...CONTEXT_COLUMNS, ...LABEL_COLUMNS, LABELER_COLUMN] as const;
 
 export type ContextColumn = (typeof CONTEXT_COLUMNS)[number];
 export type LabelColumn = (typeof LABEL_COLUMNS)[number];
-export type LabelRow = Record<ContextColumn | LabelColumn, string>;
+export type LabelRow = Record<ContextColumn | LabelColumn | typeof LABELER_COLUMN, string>;
 
 /** keyword: matched the keyword regex in the baseline. miss_check: either D12 miss check (30 random
  *  non-hits, or classifier-flagged non-hits); which one is recorded only in review/pool.json. */
@@ -48,7 +55,13 @@ export const POOLS = ["keyword", "miss_check"] as const;
 
 export function readLabels(path = LABELS_PATH): LabelRow[] {
   if (!existsSync(path)) return [];
-  return readTable(readFileSync(path, "utf8"), COLUMNS) as LabelRow[];
+  // Sheets written before the labeler column existed read as labeler "".
+  return readTable(readFileSync(path, "utf8"), [...CONTEXT_COLUMNS, ...LABEL_COLUMNS]).map((r) => ({ ...r, labeler: r.labeler ?? "" })) as LabelRow[];
+}
+
+/** The labeler of a row with labels: its labeler cell, or hand when a label predates the column. */
+export function labelerOf(r: LabelRow): string {
+  return r.labeler.trim() || (hasLabel(r) ? HAND_LABELER : "");
 }
 
 export function hasLabel(r: LabelRow): boolean {

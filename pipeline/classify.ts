@@ -101,7 +101,7 @@ export interface RawItem {
   urls: string[];
 }
 
-function scheduleLines(e: EventConfig): string {
+export function scheduleLines(e: EventConfig): string {
   const lines = [
     `- Hacking start: ${e.hacking_start ?? "not known"}`,
     `- Hacking end: ${e.hacking_end ?? "not known (if a post says \"end of hacking\" and nothing below pins it, the deadline is unresolved)"}`,
