@@ -14,20 +14,37 @@ import {
   promptHash,
   readEvent,
   readJsonFile,
+  RUN_PATH,
   systemPrompt,
   toItems,
   writeJsonFile,
   type Cache,
   type ClassifyError,
   type ClassifyInput,
+  type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
 import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
 import { labelProblems, LABELS_PATH, POOL_META_PATH, readLabels } from "./labels.ts";
-import { buildRows, candidatesFromExport, DEFAULT_SEED, KEYWORD_RE, lockedChannels, RANDOM_N, readSponsors, selectPool, writeSheet } from "./pool.ts";
+import { formatGate, scoreGate } from "./gate.ts";
+import {
+  buildRows,
+  candidatesFromExport,
+  DEFAULT_SEED,
+  KEYWORD_RE,
+  lockedChannels,
+  RANDOM_N,
+  readPoolMeta,
+  readSponsors,
+  selectPool,
+  withFlagged,
+  writeSheet,
+  type PoolMeta,
+} from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import { buildOrganizers, loadOrganizerIds, ORGANIZERS_PATH, posterRole } from "./roles.ts";
 import { buildRun, MESSAGES_PATH, readMessages, readRuns, RUNS_PATH, saveRun } from "./runs.ts";
+import type { Item } from "./schema.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
 const EXPORT_CUTOFF = "2026-10-27T03:17:00-07:00";
@@ -40,11 +57,17 @@ const USAGE = `usage:
   bun run hr record-run --id RUN_ID [capture.json | dir ...]
       Records a capture session in ${RUNS_PATH} and its messages in ${MESSAGES_PATH}
       (non-posts dropped, broadcasts marked). Re-recording the same id replaces it.
-  bun run hr pool [--seed N] [--export DIR] [--check]
+  bun run hr pool [--seed N] [--export DIR] [--check] [--add-flagged]
       Writes the day-2 labeling sheet ${LABELS_PATH}: every keyword hit in the locked channels'
-      baseline (top-level, plus replies also sent to the channel) and ${RANDOM_N} random top-level
-      non-hits. Re-running keeps every label column. --check only validates the labels entered so far.
-      Labeling rules: docs/labeling.md
+      baseline (top-level, plus replies also sent to the channel) and the miss checks, shown as
+      pool = miss_check: ${RANDOM_N} random top-level non-hits, plus (--add-flagged, after a full
+      hr classify) every non-hit the classifier flags as credit or dated. Which is which is kept in
+      ${POOL_META_PATH} so the sheet doesn't reveal classifier answers. Re-running keeps every label
+      column. --check only validates the labels entered so far. Labeling rules: docs/labeling.md
+  bun run hr gate [--json OUT]
+      Scores ${ITEMS_PATH} against the labeled rows of ${LABELS_PATH}: capture recall, credit and dated
+      precision/recall, amount and deadline accuracy, both miss checks, with counts and the prompt hash.
+      Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
   bun run hr organizers [--export DIR]
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
@@ -60,6 +83,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "pool") return pool(rest);
   if (cmd === "organizers") return organizers(rest);
   if (cmd === "classify") return classify(rest);
+  if (cmd === "gate") return gate(rest);
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -147,6 +171,7 @@ function pool(args: string[]): number {
       export: { type: "string", default: DEFAULT_EXPORT_DIR },
       sponsors: { type: "string", default: "config/sponsors.json" },
       check: { type: "boolean", default: false },
+      "add-flagged": { type: "boolean", default: false },
     },
   });
   const existing = readLabels();
@@ -156,9 +181,40 @@ function pool(args: string[]): number {
   const channels = lockedChannels(sponsors);
   const cands = candidatesFromExport(loadExport(values.export), channels);
   const seed = Number(values.seed);
-  const sel = selectPool(cands, seed, RANDOM_N, new Set(existing.filter((r) => r.pool === "random").map((r) => r.message_id)));
+  const prev = readPoolMeta(POOL_META_PATH);
+  // Sheets written before the miss checks were blinded marked random rows in the sheet itself.
+  const keepRandom = new Set(prev?.random_ids ?? existing.filter((r) => r.pool === "random").map((r) => r.message_id));
+  let sel = selectPool(cands, seed, RANDOM_N, keepRandom);
   const messages = readMessages();
   const captured = new Map(messages.map((m) => [m.id, m]));
+  const flaggedIds = new Set(prev?.flagged_ids ?? []);
+  let flaggedCheck = prev?.flagged_check;
+
+  if (values["add-flagged"]) {
+    // Miss check 1 (D12): needs a classifier answer for every captured candidate, not just the sheet.
+    const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
+    const inCapture = cands.filter((c) => captured.has(c.id));
+    const classified = new Set(run?.classified ?? []);
+    const missing = inCapture.filter((c) => !classified.has(c.id)).length;
+    if (!run || missing) {
+      console.error(
+        `${missing || inCapture.length} of ${inCapture.length} captured messages in the locked channels have no classifier answer in ${ITEMS_PATH}. ` +
+          "Run `bun run hr classify` (without --labeled-only) first.",
+      );
+      return 2;
+    }
+    const flags = new Set(
+      readJsonFile<Item[]>(ITEMS_PATH, [])
+        .filter((it) => it.kind === "credit" || it.deadline_status !== "none")
+        .map((it) => it.message_id),
+    );
+    const taken = new Set([...sel.keyword, ...sel.random].map((c) => c.id));
+    const before = flaggedIds.size;
+    for (const c of inCapture) if (flags.has(c.id) && !taken.has(c.id)) flaggedIds.add(c.id);
+    flaggedCheck = { at: new Date().toISOString(), prompt_hash: run.prompt_hash, classified: classified.size, candidates: inCapture.length };
+    console.log(`miss check 1: ${flaggedIds.size - before} rows added to the sheet as pool = miss_check (${flaggedIds.size} in total)`);
+  }
+  sel = withFlagged(sel, cands, flaggedIds);
   const workspace = new URL(messages[0]!.permalink).origin;
   const { rows, orphans } = buildRows(sel, { sponsors, captured, workspace, existing });
   writeSheet(LABELS_PATH, [...rows, ...orphans]);
@@ -167,12 +223,13 @@ function pool(args: string[]): number {
   const counts = {
     keyword_top_level: count((r) => r.pool === "keyword" && r.subtype === ""),
     keyword_broadcast: count((r) => r.pool === "keyword" && r.subtype === "thread_broadcast"),
-    random: count((r) => r.pool === "random"),
+    random: sel.random.length,
+    flagged: sel.flagged.length,
     in_capture: count((r) => r.in_capture === "y"),
     not_in_capture: count((r) => r.in_capture === "n"),
     kept_outside_pool: orphans.length,
   };
-  const meta = {
+  const meta: PoolMeta = {
     built_at: new Date().toISOString(),
     runs: readRuns().map((r) => r.run_id),
     channels,
@@ -180,18 +237,52 @@ function pool(args: string[]): number {
     keyword_flags: KEYWORD_RE.flags,
     seed,
     random_n: RANDOM_N,
+    random_ids: sel.random.map((c) => c.id),
+    flagged_ids: [...flaggedIds],
+    ...(flaggedCheck ? { flagged_check: flaggedCheck } : {}),
     counts,
   };
-  writeFileSync(POOL_META_PATH, JSON.stringify(meta, null, 2) + "\n");
+  writeJsonFile(POOL_META_PATH, meta);
   console.log(
     `wrote ${LABELS_PATH}: ${rows.length + orphans.length} rows from ${channels.length} channels: ` +
       `${counts.keyword_top_level} top-level keyword hits, ${counts.keyword_broadcast} broadcast keyword hits ` +
-      `(subtype thread_broadcast), ${counts.random} random (seed ${seed}); ${counts.in_capture} in the capture, ${counts.not_in_capture} not`,
+      `(subtype thread_broadcast), ${counts.random + counts.flagged} miss_check (${counts.random} random, seed ${seed}; ` +
+      `${counts.flagged} classifier-flagged${flaggedCheck ? "" : ", check not run yet"}); ${counts.in_capture} in the capture, ${counts.not_in_capture} not`,
   );
-  for (const r of orphans) console.log(`kept (labeled or flagged, no longer in the pool): ${r.message_id} ${r.pool}`);
-  console.log(`wrote ${POOL_META_PATH}`);
+  for (const r of orphans) console.log(`kept (labeled, no longer in the pool): ${r.message_id}`);
+  console.log(`wrote ${POOL_META_PATH} (which miss check each miss_check row belongs to)`);
   printLabelProblems([...rows, ...orphans]);
   return 0;
+}
+
+function gate(args: string[]): number {
+  const { values } = parseArgs({ args, options: { json: { type: "string" } } });
+  const rows = readLabels();
+  if (!rows.length) {
+    console.error(`${LABELS_PATH} not found or empty: run \`bun run hr pool\` first`);
+    return 2;
+  }
+  const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
+  if (!run) {
+    console.error(`${RUN_PATH} not found: run \`bun run hr classify --labeled-only\` first`);
+    return 2;
+  }
+  const meta = readPoolMeta(POOL_META_PATH);
+  const randomIds = new Set(meta?.random_ids ?? rows.filter((r) => r.pool === "random").map((r) => r.message_id));
+  const report = scoreGate({
+    rows,
+    items: readJsonFile<Item[]>(ITEMS_PATH, []),
+    classified: new Set(run.classified),
+    errors: new Set(run.errors),
+    randomIds,
+    flaggedIds: new Set(meta?.flagged_ids ?? []),
+    promptHash: run.prompt_hash,
+    currentPromptHash: promptHash(systemPrompt(readEvent())),
+    flaggedCheckRan: !!meta?.flagged_check,
+  });
+  console.log(formatGate(report));
+  if (values.json) writeJsonFile(values.json, report), console.log(`\nwrote ${values.json}`);
+  return Object.values(report.pass).every(Boolean) && report.complete ? 0 : 1;
 }
 
 function organizers(args: string[]): number {
@@ -239,9 +330,12 @@ async function classify(args: string[]): Promise<number> {
   const organizerIds = loadOrganizerIds();
   const system = systemPrompt(readEvent());
   const hash = promptHash(system);
-  const inputs = selected.map((m) =>
+  // Inputs for every captured message: items.json covers all of them classified under this prompt.
+  const allInputs = messages.map((m) =>
     buildInput(m, { role: posterRole(m, sponsors[m.channel_name], organizerIds, Object.values(sponsors)), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash: hash }),
   );
+  const inputById = new Map(allInputs.map((i) => [i.message.id, i]));
+  const inputs = selected.map((m) => inputById.get(m.id)!);
   const cache = readJsonFile<Cache>(CACHE_PATH, {});
   const todo = inputs.filter((i) => !cache[i.key]);
   const roles: Record<string, number> = {};
@@ -284,12 +378,20 @@ async function classify(args: string[]): Promise<number> {
   writeJsonFile(CACHE_PATH, cache);
   writeJsonFile(ERRORS_PATH, errors);
 
-  const items = inputs.flatMap((i) => (cache[i.key] ? toItems(cache[i.key]!, sponsors) : []));
-  writeJsonFile(ITEMS_PATH, items);
-  const flagged = (k: (it: (typeof items)[number]) => boolean) => new Set(items.filter(k).map((it) => it.message_id)).size;
+  // Every captured message cached under the current prompt and input, not only this run's selection.
+  // Counts only: what the classifier said is shown by `hr gate`, and only for labeled rows.
+  const classified = allInputs.filter((i) => cache[i.key]);
+  writeJsonFile(ITEMS_PATH, classified.flatMap((i) => toItems(cache[i.key]!, sponsors)));
+  const run: ClassifyRun = {
+    prompt_hash: hash,
+    model: MODEL,
+    written_at: new Date().toISOString(),
+    classified: classified.map((i) => i.message.id),
+    errors: errors.map((e) => e.message_id),
+  };
+  writeJsonFile(RUN_PATH, run);
   console.log(
-    `wrote ${ITEMS_PATH}: ${items.length} items from ${inputs.length - errors.length} messages; ` +
-      `credit in ${flagged((it) => it.kind === "credit")} messages, dated in ${flagged((it) => it.deadline_status !== "none")}; ` +
+    `wrote ${ITEMS_PATH} and ${RUN_PATH}: ${classified.length} of ${messages.length} captured messages classified under prompt ${hash}; ` +
       `${errors.length} errors` + (errors.length ? ` (see ${ERRORS_PATH})` : ""),
   );
   for (const e of errors) console.log(`  error ${e.message_id}: ${e.reason}`);

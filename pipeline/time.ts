@@ -18,7 +18,11 @@ const parts = new Intl.DateTimeFormat("en-US", {
 });
 
 function local(ts: Ts) {
-  const p = Object.fromEntries(parts.formatToParts(new Date(Number(ts.split(".")[0]) * 1000)).map((x) => [x.type, x.value]));
+  return localMs(Number(ts.split(".")[0]) * 1000);
+}
+
+function localMs(ms: number) {
+  const p = Object.fromEntries(parts.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
   const off = p.timeZoneName === "GMT" ? "+00:00" : p.timeZoneName!.slice(3);
   return { iso: `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${off}`, weekday: p.weekday! };
 }
@@ -32,6 +36,11 @@ export function tsToEventIso(ts: Ts): string {
 export function tsToEventIsoWithDay(ts: Ts): string {
   const l = local(ts);
   return `${l.iso} (${l.weekday})`;
+}
+
+/** Any ISO instant with an offset → the event-local date, e.g. "2026-10-25T16:30:00Z" → "2026-10-25". */
+export function eventDate(iso: string): string {
+  return localMs(Date.parse(iso)).iso.slice(0, 10);
 }
 
 /** ISO 8601 with an explicit offset (Z or ±HH:MM), as items and labels require. */

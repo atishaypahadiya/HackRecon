@@ -22,6 +22,18 @@ export const EVENT_PATH = "config/event.json";
 export const CACHE_PATH = "data/classify_cache.json";
 export const ERRORS_PATH = "data/classify_errors.json";
 export const ITEMS_PATH = "data/items.json";
+/** Which messages data/items.json covers, and under which prompt (scored by `hr gate`). */
+export const RUN_PATH = "data/classify_run.json";
+
+export interface ClassifyRun {
+  prompt_hash: string;
+  model: string;
+  written_at: string;
+  /** Message ids with a cache entry for the current prompt and input (zero items is an answer too). */
+  classified: string[];
+  /** Message ids that failed this run (D10): scored as predicted negative. */
+  errors: string[];
+}
 
 export interface EventConfig {
   event: string;

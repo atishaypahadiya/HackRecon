@@ -42,9 +42,9 @@ export type ContextColumn = (typeof CONTEXT_COLUMNS)[number];
 export type LabelColumn = (typeof LABEL_COLUMNS)[number];
 export type LabelRow = Record<ContextColumn | LabelColumn, string>;
 
-/** keyword: matched the keyword regex in the baseline. random: the 30-message miss check (D12).
- *  flagged: classifier-flagged outside the hits (D12 miss check 1, added after classify). */
-export const POOLS = ["keyword", "random", "flagged"] as const;
+/** keyword: matched the keyword regex in the baseline. miss_check: either D12 miss check (30 random
+ *  non-hits, or classifier-flagged non-hits); which one is recorded only in review/pool.json. */
+export const POOLS = ["keyword", "miss_check"] as const;
 
 export function readLabels(path = LABELS_PATH): LabelRow[] {
   if (!existsSync(path)) return [];
@@ -77,6 +77,7 @@ export function labelProblems(r: LabelRow): string[] {
   }
   if (["explicit", "resolved_relative"].includes(v("deadline_status")) && !v("deadline_iso")) p.push(`deadline_status ${v("deadline_status")} needs deadline_iso`);
   if (v("is_credit") === "n" && (v("amount_usd_per_person") || Number(v("credits_in_post")) > 0)) p.push("is_credit = n but credit fields are filled");
+  if (v("is_credit") === "y" && !(Number(v("credits_in_post")) >= 1)) p.push("is_credit = y needs credits_in_post 1 or more");
   const dated = !!v("deadline_iso") || !!v("window_end") || v("deadline_status") === "unresolved";
   if (v("is_dated") === "n" && dated) p.push("is_dated = n but a deadline or window_end is filled");
   if (v("is_dated") === "y" && v("deadline_status") === "none") p.push("is_dated = y but deadline_status = none");
