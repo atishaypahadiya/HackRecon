@@ -161,9 +161,8 @@ describe("labelProblems", () => {
       ),
     ).toEqual([]);
     expect(labelProblems(row({ is_credit: "y", credits_in_post: "1", is_dated: "y", deadline_status: "unresolved" }))).toEqual([]);
-    expect(labelProblems(row({ is_credit: "y", credits_in_post: "1", is_dated: "y", window_end: "2026-10-24T19:00-07:00", deadline_status: "none" }))).toEqual([
-      "is_dated = y but deadline_status = none",
-    ]);
+    expect(labelProblems(row({ is_credit: "y", credits_in_post: "1", is_dated: "y", window_end: "2026-10-24T19:00-07:00", deadline_status: "none" }))).toEqual([]);
+    expect(labelProblems(row({ is_credit: "n", is_dated: "y", deadline_status: "none" }))).toEqual(["is_dated = y but deadline_status = none and no window_end"]);
   });
 
   test("catches the mistakes the gate can't score", () => {

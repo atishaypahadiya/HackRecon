@@ -80,6 +80,6 @@ export function labelProblems(r: LabelRow): string[] {
   if (v("is_credit") === "y" && !(Number(v("credits_in_post")) >= 1)) p.push("is_credit = y needs credits_in_post 1 or more");
   const dated = !!v("deadline_iso") || !!v("window_end") || v("deadline_status") === "unresolved";
   if (v("is_dated") === "n" && dated) p.push("is_dated = n but a deadline or window_end is filled");
-  if (v("is_dated") === "y" && v("deadline_status") === "none") p.push("is_dated = y but deadline_status = none");
+  if (v("is_dated") === "y" && v("deadline_status") === "none" && !v("window_end")) p.push("is_dated = y but deadline_status = none and no window_end");
   return p;
 }

@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="hr-token" content="__HR_TOKEN__">
+<title>HackRecon labels</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+    --accent: #2f5bd3; --credit: #1f7a4d; --dated: #9a5b00; --excl: #a3312b; --chip: #efefea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --ink: #ecece6; --muted: #9c9c94; --line: #33332f;
+      --accent: #8aa8ff; --credit: #5cc591; --dated: #e0a64a; --excl: #f07a72; --chip: #2a2a27;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 120px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .progress { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+  .count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .meta strong { color: var(--ink); font-weight: 600; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+  .chip.warn { color: var(--excl); }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; line-height: 1.55; max-height: 52vh; overflow: auto; }
+  a { color: var(--accent); }
+  .status { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .status.saved { color: var(--credit); }
+  .toggles { display: flex; gap: 8px; margin: 16px 0 10px; flex-wrap: wrap; }
+  .toggle { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  .toggle kbd { margin-right: 6px; }
+  .toggle.on.credit { border-color: var(--credit); color: var(--credit); font-weight: 600; }
+  .toggle.on.dated { border-color: var(--dated); color: var(--dated); font-weight: 600; }
+  .toggle.on.excl { border-color: var(--excl); color: var(--excl); font-weight: 600; }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 14px; margin: 10px 0 0; background: var(--panel); }
+  fieldset[hidden] { display: none; }
+  legend { padding: 0 6px; font-size: 13px; font-weight: 600; }
+  fieldset.credit legend { color: var(--credit); }
+  fieldset.dated legend { color: var(--dated); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; }
+  label.f { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  input, select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.check { flex-direction: row; align-items: center; gap: 6px; margin-top: 22px; }
+  .notes { margin-top: 10px; }
+  .problems { color: var(--excl); margin: 10px 0 0; padding-left: 18px; }
+  kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--chip); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+  footer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 8px 16px; font-size: 12px; color: var(--muted); }
+  footer div { max-width: 860px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .end { text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Labels</h1>
+    <div class="progress"><div id="bar"></div></div>
+    <span class="count" id="count"></span>
+  </header>
+
+  <section class="card" id="card">
+    <div class="meta" id="meta"></div>
+    <div class="text" id="text"></div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <section class="end card" id="end" hidden>
+    <p><strong>Every row is labeled.</strong></p>
+    <p>Run <kbd>bun run hr gate</kbd> to score the classifier. Use <kbd>←</kbd> to revisit rows.</p>
+  </section>
+
+  <div id="form">
+    <div class="toggles">
+      <button class="toggle credit" id="t-credit" type="button"><kbd>c</kbd>credit</button>
+      <button class="toggle dated" id="t-dated" type="button"><kbd>d</kbd>dated</button>
+      <button class="toggle" id="t-neither" type="button"><kbd>n</kbd>neither</button>
+      <button class="toggle excl" id="t-excl" type="button"><kbd>x</kbd>exclude (not an offer)</button>
+    </div>
+
+    <fieldset class="credit" id="f-credit" hidden>
+      <legend>Credit</legend>
+      <div class="grid">
+        <label class="f">credits in post<input id="credits_in_post" inputmode="numeric" autocomplete="off"></label>
+        <label class="f">amount text (as written)<input id="amount_text" autocomplete="off" placeholder="$50 in credits"></label>
+        <label class="f">USD per person (stated only)<input id="amount_usd_per_person" inputmode="decimal" autocomplete="off" placeholder="empty = unpriced"></label>
+        <label class="f">basis
+          <select id="amount_basis">
+            <option value=""></option><option>per_person</option><option>per_team</option><option>pool</option><option>up_to</option><option>unknown</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="dated" id="f-dated" hidden>
+      <legend>Dated (event time, America/Los_Angeles)</legend>
+      <div class="grid">
+        <label class="f">deadline<input id="deadline" type="datetime-local"></label>
+        <label class="f">status
+          <select id="deadline_status">
+            <option>explicit</option><option>resolved_relative</option><option>unresolved</option><option value="none">none (claim window only)</option>
+          </select>
+        </label>
+        <label class="f">claim window ends<input id="window_end" type="datetime-local"></label>
+        <label class="f check"><input id="date_only" type="checkbox">date only (no time stated)</label>
+      </div>
+    </fieldset>
+
+    <label class="f notes">notes<input id="notes" autocomplete="off" placeholder="prize, other deadlines, multi-credit details"></label>
+    <ul class="problems" id="problems"></ul>
+  </div>
+</main>
+<footer><div>
+  <span><kbd>c</kbd> credit</span><span><kbd>d</kbd> dated</span><span><kbd>n</kbd> neither, save</span><span><kbd>x</kbd> exclude, save</span>
+  <span><kbd>Enter</kbd> save &amp; next</span><span><kbd>Esc</kbd> leave a field</span><span><kbd>←</kbd>/<kbd>→</kbd> prev/next</span><span><kbd>u</kbd> next unlabeled</span>
+</div></footer>
+
+<script>
+"use strict";
+const TOKEN = document.querySelector('meta[name="hr-token"]').content;
+const TZ = "America/Los_Angeles";
+const $ = (id) => document.getElementById(id);
+const FIELDS = ["credits_in_post", "amount_text", "amount_usd_per_person", "amount_basis", "deadline_status", "notes"];
+
+let rows = [];
+let at = 0;
+let done = 0;
+const st = { credit: false, dated: false, exclude: false };
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "x-hr-token": TOKEN, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { ok: res.ok, body: await res.json() };
+}
+
+// Event-local wall time <-> ISO with the event offset (-07:00 during the event week).
+function offsetMinutes(ms) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "longOffset" })
+    .formatToParts(new Date(ms)).find((p) => p.type === "timeZoneName").value;
+  const m = /GMT([+-])(\d{2}):(\d{2})/.exec(name);
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+}
+function toIso(local) {
+  if (!local) return "";
+  const [d, t] = local.split("T");
+  const [Y, M, D] = d.split("-").map(Number);
+  const [h, mi] = t.split(":").map(Number);
+  const wall = Date.UTC(Y, M - 1, D, h, mi);
+  let off = offsetMinutes(wall);
+  off = offsetMinutes(wall - off * 60000);
+  const sign = off < 0 ? "-" : "+";
+  const a = Math.abs(off);
+  return `${d}T${t.slice(0, 5)}${sign}${String(Math.floor(a / 60)).padStart(2, "0")}:${String(a % 60).padStart(2, "0")}`;
+}
+function toLocal(iso) {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+function prettyTime(iso) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  }).format(new Date(Date.parse(iso))) + " PT";
+}
+
+function isDone(r) {
+  return /^[yn]$/.test(r.is_credit) && /^[yn]$/.test(r.is_dated);
+}
+
+function linkify(el, text) {
+  el.textContent = "";
+  const re = /https?:\/\/[^\s<>|]+/g;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    el.append(text.slice(last, m.index));
+    const a = document.createElement("a");
+    a.href = m[0];
+    a.textContent = m[0];
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    el.append(a);
+    last = m.index + m[0].length;
+  }
+  el.append(text.slice(last));
+}
+
+function chip(text, cls) {
+  const s = document.createElement("span");
+  s.className = "chip" + (cls ? " " + cls : "");
+  s.textContent = text;
+  return s;
+}
+
+function renderToggles() {
+  $("t-credit").classList.toggle("on", st.credit);
+  $("t-dated").classList.toggle("on", st.dated);
+  $("t-excl").classList.toggle("on", st.exclude);
+  $("f-credit").hidden = !st.credit;
+  $("f-dated").hidden = !st.dated;
+}
+
+function show(i) {
+  at = Math.max(0, Math.min(i, rows.length));
+  $("problems").textContent = "";
+  $("bar").style.width = `${rows.length ? (100 * done) / rows.length : 0}%`;
+  $("count").textContent = `${done}/${rows.length} labeled`;
+  const end = at >= rows.length;
+  $("end").hidden = !end;
+  $("card").hidden = end;
+  $("form").hidden = end;
+  if (end) return;
+
+  const r = rows[at];
+  const meta = $("meta");
+  meta.textContent = "";
+  const who = document.createElement("strong");
+  who.textContent = r.author || "(no author)";
+  const link = document.createElement("a");
+  link.href = r.permalink;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "open in Slack";
+  meta.append(`row ${at + 1} of ${rows.length}`, chip(`#${r.channel}`), chip(r.sponsor), who, prettyTime(r.posted_at), link);
+  if (r.subtype === "thread_broadcast") meta.append(chip("thread reply also sent to the channel"));
+  if (r.in_capture !== "y") meta.append(chip("not in the capture: baseline text", "warn"));
+  linkify($("text"), r.text);
+  $("text").scrollTop = 0;
+
+  st.credit = r.is_credit === "y";
+  st.dated = r.is_dated === "y";
+  st.exclude = r.exclude === "y";
+  for (const f of FIELDS) $(f).value = r[f] || "";
+  if (!r.deadline_status) $("deadline_status").value = "explicit";
+  $("deadline").value = toLocal(r.deadline_iso);
+  $("window_end").value = toLocal(r.window_end);
+  $("date_only").checked = /\bdate-only\b/.test(r.notes);
+  $("notes").value = r.notes.replace(/\s*\bdate-only\b\s*;?\s*/g, " ").trim();
+  renderToggles();
+
+  const status = $("status");
+  status.className = "status" + (isDone(r) ? " saved" : "");
+  status.textContent = isDone(r)
+    ? `saved: ${[r.is_credit === "y" && "credit", r.is_dated === "y" && "dated", r.exclude === "y" && "excluded"].filter(Boolean).join(", ") || "neither"}`
+    : "not labeled yet";
+}
+
+function collect() {
+  const notes = [$("date_only").checked && st.dated ? "date-only" : "", $("notes").value.trim()].filter(Boolean).join("; ");
+  let basis = st.credit ? $("amount_basis").value : "";
+  const usd = st.credit ? $("amount_usd_per_person").value.trim().replace(/^\$/, "") : "";
+  if (usd && !basis) basis = "per_person";
+  return {
+    is_credit: st.credit ? "y" : "n",
+    is_dated: st.dated ? "y" : "n",
+    exclude: st.exclude ? "y" : "n",
+    credits_in_post: st.credit ? $("credits_in_post").value.trim() : "",
+    amount_text: st.credit ? $("amount_text").value.trim() : "",
+    amount_usd_per_person: usd,
+    amount_basis: basis,
+    deadline_iso: st.dated ? toIso($("deadline").value) : "",
+    deadline_status: st.dated ? $("deadline_status").value : "",
+    window_end: st.dated ? toIso($("window_end").value) : "",
+    notes,
+  };
+}
+
+let saving = false;
+async function save() {
+  if (saving || at >= rows.length) return;
+  saving = true;
+  const labels = collect();
+  const r = rows[at];
+  try {
+    const res = await api("/api/save", { message_id: r.message_id, labels });
+    if (!res.ok) {
+      const ul = $("problems");
+      ul.textContent = "";
+      for (const p of res.body.problems || ["save failed"]) {
+        const li = document.createElement("li");
+        li.textContent = p;
+        ul.append(li);
+      }
+      return;
+    }
+    Object.assign(r, labels);
+    done = res.body.done;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    show(at + 1);
+  } catch (e) {
+    $("problems").textContent = `save failed (is hr label still running?): ${e.message}`;
+  } finally {
+    saving = false;
+  }
+}
+
+function toggleCredit() {
+  st.credit = !st.credit;
+  if (st.credit) {
+    st.exclude = false;
+    if (!$("credits_in_post").value) $("credits_in_post").value = "1";
+  }
+  renderToggles();
+  if (st.credit) $("amount_text").focus();
+}
+function toggleDated() {
+  st.dated = !st.dated;
+  renderToggles();
+  if (st.dated) $("deadline").focus();
+}
+function neither() {
+  st.credit = st.dated = st.exclude = false;
+  renderToggles();
+  save();
+}
+function exclude() {
+  // Not an offer: never a credit. A deadline it states (rare) is kept if you marked it.
+  st.exclude = true;
+  st.credit = false;
+  renderToggles();
+  save();
+}
+function nextUnlabeled() {
+  const i = rows.findIndex((r, k) => k > at && !isDone(r));
+  const j = i >= 0 ? i : rows.findIndex((r) => !isDone(r));
+  show(j >= 0 ? j : rows.length);
+}
+
+$("t-credit").onclick = toggleCredit;
+$("t-dated").onclick = toggleDated;
+$("t-neither").onclick = neither;
+$("t-excl").onclick = exclude;
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const inField = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement && document.activeElement.tagName);
+  if (e.key === "Enter") {
+    e.preventDefault();
+    save();
+    return;
+  }
+  if (inField) {
+    if (e.key === "Escape") document.activeElement.blur();
+    return;
+  }
+  const k = e.key.toLowerCase();
+  const act = {
+    c: toggleCredit, d: toggleDated, n: neither, x: exclude, u: nextUnlabeled,
+    arrowleft: () => show(at - 1), k: () => show(at - 1),
+    arrowright: () => show(at + 1), j: () => show(at + 1),
+  }[k];
+  if (act) {
+    e.preventDefault();
+    act();
+  }
+});
+
+(async () => {
+  const res = await api("/api/rows");
+  if (!res.ok) {
+    $("text").textContent = (res.body.problems || ["could not load rows"]).join("; ");
+    return;
+  }
+  rows = res.body.rows;
+  done = res.body.done;
+  show(res.body.resume);
+})();
+</script>
+</body>
+</html>

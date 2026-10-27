@@ -6,6 +6,21 @@ The sheet is the day-2 gate's ground truth (D12). Labels never feed the classifi
 - Check what you've entered with `bun run hr pool --check`.
 - `review/` is gitignored because it holds workspace message text.
 
+## Labeling page (`hr label`)
+
+Run `bun run hr label` (add `--open` to open the browser, `--port N` to change from 4317). It serves http://127.0.0.1:4317/ on this machine only.
+
+- One row at a time: text with links, channel, sponsor, author, time (PT) and an "open in Slack" link. Thread broadcasts and rows missing from the capture are marked.
+- Keys:
+  - `c` toggles credit and shows the amount fields; `credits_in_post` starts at 1.
+  - `d` toggles dated and shows deadline, status, claim window end, and a date-only box. The box writes `date-only` to `notes`.
+  - `n` saves the row as neither. `x` saves it as excluded (never a credit).
+  - `Enter` saves and moves on. `Esc` leaves a field. `←`/`→` (or `k`/`j`) go back and forward. `u` jumps to the next unlabeled row.
+- Each row is checked with the same rules as `hr pool --check` and written to `review/labels.csv` as soon as you save it. A row that breaks a rule is refused, with the reasons shown. Times you pick are stored with the event offset.
+- It reopens at the first row that isn't labeled yet.
+- The page never sees classifier output or the `pool` column. The server reads nothing but the sheet.
+- Each save re-reads the sheet, so other rows' edits survive. But a spreadsheet app that has the file open will overwrite the page's saves the next time you save there. Close the file in that app first.
+
 ## Opening the sheet
 
 The file is UTF-8 CSV. In Google Sheets, use File → Import and untick **Convert text to numbers, dates, and formulas**. Otherwise posts that start with `@channel` or `-` and the ISO times get mangled. In Numbers, just open it. Export back to CSV under the same path.
@@ -39,7 +54,7 @@ Use exactly these values. Leave a cell empty when it doesn't apply.
 | `amount_usd_per_person` | number | Only when the post states a USD amount per person, e.g. "$50 credits for every hacker" → `50`. Never compute one: $100 per team is not $25 a person. Leave it empty for up-to, per-team, pool, tokens and hours. No `$` sign. |
 | `amount_basis` | `per_person` / `per_team` / `pool` / `up_to` / `unknown` | How the stated amount is given out. `unknown` if an amount is stated with no basis. |
 | `deadline_iso` | `2026-10-25T09:00-07:00` | The deadline the post asks hackers to act by, in event time (`-07:00` that week). If there are several, use the credit's deadline, else the earliest, and list the others in `notes`. If a date is stated with no time, use `T23:59` and write `date-only` in `notes`. |
-| `deadline_status` | `explicit` / `resolved_relative` / `unresolved` / `none` | `explicit`: a calendar date is stated ("Oct 25, 9am"). `resolved_relative`: you worked it out from the post time or the schedule ("tonight", "Sunday 9am", "end of hacking"). `unresolved`: a deadline is mentioned but can't be pinned ("soon", "while supplies last"). `none`: no deadline. |
+| `deadline_status` | `explicit` / `resolved_relative` / `unresolved` / `none` | `explicit`: a calendar date is stated ("Oct 25, 9am"). `resolved_relative`: you worked it out from the post time or the schedule ("tonight", "Sunday 9am", "end of hacking"). `unresolved`: a deadline is mentioned but can't be pinned ("soon", "while supplies last"). `none`: no deadline (with `is_dated = y` only when `window_end` is filled). |
 | `window_end` | `2026-10-24T19:00-07:00` | The end of a claim window stated in the post itself ("handing out credits 6–7pm", "$50 credits at the workshop happening now" with a stated end). Leave it empty if the post states no end (D15). |
 | `notes` | text | Anything the columns can't hold: `prize`, `date-only`, other deadlines, multi-credit details. |
 
