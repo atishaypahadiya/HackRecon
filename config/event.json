@@ -1,0 +1,35 @@
+{
+  "event": "Cal Hacks 13.0",
+  "timezone": "America/Los_Angeles",
+  "hacking_start": null,
+  "hacking_end": null,
+  "oldest_message": "2026-10-09T15:40:59-07:00",
+  "schedule": [
+    {
+      "what": "Final Devpost submissions due",
+      "at": "2026-10-25T09:00:00-07:00",
+      "source": "https://cal-hacks-13-0.slack.com/archives/C0C7TCNCR1N/p1792918203114859",
+      "superseded_by": "Devpost submission deadline extended"
+    },
+    {
+      "what": "Devpost submission deadline extended",
+      "at": "2026-10-25T09:30:00-07:00",
+      "source": "https://cal-hacks-13-0.slack.com/archives/C0C7TCNCR1N/p1792943981782739"
+    },
+    {
+      "what": "Arrive with the whole team at the Palace of Fine Arts",
+      "at": "2026-10-25T09:30:00-07:00",
+      "source": "https://cal-hacks-13-0.slack.com/archives/C0C7TCNCR1N/p1792918203114859"
+    },
+    {
+      "what": "Judging window (teams must be at their table)",
+      "at": "2026-10-25T10:30:00-07:00",
+      "until": "2026-10-25T12:30:00-07:00",
+      "source": "https://cal-hacks-13-0.slack.com/archives/C0C7TCNCR1N/p1792918203114859"
+    }
+  ],
+  "unconfirmed": [
+    "hacking_start: no announcement in 0-announcements states when hacking began. Fill it in from the event's own schedule, then rerun classify (the cache key covers the prompt, so affected messages reclassify).",
+    "hacking_end: not stated as such. The submission deadline (09:30 after the extension) is the closest sourced time, but it is not filled in as the end of hacking."
+  ]
+}

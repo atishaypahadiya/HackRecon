@@ -48,6 +48,14 @@ describe("parseCaptureFile", () => {
     expect(() => parseCaptureFile(c)).toThrow("capture.messages[0].ts");
   });
 
+  test("subtype thread_broadcast requires thread_ts", () => {
+    const c = capture();
+    c.messages[0]!.subtype = "thread_broadcast";
+    expect(() => parseCaptureFile(c)).toThrow("capture.messages[0].subtype");
+    c.messages[0]!.thread_ts = "1791591600.000100";
+    expect(parseCaptureFile(c).messages[0]!.subtype).toBe("thread_broadcast");
+  });
+
   test("rejects an unknown stop_reason", () => {
     const c = capture() as unknown as Record<string, unknown>;
     c.stop_reason = "timeout";

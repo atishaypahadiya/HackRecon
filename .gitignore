@@ -6,3 +6,5 @@ fixtures/slack-dom/
 captures/
 extension/dist/
 config/organizers.json
+data/
+review/

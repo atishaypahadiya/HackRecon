@@ -10,6 +10,8 @@
 
 **Context:** It was deferred in the design doc (`docs/designs/hackrecon-demo-scope.md`, Approach B) because it's 7–10 solo days with no live event to demo on. The `messages` / `items` / `reps` / `runs` schema in `schema.ts` was written to match what B stores in IndexedDB, so B adds scheduling and a diff rather than a rewrite. Keep the no-self-bot rule: read only the DOM the user's open client renders. Start with: the side panel plus IndexedDB writes from the existing capture, then the diff, then `chrome.alarms`. Chrome Web Store listing and CI come after.
 
+**Sync this event:** auto-select sponsor channels from the sidebar by prefix, capture sequentially, incremental since last ts, user-started in a visible tab only.
+
 **Effort:** L
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
@@ -19,6 +21,8 @@
 **What:** Capture thread replies in the locked 25. Open each thread pane and record its replies, using the same `ts` key, the parent-message stop and the 5 × 1.5 s fallback.
 
 **Why:** The receipt is top-level only (D4). If the day-1 stretch misses, the footnote states "N of M credit mentions were thread replies, not included". This item closes that gap.
+
+**Status (2026-10-27):** the day-1 stretch did not land, so this stays. Day 1 captured the locked 25 top-level only. Replies that were also sent to the channel are captured as top-level rows marked `thread_broadcast` (26 in run `day1-2026-10-27`). Other replies are not captured.
 
 **Context:** Delete this item on day 1 if the stretch landed. Priority order comes from the export's credit-signal replies: cohost-anthropic 8, spons-cartesia 6, spons-bitdeer 5, spons-convex 3, spons-factory-ai 2, then single-mention channels. That's 494 replies in the locked 25 overall. Measure thread recall against the export's replies in those channels, then add replies to the receipt with that recall stated.
 
@@ -31,6 +35,8 @@
 **What:** Capture the 29 sponsor channels flagged `"stretch": true` in `config/sponsors.json`. They're top-level only, under the same key, stop and keyed-recall rules as the locked 25.
 
 **Why:** D11 locked 25 channels and made the other 29 a day-1 stretch. They hold 10 more credit-signal posts and the reps for those sponsors (e.g. Atlassian, Elastic, SpaceXsi, Llama Ventures), which the Reps tab otherwise lists as not captured.
+
+**Status (2026-10-27):** not captured yet. The locked 25 passed the day-1 exit check (run `day1-2026-10-27`). Keep this item until the 29 are captured and recorded with `hr record-run`.
 
 **Context:** Delete this item on day 1 if the stretch landed. Stretch channels never count toward the capture-failure threshold. The receipt's "of N attempted" comes from the runs record, so it updates on its own. Access to the workspace may be revoked at any time, so do this before anything else post-demo.
 

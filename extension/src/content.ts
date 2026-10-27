@@ -109,7 +109,7 @@ async function capture(): Promise<void> {
 
   const finished = new Date();
   const name = channelName();
-  const { messages, systemRowsSkipped, unresolvedAuthors } = acc.finalize();
+  const { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors } = acc.finalize();
   const file: CaptureFile = {
     schema_version: SCHEMA_VERSION,
     run_id: runId,
@@ -121,6 +121,7 @@ async function capture(): Promise<void> {
     stop_reason: stop,
     scroll_steps: steps,
     system_rows_skipped: systemRowsSkipped,
+    non_posts_skipped: nonPostsSkipped,
     unresolved_authors: unresolvedAuthors,
     messages: messages.map((m): Message => {
       const out: Message = {
@@ -135,6 +136,10 @@ async function capture(): Promise<void> {
         captured_at: finished.toISOString(),
         run_id: runId,
       };
+      if (m.threadTs) {
+        out.thread_ts = m.threadTs;
+        out.subtype = "thread_broadcast";
+      }
       if (m.sender.title) out.author_title = m.sender.title;
       if (m.sender.id) out.author_id = m.sender.id;
       out.author_kind = m.sender.bot ? "bot" : "user";

@@ -1,8 +1,20 @@
+import type { NonPost } from "../../pipeline/rows.ts";
 import type { StopReason, Ts } from "../../pipeline/schema.ts";
 
 /** One rendered row of the message list, as read by parse.ts. DOM-free so it can be unit-tested. */
 export type RawRow =
-  | { kind: "message" | "system"; ts: Ts; sender: Sender | null; text: string; links: string[]; permalink: string }
+  | {
+      kind: "message" | "system";
+      ts: Ts;
+      sender: Sender | null;
+      text: string;
+      links: string[];
+      permalink: string;
+      /** Set on replies also sent to the channel: the parent's ts. */
+      threadTs?: Ts;
+      /** On system rows that aren't Slack system messages but other non-posts (pipeline/rows.ts). */
+      nonPost?: NonPost;
+    }
   /** Day/unread dividers: Slack always renders an author header after one. */
   | { kind: "divider" }
   | { kind: "channel_start" };
@@ -17,6 +29,7 @@ export interface Sender {
 
 export interface Captured {
   ts: Ts;
+  threadTs?: Ts;
   sender: Sender;
   text: string;
   links: string[];
@@ -25,6 +38,8 @@ export interface Captured {
 
 interface Seen {
   kind: "message" | "system";
+  threadTs?: Ts;
+  nonPost?: NonPost;
   header: Sender | null;
   text: string;
   links: string[];
@@ -62,8 +77,12 @@ export class Accumulator {
         continue;
       }
       const old = this.rows.get(row.ts);
+      // Once seen as a post, a row stays one: a half-rendered re-render must not demote it.
+      const kind = old?.kind === "message" ? "message" : row.kind;
       this.rows.set(row.ts, {
-        kind: row.kind,
+        kind,
+        threadTs: row.threadTs ?? old?.threadTs,
+        nonPost: kind === "system" ? (row.nonPost ?? old?.nonPost) : undefined,
         header: row.sender ?? old?.header ?? null,
         // Re-renders can arrive before images/unfurls settle; keep the fullest text seen.
         text: old && old.text.length > row.text.length ? old.text : row.text,
@@ -85,22 +104,31 @@ export class Accumulator {
     return null;
   }
 
-  finalize(): { messages: Captured[]; systemRowsSkipped: number; unresolvedAuthors: Ts[] } {
+  finalize(): {
+    messages: Captured[];
+    systemRowsSkipped: number;
+    nonPostsSkipped: Partial<Record<NonPost, number>>;
+    unresolvedAuthors: Ts[];
+  } {
     const messages: Captured[] = [];
     const unresolvedAuthors: Ts[] = [];
+    const nonPostsSkipped: Partial<Record<NonPost, number>> = {};
     let systemRowsSkipped = 0;
     const keys = [...this.rows.keys()].sort();
     for (const ts of keys) {
       const r = this.rows.get(ts)!;
       if (r.kind === "system") {
         systemRowsSkipped++;
+        if (r.nonPost) nonPostsSkipped[r.nonPost] = (nonPostsSkipped[r.nonPost] ?? 0) + 1;
         continue;
       }
       const sender = this.authorOf(ts);
       if (!sender) unresolvedAuthors.push(ts);
-      messages.push({ ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink });
+      const m: Captured = { ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink };
+      if (r.threadTs) m.threadTs = r.threadTs;
+      messages.push(m);
     }
-    return { messages, systemRowsSkipped, unresolvedAuthors };
+    return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors };
   }
 }
 

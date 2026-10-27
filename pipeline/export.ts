@@ -52,10 +52,17 @@ export function isTopLevel(m: ExportMessage): boolean {
   return m.thread_ts === undefined || m.thread_ts === m.ts;
 }
 
-/** Real posts (keyed-recall denominator, D8), bot posts (kept, reported apart), and everything else. */
-export function rowClass(m: ExportMessage): "real" | "bot" | "system" {
+/** Shown in the channel itself: top-level rows plus replies also sent to the channel. */
+export function isChannelVisible(m: ExportMessage): boolean {
+  return isTopLevel(m) || m.subtype === "thread_broadcast";
+}
+
+/** Real posts (keyed-recall denominator, D8), bot posts and broadcasts (kept, reported apart),
+ *  and everything else (joins, topic changes, tombstones). */
+export function rowClass(m: ExportMessage): "real" | "bot" | "broadcast" | "system" {
   if (m.subtype === undefined) return "real";
   if (m.subtype === "bot_message") return "bot";
+  if (m.subtype === "thread_broadcast") return "broadcast";
   return "system";
 }
 

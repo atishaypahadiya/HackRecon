@@ -71,7 +71,9 @@ for (const p of parsed) {
           expect({ ts: r.ts, posted_after_export: Number(r.ts) > CUTOFF }).toEqual({ ts: r.ts, posted_after_export: true });
           continue;
         }
-        const want = !isTopLevel(e) ? "reply" : rowClass(e) === "system" ? "system" : "message";
+        const cls = rowClass(e);
+        const want = cls === "broadcast" ? "message" : !isTopLevel(e) ? "reply" : cls === "system" ? "system" : "message";
+        if (cls === "broadcast") expect({ ts: r.ts, threadTs: r.threadTs }).toEqual({ ts: r.ts, threadTs: e.thread_ts });
         expect({ ts: r.ts, kind: r.kind, text: r.text.slice(0, 60) }).toEqual({ ts: r.ts, kind: want as never, text: r.text.slice(0, 60) });
       }
     });
