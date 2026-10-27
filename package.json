@@ -1,0 +1,17 @@
+{
+  "name": "hackrecon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build:ext": "bun build extension/src/content.ts --outfile extension/dist/content.js --target browser --format iife && bun build extension/src/popup.ts --outfile extension/dist/popup.js --target browser --format iife",
+    "hr": "bun pipeline/hr.ts"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.6",
+    "bun-types": "^1.4.4",
+    "linkedom": "^0.18.14",
+    "typescript": "^7.0.2"
+  }
+}
