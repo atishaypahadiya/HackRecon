@@ -41,7 +41,15 @@ The last line lists the locked-25 channels that don't pass yet. Exit code 1 mean
 
 ## Saving DOM samples (`fixtures/slack-dom/`, gitignored)
 
-Every Slack selector lives in `src/selectors.ts`. They're unverified until real samples are saved. `src/parse.fixtures.test.ts` checks the parser against each sample using the export as the answer key: kept vs skipped rows, authors after carry-forward, ts consistency, and channel-start detection.
+Every Slack selector lives in `src/selectors.ts`. They were verified on 2026-10-27 against samples from spons-moss, spons-capital-one and spons-factory-ai. The few with no matching element in those samples (inline titles, APP badges) are marked UNVERIFIED. `src/parse.fixtures.test.ts` checks the parser against each sample using the export as the answer key:
+- kept vs skipped rows
+- authors after carry-forward
+- the Slack Connect flag
+- exact text for posts without markup
+- ts consistency
+- channel-start detection
+
+If Slack changes its DOM, save fresh samples and rerun it.
 
 To save one: scroll a channel to the spot you want, open DevTools → Console, and run
 
@@ -53,7 +61,7 @@ Then in a terminal: `pbpaste > fixtures/slack-dom/<channel>-<case>.html`. Cover 
 
 | Case | Where to find one | File name |
 |---|---|---|
-| Channel-start header | scroll any channel to the very top | must contain `channel-start` |
+| Channel-start header | scroll any channel to the very top | must contain `channel-start` (other samples may show it too) |
 | Grouped posts (no repeated author header) | consecutive posts by one person | anything else |
 | Bot post | Slackbot "… from Moss was added to this channel" (spons-moss, spons-wajo-ai, spons-capital-one) | |
 | System rows | "joined #channel" rows (most channels) | |

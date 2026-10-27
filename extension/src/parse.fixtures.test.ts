@@ -76,6 +76,21 @@ for (const p of parsed) {
       }
     });
 
+    test("plain posts serialize to exactly the export's text", () => {
+      let compared = 0;
+      for (const r of msgs) {
+        const raw = p.byTs.get(r.ts)?.text;
+        if (r.kind !== "message" || !raw) continue;
+        // Trailing spaces before a newline are trimmed by the serializer on purpose.
+        const want = raw.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/[ \t]+\n/g, "\n");
+        // Only posts with no mrkdwn markup: links, mentions and formatting render differently by design.
+        if (/[<*_`~•]|^>|^\d+\. /m.test(want)) continue;
+        compared++;
+        expect({ ts: r.ts, text: r.text }).toEqual({ ts: r.ts, text: want.trim() });
+      }
+      expect(compared).toBeGreaterThan(0);
+    });
+
     test("grouped posts get the export's author after carry-forward", () => {
       const acc = new Accumulator();
       acc.ingest(p.rows);
@@ -97,8 +112,25 @@ for (const p of parsed) {
       }
     });
 
-    test(`channel-start header detected iff the file name says "channel-start"`, () => {
-      expect(p.rows.some((r) => r.kind === "channel_start")).toBe(p.file.includes("channel-start"));
+    test(`channel-start header: detected in "channel-start" samples, and only ever next to the channel's oldest row`, () => {
+      const detected = p.rows.some((r) => r.kind === "channel_start");
+      if (p.file.includes("channel-start")) expect(detected).toBe(true);
+      if (detected) {
+        const oldest = [...p.byTs.values()].filter(isTopLevel).map((m) => m.ts).sort()[0];
+        expect(msgs.some((r) => r.ts === oldest)).toBe(true);
+      }
+    });
+
+    test("Slack Connect badge iff the export doesn't know the poster (users.json)", () => {
+      for (const r of msgs) {
+        const e = p.byTs.get(r.ts);
+        if (!r.sender || !e?.user || !exp) continue;
+        expect({ ts: r.ts, name: r.sender.name, external: !!r.sender.external }).toEqual({
+          ts: r.ts,
+          name: r.sender.name,
+          external: !exp.users.has(e.user),
+        });
+      }
     });
   });
 }
@@ -108,6 +140,7 @@ describe("sample coverage (each case must appear in at least one sample)", () =>
   const all = parsed.flatMap((p) => p.rows.map((r) => ({ p, r })));
   const has = (f: (x: { p: Parsed; r: RawRow }) => boolean) => all.some(f);
   test("a grouped post (no author header)", () => expect(has(({ r }) => r.kind === "message" && !r.sender)).toBe(true));
+  test("a Slack Connect poster flagged external", () => expect(has(({ r }) => r.kind === "message" && !!r.sender?.external)).toBe(true));
   test("a bot post kept", () =>
     expect(has(({ p, r }) => r.kind === "message" && p.byTs.get(r.ts)?.subtype === "bot_message")).toBe(true));
   test("a system row skipped", () => expect(has(({ r }) => r.kind === "system")).toBe(true));

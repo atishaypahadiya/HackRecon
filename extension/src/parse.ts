@@ -1,6 +1,6 @@
 import type { RawRow, Sender } from "./accumulate.ts";
 import { tsFromAttr, tsFromPermalink } from "./permalink.ts";
-import { SEL, TEXT } from "./selectors.ts";
+import { BOT_SENDER_IDS, SEL, TEXT } from "./selectors.ts";
 
 const BLOCK = new Set(["DIV", "P", "LI", "UL", "OL", "PRE", "BLOCKQUOTE", "SECTION"]);
 
@@ -34,7 +34,7 @@ export function parseRow(el: Element, base?: string): RawRow | null {
   const sender = parseSender(el);
   const bodyEl = el.querySelector(SEL.body);
   const { text, links } = bodyEl ? serializeBody(bodyEl, base) : { text: "", links: [] };
-  const kind = isSystem(el, sender, text) ? "system" : "message";
+  const kind = isSystem(el, sender, !!bodyEl) ? "system" : "message";
   return { kind, ts, sender, text, links, permalink };
 }
 
@@ -47,14 +47,15 @@ function parseSender(row: Element): Sender | null {
   if (id) s.id = id;
   const title = squash(row.querySelector(SEL.senderTitle)?.textContent ?? "");
   if (title) s.title = title;
-  if (row.querySelector(SEL.botBadge)) s.bot = true;
+  if (row.querySelector(SEL.botBadge) || (id && BOT_SENDER_IDS.has(id))) s.bot = true;
   if (row.querySelector(SEL.externalBadge)) s.external = true;
   return s;
 }
 
-function isSystem(row: Element, sender: Sender | null, bodyText: string): boolean {
-  if (bodyText) return TEXT.system.test(bodyText);
-  // No rich-text body: system rows put their text straight in the row. Drop the author and time first.
+function isSystem(row: Element, sender: Sender | null, hasBody: boolean): boolean {
+  if (row.querySelector(SEL.systemMessage)) return true;
+  if (hasBody) return false;
+  // No message body and no system class: fall back to the row's text, minus author and time.
   let rest = squash(row.textContent ?? "");
   if (sender) rest = rest.replace(sender.name, "");
   const stamp = squash(row.querySelector(SEL.timestamp)?.textContent ?? "");
@@ -74,6 +75,10 @@ export function serializeBody(body: Element, base?: string): { text: string; lin
     if (n.nodeType !== 1) return;
     const el = n as Element;
     if (el.matches(SEL.bodyNoise)) return;
+    if (el.matches(SEL.paragraphBreak)) {
+      out += "\n\n";
+      return;
+    }
     const tag = el.tagName.toUpperCase();
     if (tag === "BR") {
       out += "\n";
