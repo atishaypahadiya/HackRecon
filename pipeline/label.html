@@ -236,6 +236,7 @@ function show(i) {
   meta.append(`row ${at + 1} of ${rows.length}`, chip(`#${r.channel}`), chip(r.sponsor), who, prettyTime(r.posted_at), link);
   if (r.subtype === "thread_broadcast") meta.append(chip("thread reply also sent to the channel"));
   if (r.in_capture !== "y") meta.append(chip("not in the capture: baseline text", "warn"));
+  if (r.labeler) meta.append(chip(`labeled by ${r.labeler}`));
   linkify($("text"), r.text);
   $("text").scrollTop = 0;
 

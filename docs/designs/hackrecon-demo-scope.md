@@ -85,20 +85,20 @@ Approach A's pipeline, plus a day slider with "new since yesterday" badges, a mo
 - **Multiple items per message.** A post that bundles two credit programs plus a prize yields three items.
 - **amount_usd_per_person** is set **only** when `amount_unit = USD` and `amount_basis = per_person`. Per-team amounts, pools, "up to $X", tokens, and hours are **unpriced** and appear in an "Unpriced offers" list with their `amount_text`.
 - **Deadline linking across messages happens only through offer grouping.** If a reminder or follow-up ends up in the same offer group, its deadline applies to that offer (see aggregation below). A deadline posted in a message that isn't grouped with the offer is not linked to it, and the offer shows "no stated deadline". This is a documented limitation. The labeled set measures how often it happens, and the number is reported at the gate.
-- **Sponsorless items** (from #announcements, prizes, jobs, or workshops, with no sponsor in `sponsors.json` and none named in the text) get `sponsor = "event"`. The `event` bucket goes through the URL merge, the deadline key, and the credit hand pass like any sponsor.
+- **Sponsorless items** (from #announcements, prizes, jobs, or workshops, with no sponsor in `sponsors.json` and none named in the text) get `sponsor = "event"`. The `event` bucket goes through the URL merge, the deadline key, and the day-4 credit pass like any sponsor.
 - **Offer grouping (dedup), cheapest honest version. There's no LLM grouping pass.** Grouping only matters for the receipt and money clock, and those ship only if the day-2 gate passes, so grouping moves off day 2 entirely.
   1. **URL merge** (deterministic, in the batch script): within each `sponsor + kind`, merge items that share any URL.
   2. **Deadline key** (deterministic): K counts distinct `(sponsor, deadline_iso rounded to the nearest 30 minutes)`. Reminders of the same deadline collapse automatically. So does a credit's deadline that's also posted as a separate `kind=deadline` item, so one real deadline is never counted twice.
-  3. **Credit hand pass** (morning of day 4, ~45 min budget). The script writes `review/credits.csv`: one row per credit item after URL merge, sorted by sponsor then `ts`. In it, the human:
+  3. **Credit pass, done by Opus** (morning of day 4; D21 replaced the hand pass). The script writes `review/credits.csv`: one row per credit item after URL merge, sorted by sponsor then `ts`. The Opus judge (`claude-opus-5-5`) fills it under the same rule as the day-2 labels: the same redacted input the classifier gets, the written rules verbatim, and `labeler = opus-5-5` on every row it writes. It's never shown the classifier's amount, basis or deadline for a row: it reads the source post and fills them itself. The row list itself comes from the classifier's credit items plus the labeled credits (D14), so which posts it checks isn't blind. It:
      - assigns `offer_key`, merging reminders and cross-posts
      - confirms `amount_usd_per_person` and `amount_basis`
      - links a deadline that was posted in a separate message
      - resolves `unresolved` deadlines
      
-     Credit items are the only ones feeding N, M, and $, and with 117 credit-signal top-level messages in the locked 25 [measured: export] they're a short list. If the sheet has more than 100 rows, only rows with a stated amount get the full pass. The rest stay listed as unpriced, unmerged offers, which can overstate M but never the $ total.
+     Credit items are the only ones feeding N, M, and $, and with 117 credit-signal top-level messages in the locked 25 [measured: export] they're a short list. If the sheet has more than 100 rows, only rows with a stated amount get the full pass (kept from the hand-pass budget so the pass stays cheap). The rest stay listed as unpriced, unmerged offers, which can overstate M but never the $ total.
   4. **K list scan** (day 4, ~10 min): look over the distinct deadline keys for false merges or splits.
 
-  **Who owns the hand fixes (D7):** `review/credits.csv` is the only place they live. `offers.ts` applies it over the classifier's items, keyed by `message_id` + `item_index`, on every run, and `items.json` is never hand-edited. `hr sheet` appends rows for new credit items and never overwrites the human columns. If a row's key matches no item (e.g. after a reclassify), it's listed and `hr frames` refuses to build until it's fixed.
+  **Who owns the fixes (D7):** `review/credits.csv` is the only place they live, whether Opus wrote them or a person corrected one (`labeler = hand`). `offers.ts` applies it over the classifier's items, keyed by `message_id` + `item_index`, on every run, and `items.json` is never edited. `hr sheet` appends rows for new credit items and never overwrites the pass columns. If a row's key matches no item (e.g. after a reclassify), it's listed and `hr frames` refuses to build until it's fixed.
 
   **Row fingerprint (OV5, completes D7):** each sheet row also stores the item's `kind` and an `amount_text` fingerprint. If either no longer matches the item at that key (e.g. a reclassify reordered `[credit, prize]` to `[prize, credit]`), the row counts as orphaned and `hr frames` refuses to build.
 
@@ -117,7 +117,7 @@ Approach A's pipeline, plus a day slider with "new since yesterday" badges, a mo
   - **Deadline at D** = the most recent resolved `deadline_iso` among the group's items posted at or before D. An extension therefore applies from the morning it was posted.
   - If a later item in the group states a different amount, the conflict is flagged for the hand check.
   - **Deadline status at D:** `resolved` if a resolved deadline exists at D, otherwise `unresolved` if any item at D is unresolved, otherwise `none`.
-- **Unresolved deadlines.** Before the demo, every priced credit offer whose deadline status is `unresolved` gets its deadline resolved by hand from the source post. Any that can't be resolved are **excluded from the money clock**, listed under "deadline unclear", and not counted in K.
+- **Unresolved deadlines.** Before the demo, the Opus credit pass resolves every priced credit offer whose deadline status is `unresolved` from the source post (D21; it was a hand step). Any that can't be resolved are **excluded from the money clock**, listed under "deadline unclear", and not counted in K.
 - **The receipt and money clock sum distinct offers.** Each number links to **all** source permalinks in its group.
 - **"K dated deadlines"** = the number of distinct deadline keys (step 2) among items posted at or before the final D. Unresolved deadlines have no `deadline_iso`, so they're never counted.
 - **Redaction before any API call.**
@@ -127,7 +127,7 @@ Approach A's pipeline, plus a day slider with "new since yesterday" badges, a mo
   - **Residual risk:** names that never appear as a poster (e.g. in a signature) can slip through. The script logs the redaction count per batch.
 - **Classifier cache (D9).** The cache key is `message_id` + sha256(redacted text + prompt text + JSON schema + model id), so any prompt, schema, model or redaction change re-classifies automatically. Each entry stores its prompt hash, and `hr gate` reports the hash it scored.
 - **Classifier failures (D10).** An API error or an output that fails the schema is retried up to 2 times with backoff. After that, the message goes into `classify_errors.json` with the reason and isn't cached. A failed labeled positive counts as a gate miss, and `hr gate` prints the error count. `hr frames` refuses to build while errors exist unless run with `--allow-errors`, which adds "N messages not classified" to the receipt footnote.
-- **Poster role (D17).** Classifier input includes `poster_role`: organizer, sponsor-side or other. It's a label computed from the A5 rules, never a name, and it's a hint, not a filter. The prompt rule is about the post's shape: from an `other` poster, questions and complaints are not offers, but announcement-shaped posts (stating an amount, code, link or how to claim) are classified normally. After the day-3 rep confirmations, `poster_role` is recomputed from the confirmed reps. The D9 cache key includes the input, so affected messages reclassify automatically before the day-4 hand pass.
+- **Poster role (D17).** Classifier input includes `poster_role`: organizer, sponsor-side or other. It's a label computed from the A5 rules, never a name, and it's a hint, not a filter. The prompt rule is about the post's shape: from an `other` poster, questions and complaints are not offers, but announcement-shaped posts (stating an amount, code, link or how to claim) are classified normally. After the day-3 rep confirmations, `poster_role` is recomputed from the confirmed reps. The D9 cache key includes the input, so affected messages reclassify automatically before the day-4 credit pass.
 - **Classifier input.** Each message goes in with its posted datetime in the event timezone, its channel name, its sponsor from `sponsors.json`, and the event schedule from `event.json`. That way relative deadlines ("tonight", "Sunday 11:59", "end of hacking") resolve to absolute instants. Deadlines it can't resolve get `deadline_iso = null` and `deadline_status = unresolved`, which the UI shows as a "deadline unclear" badge.
 
 ### Replay semantics
@@ -171,21 +171,21 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
 | Day | Work | Exit check |
 |-----|------|------------|
 | 1 | **First task:** build the MV3 capture and run it on the locked 25 in `sponsors.json` order (access could still be revoked); the other 29 only as a stretch after the 25 are saved (D11). Start with 1 hour in DevTools on Slack's DOM (grouped messages, titles). Then write `sponsors.json` and record the oldest message date from the existing export in `event.json`. The slackdump baseline already exists. | For each channel: ≥ 90% of the export's real top-level messages (subtype null) found in the capture **by `ts`** (D8), with missed and extra keys listed with permalinks; author match ≥ 95% against slackdump; ≤ 2 min per channel. The extension skips system rows (joins, renames, topic changes) and logs how many |
-| 2 | Morning: day-1 capture fixes (≤ 2h). Label every top-level keyword hit in the locked 25 (187 [measured: export]) plus the two miss checks (classifier-flagged messages outside the hits, and 30 random), D12 and OV-required. Build and run the classifier plus URL merge. | **Gate** (below) |
+| 2 | Morning: day-1 capture fixes (≤ 2h). Opus labels (`hr prelabel`, D21) every top-level keyword hit in the locked 25 (187 [measured: export]) plus the two miss checks (classifier-flagged messages outside the hits, and 30 random), D12 and OV-required. Build and run the classifier plus URL merge. | **Gate** (below), as agreement with Opus |
 | 3 | Board: headline, credit and deadline cards, the Missed section, secondary rows, the day slider with "new" badges. Reps tab: confirm reps from the candidate list, then generate openers. | The slider replays every D in range without errors. All shown reps are confirmed |
-| 4 | Morning: credit hand pass on the pre-filled sheet (`review/credits.csv`, ~10–15 min, D13) + K list scan (~10 min). Then money clock + Missed-It Receipt; demo script; two full rehearsals | Every receipt number links to its permalinks |
+| 4 | Morning: Opus credit pass on the pre-filled sheet (`review/credits.csv`, D13, D21) + K list scan (~10 min). Then money clock + Missed-It Receipt; demo script; two full rehearsals | Every receipt number links to its permalinks |
 
-**Labeling, cheapest honest version** (replaces the random 150):
+**Labeling, cheapest honest version** (replaces the random 150). **Since D21 the labeler is an LLM judge, not a person:** `hr prelabel` has `claude-opus-5-5` fill every row from the same redacted input the classifier gets, under the rules in `docs/labeling.md` verbatim, blind to the classifier's output, with `labeler = opus-5-5`. It's a demo-time eval, not human ground truth, and not a user step. Below, "label" means the judge's label.
 - **Keyword pool:** from the baseline's copy of the captured channels, top-level messages only (`thread_ts` null or equal to `ts`, D4), select messages matching a broad regex: `$`, `credit`, `code`, `promo`, `free`, `deadline`, `due`, `by <day/time>`, `tonight`, `submit`, `apply`, `RSVP`, `closes`. **Label every keyword hit, no sampling** (user direction, 2026-10-27): 187 top-level hits in the locked 25 [measured].
-- **Miss checks (D12), both outside the keyword hits:** (1) hand-label every message the classifier flags as credit or dated; (2) hand-label 30 random top-level messages. Any credit or dated positive found by either is a known gap in the regex and is reported. Recall is stated as "within keyword hits, plus classifier-flagged messages outside them". The random 30 are reported separately as the estimate of what the keyword list misses.
-- **Each label is quick:** is it a credit, is it dated, amount, basis, deadline, `exclude` (not an offer). It's yes/no plus fields, not free-form, using the credit sheet's column names (D13).
-- **One hand pass (D13):** `hr sheet` pre-fills the human columns of `review/credits.csv` from the day-2 label for single-credit messages. The day-4 pass only assigns `offer_key`, reviews unlabeled and multi-item rows, and resolves rows where the label and the classifier disagree. Labels stay the gate's ground truth and never feed the classifier.
+- **Miss checks (D12), both outside the keyword hits:** (1) label every message the classifier flags as credit or dated; (2) label 30 random top-level messages. Any credit or dated positive found by either is a known gap in the regex and is reported. Recall is stated as "within keyword hits, plus classifier-flagged messages outside them". The random 30 are reported separately as the estimate of what the keyword list misses.
+- **Each label is small:** is it a credit, is it dated, amount, basis, deadline, `exclude` (not an offer). It's yes/no plus fields, not free-form, using the credit sheet's column names (D13), and every answer must pass `hr pool --check`.
+- **One credit pass (D13):** `hr sheet` pre-fills the pass columns of `review/credits.csv` from the day-2 label for single-credit messages. The day-4 Opus pass only assigns `offer_key`, reviews unlabeled and multi-item rows, and resolves rows where the label and the classifier disagree. Labels stay the gate's reference and never feed the classifier.
 - **Minimums:** ≥ 20 credit and ≥ 20 dated positives. Labeling every keyword hit makes this a census of the pool, so any shortfall is the real count of the captured channels, and it's stated with the gate numbers. Field accuracy is reported with its n, since only a handful of priced credits exist [measured: 40 `$<digit>` posts in the locked 25].
 
-**Day-2 gate (all on the labeled set):**
+**Day-2 gate (all on the labeled set).** With Opus labels (D21) every number below is **agreement with Opus, not accuracy**. The thresholds and per-metric counts are the same, `hr gate` says so in its report, and the receipt footnote says so too.
 - **Capture recall:** ≥ 95% of the labeled credit and dated messages from the baseline are present in the extension capture.
 - **Classification:** precision ≥ 85% and recall ≥ 85% on credit and dated items.
-- **Field accuracy:** exact `amount_usd_per_person` (including correctly marking items unpriced) on ≥ 90% of labeled priced credits, and `deadline_iso` correct to the day on ≥ 90% of labeled dated items (to the minute where a time is stated).
+- **Field accuracy (agreement with Opus under D21):** exact `amount_usd_per_person` (including correctly marking items unpriced) on ≥ 90% of labeled priced credits, and `deadline_iso` correct to the day on ≥ 90% of labeled dated items (to the minute where a time is stated).
 - Report the positive counts next to every percentage.
 
 **Day-1 per-channel misses** (handled on the morning of day 2, at most 2 hours):
@@ -197,10 +197,10 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
 
 **Fallbacks by failure mode:**
 - **Capture fails** (as defined above): ship A + reps on the partial extension capture, with the measured loss shown on screen. Cut the receipt and money clock. slackdump stays out of the product.
-- **Classification or field accuracy fails (D14):** board cards that have no hand check get an "unverified" label on their amounts and dates. The receipt and money clock still ship, because every input to them is hand-checked in the credit sheet. That sheet holds the classifier's credit items plus every labeled credit the classifier missed. Only a capture failure cuts the receipt.
+- **Classification or field agreement fails (D14):** board cards that the credit pass didn't check get an "unverified" label on their amounts and dates. The receipt and money clock still ship, because every input to them is checked by the Opus credit pass (D21; it was a hand check). That sheet holds the classifier's credit items plus every labeled credit the classifier missed. Only a capture failure cuts the receipt.
 - **Reps rule fails:** use the hand-built allowlist (no scope cut).
 
-**Receipt wording** always names its basis: "Found in C captured channels", where C is computed from the final `runs` record after any drops, never hardcoded. If any channel was dropped, the receipt adds "of N attempted" (N from the runs record: 25, plus any stretch channels attempted) and names the channels not captured. A footnote gives the measured capture and classification recall. It also states the thread basis: either the thread recall if thread capture landed, or "top-level posts only; N of M credit mentions in these channels were thread replies and are not included", with N and M computed from the export. It says the amounts and deadlines were hand-checked against the source posts on day 4. It never implies these are the event's complete totals.
+**Receipt wording** always names its basis: "Found in C captured channels", where C is computed from the final `runs` record after any drops, never hardcoded. If any channel was dropped, the receipt adds "of N attempted" (N from the runs record: 25, plus any stretch channels attempted) and names the channels not captured. A footnote gives the measured capture recall and the classifier's agreement with Opus, worded as agreement with an LLM judge, never as accuracy (D21). It also states the thread basis: either the thread recall if thread capture landed, or "top-level posts only; N of M credit mentions in these channels were thread replies and are not included", with N and M computed from the export. It says the amounts and deadlines were checked against the source posts on day 4 by an LLM judge (`claude-opus-5-5`), not by hand. It never implies these are the event's complete totals.
 
 ### Day-1 result (2026-10-27)
 
@@ -225,7 +225,13 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
   - 30 random real top-level non-hits (seeded, seed and regex recorded in `review/pool.json`).
   
   The keyword regex reproduces the measured 187: `\$\s?\d|\b(?:credit|code|promo|free|deadline|due|tonight|submit|apply|rsvp|closes)|\bby (?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|today|tomorrow|tonight|noon|midnight|eod|end of|\d)` (case-insensitive).
-- **Label columns:** `is_credit, is_dated, exclude, credits_in_post, amount_text, amount_usd_per_person, amount_basis, deadline_iso, deadline_status, window_end, notes`. These are the credit sheet's names (D13) plus `exclude` and `window_end`. Re-running `hr pool` never touches them.
+- **Label columns:** `is_credit, is_dated, exclude, credits_in_post, amount_text, amount_usd_per_person, amount_basis, deadline_iso, deadline_status, window_end, notes`. These are the credit sheet's names (D13) plus `exclude` and `window_end`. A `labeler` column (`opus-5-5` or `hand`) records who wrote them. Re-running `hr pool` never touches them.
+- **Opus judge (D21):** `hr prelabel` labels every row with `claude-opus-5-5`.
+  - Input and blindness: the classifier's exact redacted input (shared builder `pipeline/inputs.ts`) and the Columns section of `docs/labeling.md` verbatim. It never reads `items.json`, the classify cache or run record, `review/pool.json`, or the `pool` column.
+  - Model settings: effort `high`, JSON output checked like `hr pool --check`, retries ×2, a cached system prompt, and a list-price cost in `review/prelabel_run.json`.
+  - Hand rows are kept unless `--include-hand`.
+  - `hr gate` names its reference labels and reports agreement with Opus. Opus labels from an outdated prompt are stale.
+  - `hr label` stays as an optional hand-correction page; a save sets `labeler = hand`.
 - **Classifier:** `hr classify --labeled-only` classifies the 223 messages with `claude-haiku-5-5`:
   - structured JSON output, adaptive thinking at effort `medium`;
   - redaction plus poster_role from `config/organizers.json`, built by `hr organizers` (55 accounts, reproduces A5);
@@ -282,6 +288,7 @@ The history is the only input you can't get back. The baseline is secured, so th
 - **Day 2 unloaded.** The per-sponsor LLM grouping pass was replaced by URL merge, a deterministic deadline key, and a credit-only hand pass, and grouping moved to day 4. Labeling went from 150+ random messages to the keyword hits plus miss checks (later set to all 187 locked-25 keyword hits, OV-required/D12). The 50-poster rule check was dropped because every shown rep is hand-confirmed anyway. This also covers R3-8 (day-plan hours) and R3-9 (a deadline counted twice).
 - **R3-5:** the channel count on the receipt is computed from the final capture, and dropped channels are named.
 - **R3-19:** @-mentions and known names are redacted before any API call, and openers use a local `{first_name}` placeholder.
+- **LLM judge replaces human labels (D21, 2026-10-27).** No person labels the day-2 set or does the day-4 credit pass. `claude-opus-5-5` does both under one rule: same redacted input as the classifier, the written rules verbatim, blind to the classifier's output, `labeler = opus-5-5`. The gate's numbers become agreement with Opus at the same thresholds, and the receipt footnote says so. The judge is a demo-time eval, not ground truth and not a user step.
 - The generated Reviewer Concerns section below is the review record as of round 3 and wasn't edited. Treat the findings listed above as addressed by these revisions; they haven't been re-reviewed.
 
 <!-- gstack:office-hours:concerns:start -->
@@ -788,7 +795,7 @@ COVERAGE (added): 0/13 | running total: 0/50 paths (greenfield) | GAPS: 50 (5 E2
 | Classify | stale cache after a prompt change | cache key includes the prompt hash (D9) | n/a (prevented) |
 | Overlay | a fix lands on the wrong item | fingerprint check (OV5), orphan block (D7) | clear: frames refuses to build |
 | Replay | a window opens and closes between frames | event-driven frames (D16) | n/a (prevented) |
-| Receipt | a hacker question counted as an offer | `poster_role` hint (D17) + `exclude` column (OV6a) | clear in the hand pass |
+| Receipt | a hacker question counted as an offer | `poster_role` hint (D17) + `exclude` column (OV6a) | clear in the Opus credit pass (D21) |
 | Demo | hacker data shown to MLH | demo-mode flag, default on (D18) | clear |
 
 Critical gaps (no test, no handling, and silent): **0**.
@@ -847,12 +854,12 @@ Effort assumption: scaffolding/features ~30x, tests ~50x, human ÷ CC.
   - Surfaced by: A1/D4, OV4a/D12, OV4b/D13, OV1/D15, user direction
   - Files: pipeline/pool.ts, review/labels.csv
   - Verify: `hr gate` reports P/R, field accuracy with n, and both miss-check results
-  - Status (2026-10-27): `hr pool` done (223 rows); labeling in progress. `hr pool --add-flagged` (miss check 1) is built and refuses to run until every captured candidate is classified. Both miss checks show as `pool = miss_check` in the sheet, with membership in `review/pool.json`, so the sheet doesn't reveal classifier answers
+  - Status (2026-10-27): `hr pool` done (260 rows now); labeling moved to the Opus judge (D21): `hr prelabel` built and dry-run verified, not run yet. `hr gate` reports agreement with Opus. `hr pool --add-flagged` (miss check 1) is built and refuses to run until every captured candidate is classified. Both miss checks show as `pool = miss_check` in the sheet, with membership in `review/pool.json`, so the sheet doesn't reveal classifier answers
 - [ ] **T7 (P1, human: ~5h / CC: ~30min)** — pipeline/offers — URL merge, 30-min deadline key, overlay with fingerprint + exclude, sheet = classifier ∪ labeled credits, limit = min(deadline, window_end), frame list (daily + 3 h + event-driven), `frameAt(D)`, `receipt()`
   - Surfaced by: D1, A4/D7, OV5, OV6a, OV4c/D14, OV1/D15, OV3/D16
   - Files: pipeline/offers.ts, pipeline/offers.test.ts
   - Verify: `bun test pipeline/offers` (table-driven over frames)
-- [ ] **T8 (P2, human: ~1.5h / CC: ~10min)** — pipeline/sheet — `hr sheet` append-only writer, pre-filled from labels for single-credit messages
+- [ ] **T8 (P2, human: ~1.5h / CC: ~10min)** — pipeline/sheet — `hr sheet` append-only writer, pre-filled from labels for single-credit messages; the day-4 pass over it is an Opus pass under the D21 rule (`labeler` column, same input, blind to Haiku)
   - Surfaced by: A4/D7, OV4b/D13
   - Files: pipeline/sheet.ts, review/credits.csv
   - Verify: re-running `hr sheet` keeps human columns byte-identical
@@ -1827,6 +1834,16 @@ Approval readiness: PASS (2026-10-27). Checked IDs and answer references:
 - Structure: D1, B (scope record)
 
 There's no regression contract because the repo is greenfield. Deferrals are none.
+
+### D21: an LLM judge replaces the human labels (user direction, after approval)
+Finding: none (user direction, 2026-10-27). It supersedes the hand-labeling parts of OV4a/D12 and OV4b/D13, and the hand check behind OV4c/D14.
+Question: none.
+
+State: approved
+Actual answer: user message (2026-10-27): "Change of plan: no human labeling. Build hr prelabel: claude-opus-5-5 labels every row in review/labels.csv using the same redacted text and the rules in docs/labeling.md, blind to Haiku's output. Write the answers into the label columns, with a labeler column set to opus-5-5. hr gate then reports "agreement with Opus" instead of accuracy, using the same thresholds and per-metric counts, and the receipt footnote says so. The day-4 credit hand pass becomes an Opus pass under the same rule. Update the design doc and docs/labeling.md: the human ground truth is replaced by an LLM judge, which is a demo-time eval, not a user step."
+Accepted scope: `hr prelabel` (pipeline/prelabel.ts, pipeline/inputs.ts), the `labeler` column, gate reference wording, labeling.md and this doc. Unchanged: the thresholds, the miss checks, the day-3 rep confirmations and the day-4 K list scan (neither is labeling).
+Known limit: Opus and Haiku share a model family and the same input, so errors they make together don't show up as disagreement. Agreement is an upper bound on what accuracy would be against a person.
+History: none
 
 ## GSTACK REVIEW REPORT
 

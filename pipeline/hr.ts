@@ -5,7 +5,6 @@ import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
 import {
-  buildInput,
   CACHE_PATH,
   classifyOne,
   ERRORS_PATH,
@@ -25,7 +24,7 @@ import {
 } from "./classify.ts";
 import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
 import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
-import { labelProblems, LABELS_PATH, POOL_META_PATH, readLabels } from "./labels.ts";
+import { HAND_LABELER, labelerOf, labelProblems, LABELS_PATH, OPUS_LABELER, POOL_META_PATH, readLabels } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
 import {
@@ -42,8 +41,26 @@ import {
   writeSheet,
   type PoolMeta,
 } from "./pool.ts";
-import { buildNameList, compileRedactor } from "./redact.ts";
-import { buildOrganizers, loadOrganizerIds, ORGANIZERS_PATH, posterRole } from "./roles.ts";
+import { messageFromRow, redactedInputs } from "./inputs.ts";
+import {
+  applyJudge,
+  costUsd,
+  JUDGE_CACHE_PATH,
+  JUDGE_EFFORT,
+  JUDGE_MODEL,
+  JUDGE_RUN_PATH,
+  judgeHash,
+  judgeOne,
+  judgeSystemPrompt,
+  RULES_PATH,
+  rulesSection,
+  sumUsage,
+  type JudgeCache,
+  type JudgeRun,
+  type Labels,
+  type Usage,
+} from "./prelabel.ts";
+import { buildOrganizers, ORGANIZERS_PATH } from "./roles.ts";
 import { buildRun, MESSAGES_PATH, readMessages, readRuns, RUNS_PATH, saveRun } from "./runs.ts";
 import type { Item } from "./schema.ts";
 
@@ -65,12 +82,18 @@ const USAGE = `usage:
       hr classify) every non-hit the classifier flags as credit or dated. Which is which is kept in
       ${POOL_META_PATH} so the sheet doesn't reveal classifier answers. Re-running keeps every label
       column. --check only validates the labels entered so far. Labeling rules: docs/labeling.md
+  bun run hr prelabel [--dry-run] [--include-hand] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+      The Opus judge (D21): ${JUDGE_MODEL} (effort ${JUDGE_EFFORT}) fills the label columns of every row in
+      ${LABELS_PATH} from the same redacted input Haiku gets, under the rules in ${RULES_PATH} (Columns
+      section, verbatim), with labeler = ${OPUS_LABELER}. Blind to Haiku: never reads items.json, the classify
+      cache or review/pool.json. Hand-labeled rows are kept unless --include-hand. Cached in ${JUDGE_CACHE_PATH}; run record in ${JUDGE_RUN_PATH}.
   bun run hr label [--port N] [--open]
-      Local labeling page for ${LABELS_PATH} on 127.0.0.1: one row at a time, keys c/d/n/x, saves each
-      row as you go and resumes at the first unlabeled row. Never shows classifier output. Ctrl-C to stop.
+      Optional: local page for correcting ${LABELS_PATH} by hand on 127.0.0.1, one row at a time, keys c/d/n/x.
+      A save sets labeler = ${HAND_LABELER}, which hr prelabel then keeps. Never shows classifier output. Ctrl-C to stop.
   bun run hr gate [--json OUT]
       Scores ${ITEMS_PATH} against the labeled rows of ${LABELS_PATH}: capture recall, credit and dated
-      precision/recall, amount and deadline accuracy, both miss checks, with counts and the prompt hash.
+      precision/recall, amount and deadline match, both miss checks, with counts and both prompt hashes.
+      With Opus labels every number is agreement with Opus, not accuracy, and the report says so.
       Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
   bun run hr organizers [--export DIR]
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
@@ -89,6 +112,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "classify") return classify(rest);
   if (cmd === "gate") return gate(rest);
   if (cmd === "label") return label(rest);
+  if (cmd === "prelabel") return prelabel(rest);
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -275,6 +299,113 @@ async function label(args: string[]): Promise<number> {
   return new Promise<number>(() => {}); // serve until Ctrl-C
 }
 
+async function prelabel(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      "dry-run": { type: "boolean", default: false },
+      "include-hand": { type: "boolean", default: false },
+      limit: { type: "string" },
+      concurrency: { type: "string", default: "4" },
+      show: { type: "string" },
+      sponsors: { type: "string", default: "config/sponsors.json" },
+    },
+  });
+  const rows = readLabels();
+  if (!rows.length) {
+    console.error(`${LABELS_PATH} not found or empty: run \`bun run hr pool\` first`);
+    return 2;
+  }
+  const sponsors = readSponsors(values.sponsors!);
+  const messages = readMessages();
+  const system = judgeSystemPrompt(rulesSection(readFileSync(RULES_PATH, "utf8")), readEvent());
+  const hash = judgeHash(system);
+  // Same builder as hr classify, so the judge reads exactly the classifier's redacted text. Rows the
+  // capture missed get their baseline text through the same redaction.
+  const captured = new Set(messages.map((m) => m.id));
+  const uncaptured = rows.filter((r) => !captured.has(r.message_id)).map(messageFromRow);
+  const byId = new Map(redactedInputs(messages, sponsors, hash, uncaptured).map((i) => [i.message.id, i]));
+  const inputs = rows.map((r) => byId.get(r.message_id)!);
+  const hand = new Set(values["include-hand"] ? [] : rows.filter((r) => labelerOf(r) === HAND_LABELER).map((r) => r.message_id));
+  const handRows = rows.filter((r) => labelerOf(r) === HAND_LABELER).length;
+  const cache = readJsonFile<JudgeCache>(JUDGE_CACHE_PATH, {});
+  let todo = inputs.filter((i) => !hand.has(i.message.id) && !cache[i.key]);
+  if (values.limit) todo = todo.slice(0, Number(values.limit));
+  console.log(
+    `${rows.length} rows: ${handRows} hand-labeled (${values["include-hand"] ? "Opus labels them too: --include-hand" : "kept; --include-hand to have Opus label them"}), ${inputs.filter((i) => !hand.has(i.message.id) && cache[i.key]).length} cached, ` +
+      `${todo.length} to label; ${uncaptured.length} not in the capture (baseline text); model ${JUDGE_MODEL}, effort ${JUDGE_EFFORT}, prompt ${hash}`,
+  );
+
+  if (values["dry-run"]) {
+    const sample = values.show ? inputs.find((i) => i.message.id === values.show) : (todo[0] ?? inputs[0]);
+    if (sample) {
+      console.log(`\n--- system prompt (${system.length} chars) ---\n${system}`);
+      console.log(`\n--- request for ${sample.message.id} (${sample.message.permalink}) ---\n${sample.user}`);
+    }
+    console.log("\ndry run: no API call, nothing written");
+    return 0;
+  }
+
+  let client: Anthropic;
+  try {
+    client = new Anthropic({ maxRetries: 2 });
+  } catch (e) {
+    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
+    return 2;
+  }
+  console.log(`Stop \`hr label\` and close ${LABELS_PATH} in any spreadsheet app until this finishes; it rewrites the sheet at the end.`);
+  const errors: JudgeRun["errors"] = [];
+  const usages: Usage[] = [];
+  let done = 0;
+  const queue = [...todo];
+  const worker = async () => {
+    for (let i; (i = queue.shift()); ) {
+      const r = await judgeOne(client, system, hash, i);
+      usages.push(r.usage);
+      if ("entry" in r) cache[i.key] = r.entry;
+      else errors.push({ message_id: i.message.id, reason: r.error });
+      if (++done % 10 === 0) writeJsonFile(JUDGE_CACHE_PATH, cache), console.log(`  ${done}/${todo.length}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+  writeJsonFile(JUDGE_CACHE_PATH, cache);
+
+  // Re-read the sheet so hand edits made during the run are kept.
+  const answers = new Map<string, Labels>();
+  for (const i of inputs) if (cache[i.key]) answers.set(i.message.id, cache[i.key]!.labels);
+  const applied = applyJudge(readLabels(), answers, values["include-hand"]);
+  writeSheet(LABELS_PATH, applied.rows);
+  const usage = sumUsage(usages);
+  const run: JudgeRun = {
+    model: JUDGE_MODEL,
+    labeler: OPUS_LABELER,
+    effort: JUDGE_EFFORT,
+    prompt_hash: hash,
+    rules: `${RULES_PATH} (Columns section, verbatim)`,
+    written_at: new Date().toISOString(),
+    rows: applied.rows.length,
+    labeled: applied.opus,
+    kept_hand: applied.hand,
+    errors,
+    usage,
+    cost_usd: Number(costUsd(usage).toFixed(4)),
+  };
+  writeJsonFile(JUDGE_RUN_PATH, run);
+  const opusRows = applied.rows.filter((r) => r.labeler === OPUS_LABELER);
+  console.log(
+    `wrote ${LABELS_PATH}: ${applied.opus} rows labeled by ${OPUS_LABELER} (credit ${opusRows.filter((r) => r.is_credit === "y").length}, ` +
+      `dated ${opusRows.filter((r) => r.is_dated === "y").length}), ${applied.hand} hand-labeled kept, ${applied.unlabeled} unlabeled; ` +
+      `${errors.length} errors` + (errors.length ? ` (rerun to retry them)` : ""),
+  );
+  for (const e of errors) console.log(`  error ${e.message_id}: ${e.reason}`);
+  console.log(
+    `this run: ${usages.length} rows sent; tokens in ${usage.input}, out ${usage.output} (incl. thinking), cache read ${usage.cache_read}, ` +
+      `cache write ${usage.cache_write}; $${run.cost_usd.toFixed(2)} at list price. Wrote ${JUDGE_RUN_PATH}`,
+  );
+  printLabelProblems(applied.rows);
+  return errors.length ? 1 : 0;
+}
+
 function gate(args: string[]): number {
   const { values } = parseArgs({ args, options: { json: { type: "string" } } });
   const rows = readLabels();
@@ -288,6 +419,7 @@ function gate(args: string[]): number {
     return 2;
   }
   const meta = readPoolMeta(POOL_META_PATH);
+  const judgeRun = readJsonFile<JudgeRun | null>(JUDGE_RUN_PATH, null);
   const randomIds = new Set(meta?.random_ids ?? rows.filter((r) => r.pool === "random").map((r) => r.message_id));
   const report = scoreGate({
     rows,
@@ -299,6 +431,9 @@ function gate(args: string[]): number {
     promptHash: run.prompt_hash,
     currentPromptHash: promptHash(systemPrompt(readEvent())),
     flaggedCheckRan: !!meta?.flagged_check,
+    judge: judgeRun
+      ? { model: judgeRun.model, promptHash: judgeRun.prompt_hash, currentPromptHash: judgeHash(judgeSystemPrompt(rulesSection(readFileSync(RULES_PATH, "utf8")), readEvent())) }
+      : null,
   });
   console.log(formatGate(report));
   if (values.json) writeJsonFile(values.json, report), console.log(`\nwrote ${values.json}`);
@@ -346,14 +481,10 @@ async function classify(args: string[]): Promise<number> {
   }
   if (values.limit) selected = selected.slice(0, Number(values.limit));
 
-  const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-  const organizerIds = loadOrganizerIds();
   const system = systemPrompt(readEvent());
   const hash = promptHash(system);
   // Inputs for every captured message: items.json covers all of them classified under this prompt.
-  const allInputs = messages.map((m) =>
-    buildInput(m, { role: posterRole(m, sponsors[m.channel_name], organizerIds, Object.values(sponsors)), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash: hash }),
-  );
+  const allInputs = redactedInputs(messages, sponsors, hash);
   const inputById = new Map(allInputs.map((i) => [i.message.id, i]));
   const inputs = selected.map((m) => inputById.get(m.id)!);
   const cache = readJsonFile<Cache>(CACHE_PATH, {});

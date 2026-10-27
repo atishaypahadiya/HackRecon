@@ -1,11 +1,11 @@
 // `hr pool`: builds the day-2 labeling sheet (D12). The pool is drawn from the slackdump baseline
 // (a sanctioned baseline use: labels must cover messages the capture missed, so capture recall can
 // be measured); text, author and permalink come from the capture when the message is in it.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { toCsv } from "./csv.ts";
 import { expectedAuthorNames, isTopLevel, readChannel, rowClass, type SlackExport } from "./export.ts";
-import { COLUMNS, LABEL_COLUMNS, hasLabel, type LabelRow } from "./labels.ts";
+import { COLUMNS, LABEL_COLUMNS, LABELER_COLUMN, hasLabel, type LabelRow } from "./labels.ts";
 import { messageId, type Message } from "./schema.ts";
 import { tsToEventIso } from "./time.ts";
 
@@ -152,7 +152,7 @@ export function buildRows(sel: Selection, o: BuildOpts): Built {
       text: m?.text ?? c.text,
     } as LabelRow;
     const old = prev.get(c.id);
-    for (const col of LABEL_COLUMNS) row[col] = old?.[col] ?? "";
+    for (const col of [...LABEL_COLUMNS, LABELER_COLUMN] as const) row[col] = old?.[col] ?? "";
     return row;
   });
   const inPool = new Set(rows.map((r) => r.message_id));
@@ -160,9 +160,12 @@ export function buildRows(sel: Selection, o: BuildOpts): Built {
   return { rows, orphans };
 }
 
+/** Writes the sheet atomically (temp file + rename), so a reader never sees half a file. */
 export function writeSheet(path: string, rows: LabelRow[]): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, toCsv([[...COLUMNS], ...rows.map((r) => COLUMNS.map((c) => r[c]))]));
+  const tmp = join(dirname(path), `.${process.pid}.${Date.now()}.sheet.tmp`);
+  writeFileSync(tmp, toCsv([[...COLUMNS], ...rows.map((r) => COLUMNS.map((c) => r[c]))]));
+  renameSync(tmp, path);
 }
 
 export function readSponsors(path: string): Sponsors {

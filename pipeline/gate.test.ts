@@ -223,3 +223,41 @@ describe("report", () => {
     expect(formatGate(r).split("\n").at(-1)).toBe("PASS");
   });
 });
+
+describe("reference labels (D21)", () => {
+  const opus = (r: LabelRow) => ({ ...r, labeler: "opus-5-5" });
+  const judge = { model: "claude-opus-5-5", promptHash: "j1", currentPromptHash: "j1" };
+
+  test("Opus labels: every number is agreement with Opus, never called accuracy", () => {
+    const a = opus(credit("50"));
+    const b = opus(credit("25"));
+    const items = [item(a.message_id, { amount_usd_per_person: 50 }), item(b.message_id, { amount_usd_per_person: 30 })];
+    const rep = scoreGate(input([a, b], items, { judge }));
+    expect(rep.reference).toEqual({ kind: "opus", labelers: { "opus-5-5": 2 }, judge_model: "claude-opus-5-5", judge_prompt_hash: "j1", judge_stale: false });
+    const text = formatGate(rep);
+    expect(text).toContain("reference labels: 2 by opus-5-5 (claude-opus-5-5 as an LLM judge, prompt j1). Every percentage below is agreement with Opus, not accuracy");
+    expect(text).toContain("amount_usd_per_person   50.0% (1/2)");
+    expect(text).toContain("opus: 25  classifier: 30");
+    expect(text).toMatch(/FAIL: .*amount_agreement.* \(agreement with Opus, same thresholds; not accuracy\)/);
+    expect(text).not.toMatch(/amount_accuracy|deadline_accuracy/);
+  });
+
+  test("Opus labels from another prompt, or with no run record, are stale and keep the gate provisional", () => {
+    const rows = [opus(neg())];
+    const changed = scoreGate(input(rows, [], { judge: { ...judge, currentPromptHash: "j2" } }));
+    expect(changed.reference.judge_stale).toBe(true);
+    expect(changed.complete).toBe(false);
+    expect(formatGate(changed)).toContain("Opus labels are stale");
+    expect(scoreGate(input(rows, [])).reference.judge_stale).toBe(true);
+    expect(scoreGate(input(rows, [], { judge })).complete).toBe(true);
+  });
+
+  test("hand labels keep the accuracy wording; a mix says agreement with the labels", () => {
+    const handOnly = formatGate(scoreGate(input([neg({ labeler: "hand" })], [])));
+    expect(handOnly).toContain("reference labels: 1 by hand");
+    expect(handOnly).not.toContain("agreement");
+    const mixed = scoreGate(input([neg({ labeler: "hand" }), opus(neg())], [], { judge }));
+    expect(mixed.reference.kind).toBe("mixed");
+    expect(formatGate(mixed)).toContain("agreement with these labels, not accuracy");
+  });
+});
