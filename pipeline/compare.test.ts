@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareChannel } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR, expectedAuthorNames, isTopLevel, loadExport, readChannel, rowClass, type ExportMessage } from "./export.ts";
+import { DEFAULT_EXPORT_DIR, expectedAuthorNames, isChannelVisible, loadExport, readChannel, rowClass, type ExportMessage } from "./export.ts";
 import { messageId, type CaptureFile, type Message } from "./schema.ts";
 
 const CID = "C0TEST";
@@ -89,7 +89,7 @@ describe("compareChannel (synthetic export)", () => {
 
   test("missed messages come with their permalink", () => {
     expect(r.missed).toEqual([
-      { ts: "1792400000.000003", permalink: `${ORIGIN}/archives/${CID}/p1792400000000003`, author: "Ada", text: "real 3, missed" },
+      { ts: "1792400000.000003", class: "real", permalink: `${ORIGIN}/archives/${CID}/p1792400000000003`, author: "Ada", text: "real 3, missed" },
     ]);
   });
 
@@ -130,6 +130,23 @@ describe("compareChannel (synthetic export)", () => {
     expect(split.pass.author).toBe(false);
   });
 
+  test("broadcasts are their own class: found, author-checked, and flagged if unmarked", () => {
+    const e = loadExport(
+      fakeExport([
+        { ts: "1792400000.000001", user: "U2", text: "parent" },
+        { ts: "1792400000.000002", thread_ts: "1792400000.000001", subtype: "thread_broadcast", user: "U2", text: "also sent" },
+        { ts: "1792400000.000003", thread_ts: "1792400000.000001", subtype: "thread_broadcast", user: "U2", text: "missed" },
+      ]),
+    );
+    const marked = { ...msg("1792400000.000002", "[Figma] Bob"), thread_ts: "1792400000.000001", subtype: "thread_broadcast" as const };
+    const r = compareChannel(cap([msg("1792400000.000001", "[Figma] Bob"), marked]), e, CUTOFF);
+    expect(r).toMatchObject({ export_broadcasts: 2, broadcast_captured: 1, keyed_recall: 1, extras: [] });
+    expect(r.missed.map((m) => [m.ts, m.class])).toEqual([["1792400000.000003", "broadcast"]]);
+    expect(r.author.checked).toBe(2);
+    const unmarked = compareChannel(cap([msg("1792400000.000002", "[Figma] Bob")]), e, CUTOFF);
+    expect(unmarked.extras.map((x) => x.why)).toEqual(["broadcast_unmarked"]);
+  });
+
   test("time over 2 minutes is flagged but separate", () => {
     expect(compareChannel(cap([], 150), exp, CUTOFF).pass.time).toBe(false);
   });
@@ -140,16 +157,22 @@ describe.skipIf(!existsSync(DEFAULT_EXPORT_DIR))("compareChannel (real export, s
   test("recall and authors line up when the capture is the export minus two posts", () => {
     const exp = loadExport();
     const cid = [...exp.channelsById].find(([, n]) => n === "spons-convex")![0];
-    const top = readChannel(exp, "spons-convex").filter(isTopLevel).filter((m) => rowClass(m) !== "system");
+    const top = readChannel(exp, "spons-convex").filter(isChannelVisible).filter((m) => rowClass(m) !== "system");
     const keep = top.slice(2);
     const c = cap(
-      keep.map((m) => ({ ...msg(m.ts, expectedAuthorNames(exp, m)[0]!), id: messageId(cid, m.ts), channel_id: cid })),
+      keep.map((m) => ({
+        ...msg(m.ts, expectedAuthorNames(exp, m)[0]!),
+        id: messageId(cid, m.ts),
+        channel_id: cid,
+        ...(rowClass(m) === "broadcast" ? { thread_ts: m.thread_ts, subtype: "thread_broadcast" as const } : {}),
+      })),
     );
     c.channel_id = cid;
     const r = compareChannel(c, exp, CUTOFF);
     const real = top.filter((m) => rowClass(m) === "real").length;
     expect(r.missed.map((m) => m.ts)).toEqual(top.slice(0, 2).map((m) => m.ts));
-    expect(r.matched_real).toBe(real - 2);
+    expect(r.matched_real).toBe(real - top.slice(0, 2).filter((m) => rowClass(m) === "real").length);
+    expect(r.broadcast_captured).toBe(r.export_broadcasts);
     expect(r.author.rate).toBe(1);
     expect(r.extras).toEqual([]);
   });

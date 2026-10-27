@@ -1,4 +1,5 @@
 import type { RawRow, Sender } from "./accumulate.ts";
+import { broadcastParent, LIST_TOP_TS, nonPostReason } from "../../pipeline/rows.ts";
 import { tsFromAttr, tsFromPermalink } from "./permalink.ts";
 import { BOT_SENDER_IDS, SEL, TEXT } from "./selectors.ts";
 
@@ -30,12 +31,17 @@ export function parseRow(el: Element, base?: string): RawRow | null {
     tsFromAttr(el.getAttribute("data-item-key")) ??
     tsFromAttr(el.id.replace(/^message-list_/, ""));
   if (!ts) return null;
+  // Empty list-top slot (seen in 0-announcements): not a post, and nothing above it to group with.
+  if (ts === LIST_TOP_TS) return { kind: "divider" };
 
   const sender = parseSender(el);
   const bodyEl = el.querySelector(SEL.body);
   const { text, links } = bodyEl ? serializeBody(bodyEl, base) : { text: "", links: [] };
+  const nonPost = nonPostReason({ ts, permalink, text, hasBody: !!bodyEl });
+  if (nonPost) return { kind: "system", ts, sender, text, links, permalink, nonPost };
   const kind = isSystem(el, sender, !!bodyEl) ? "system" : "message";
-  return { kind, ts, sender, text, links, permalink };
+  const threadTs = broadcastParent(permalink, ts);
+  return threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
 }
 
 function parseSender(row: Element): Sender | null {

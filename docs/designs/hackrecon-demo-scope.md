@@ -202,6 +202,37 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
 
 **Receipt wording** always names its basis: "Found in C captured channels", where C is computed from the final `runs` record after any drops, never hardcoded. If any channel was dropped, the receipt adds "of N attempted" (N from the runs record: 25, plus any stretch channels attempted) and names the channels not captured. A footnote gives the measured capture and classification recall. It also states the thread basis: either the thread recall if thread capture landed, or "top-level posts only; N of M credit mentions in these channels were thread replies and are not included", with N and M computed from the export. It says the amounts and deadlines were hand-checked against the source posts on day 4. It never implies these are the event's complete totals.
 
+### Day-1 result (2026-10-27)
+
+**Exit check passed for the locked 25** (run `day1-2026-10-27`, recorded with `hr record-run` in `data/runs.json`; `hr compare captures/` against the export):
+
+- **Keyed recall:** 978 of 978 real top-level messages, 25/25 channels at 100% (pass ≥ 90%).
+- **Author match:** 989 of 989 checked (100%, pass ≥ 95%). 2 posters have no name in the export (the Slack Connect accounts in spons-moss and spons-wajo-ai) and were checked by hand.
+- **Coverage:** bot posts 3 of 3. Replies also sent to the channel: 26 of 26, captured as top-level rows marked `subtype = thread_broadcast` with `thread_ts` from the permalink.
+- **Extras and stops:** 0 extras. Stop reasons: `channel_start` 24, `no_new_keys` 1 (0-announcements). Every channel ≤ 26 s.
+- **Run size:** 1,007 messages (978 real + 3 bot + 26 broadcasts), started 2026-10-27T12:05:43Z.
+- **Non-posts skipped:** 4 rows are skipped by `pipeline/rows.ts`, shared by the extension parser and the capture loader. They're counted in `non_posts_skipped`:
+  - 2 tombstones (deleted parents with no permalink or body): crs-credit-api 1792831361.174779 and cohost-hyphenate 1792960234.096399.
+  - 1 Slack client notice ("You won't see this prompt again", spons-wajo-ai).
+  - 1 empty list-top slot `0000000000.000001` (0-announcements).
+- **Not done on day 1:** the stretch 29 and thread capture. Both TODOs stay open.
+- **Broadcasts in labeling and the gate:** they're real channel posts, so they're kept. Both labeling and the gate report them apart from the 187 top-level messages: the keyword regex hits 6 of the 26, and they're in the sheet with `subtype = thread_broadcast`.
+
+**Day-2 setup (built 2026-10-27):**
+- **Labeling sheet:** `hr pool` writes `review/labels.csv` (gitignored; rules in `docs/labeling.md`). It holds 223 rows, all present in the capture:
+  - all 187 top-level keyword hits;
+  - the 6 broadcast keyword hits;
+  - 30 random real top-level non-hits (seeded, seed and regex recorded in `review/pool.json`).
+  
+  The keyword regex reproduces the measured 187: `\$\s?\d|\b(?:credit|code|promo|free|deadline|due|tonight|submit|apply|rsvp|closes)|\bby (?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|today|tomorrow|tonight|noon|midnight|eod|end of|\d)` (case-insensitive).
+- **Label columns:** `is_credit, is_dated, exclude, credits_in_post, amount_text, amount_usd_per_person, amount_basis, deadline_iso, deadline_status, window_end, notes`. These are the credit sheet's names (D13) plus `exclude` and `window_end`. Re-running `hr pool` never touches them.
+- **Classifier:** `hr classify --labeled-only` classifies the 223 messages with `claude-haiku-5-5`:
+  - structured JSON output, adaptive thinking at effort `medium`;
+  - redaction plus poster_role from `config/organizers.json`, built by `hr organizers` (55 accounts, reproduces A5);
+  - cache key = message id + sha256(prompt, schema, model, effort, full redacted input including poster_role);
+  - D10 retries, `--dry-run`.
+- **`config/event.json` (only sourced entries):** submissions due 2026-10-25 09:00, extended to 09:30, and the judging window 10:30–12:30, each with its 0-announcements permalink. **Hacking start and end are not stated in any announcement and are left null for the user to fill.** Until then, "end of hacking" deadlines come out `unresolved`.
+
 ## Open Questions
 
 - ~~Is the Cal Hacks workspace on a free plan?~~ Answered (eng review): the oldest exported message is 2026-10-09, so a 90-day limit would bite around 2027-01-07. Revoked access is the near-term risk, not the 90-day limit.
@@ -791,19 +822,19 @@ Synthesized from this review's findings. Each task derives from a specific
 finding above. Run with Claude Code or Codex; checkbox as you ship.
 Effort assumption: scaffolding/features ~30x, tests ~50x, human ÷ CC.
 
-- [ ] **T1 (P1, human: ~30min / CC: ~2min)** — schema — Write `schema.ts` (messages with `links[]`, items, reps, runs)
+- [x] **T1 (P1, human: ~30min / CC: ~2min)** — schema — Write `schema.ts` (messages with `links[]`, items, reps, runs)
   - Surfaced by: Section 1 (D1 shape), OV7
   - Files: pipeline/schema.ts
   - Verify: `bun test` type-checks capture and pipeline imports
-- [ ] **T2 (P1, human: ~5h / CC: ~30min)** — extension — Build the MV3 capture: ts key, MutationObserver + scroll loop, channel-start stop + 5 × 1.5 s fallback, system-row skip/count, author carry-forward, `label <href>` + links[], no profile cards, locked 25 then the stretch 29
+- [x] **T2 (P1, human: ~5h / CC: ~30min)** — extension — Build the MV3 capture: ts key, MutationObserver + scroll loop, channel-start stop + 5 × 1.5 s fallback, system-row skip/count, author carry-forward, `label <href>` + links[], no profile cards, locked 25 then the stretch 29
   - Surfaced by: SC-2/D3, CQ1/D8, A3/D6, A2/D11, OV7
   - Files: extension/manifest.json, extension/capture.ts, extension/capture.test.ts
   - Verify: `bun test extension/`; a live run on one channel gives keyed recall ≥ 90% via T3
-- [ ] **T3 (P1, human: ~1.5h / CC: ~10min)** — pipeline/compare — Keyed recall vs the export's subtype-null top-level messages, author match on display_name|real_name, missed and extra permalinks
+- [x] **T3 (P1, human: ~1.5h / CC: ~10min)** — pipeline/compare — Keyed recall vs the export's subtype-null top-level messages, author match on display_name|real_name, missed and extra permalinks
   - Surfaced by: CQ1/D8, Section 1 factual correction
   - Files: pipeline/compare.ts, pipeline/compare.test.ts
   - Verify: `bun test pipeline/compare`; `hr compare` prints recall per channel
-- [ ] **T4 (P1, human: ~1.5h / CC: ~10min)** — pipeline/redact — Name list with tag/suffix stripping, sponsor names, aliases and stopwords excluded; mentions become `@person`
+- [x] **T4 (P1, human: ~1.5h / CC: ~10min)** — pipeline/redact — Name list with tag/suffix stripping, sponsor names, aliases and stopwords excluded; mentions become `@person`
   - Surfaced by: R3-19, OV2
   - Files: pipeline/redact.ts, pipeline/redact.test.ts
   - Verify: `bun test pipeline/redact` (collision case)
@@ -811,10 +842,12 @@ Effort assumption: scaffolding/features ~30x, tests ~50x, human ÷ CC.
   - Surfaced by: CQ2/D9, CQ3/D10, OV6b/D17
   - Files: pipeline/classify.ts, pipeline/classify.test.ts
   - Verify: `bun test pipeline/classify`; `hr gate` prints the prompt hash and error count
+  - Status (2026-10-27): code and tests done, `--dry-run` verified on the 223 labeled messages; no API run yet (no key in `.env`); `hr gate` not built
 - [ ] **T6 (P1, human: ~2.5h labeling + 1h code / CC: ~10min code)** — pipeline/pool + labels — Pool of all 187 top-level keyword hits, plus classifier-flagged and 30 random miss checks; label columns = sheet columns + exclude + window_end
   - Surfaced by: A1/D4, OV4a/D12, OV4b/D13, OV1/D15, user direction
   - Files: pipeline/pool.ts, review/labels.csv
   - Verify: `hr gate` reports P/R, field accuracy with n, and both miss-check results
+  - Status (2026-10-27): `hr pool` done (223 rows); labeling in progress; `--add-flagged` (miss check 1) after the first full classify
 - [ ] **T7 (P1, human: ~5h / CC: ~30min)** — pipeline/offers — URL merge, 30-min deadline key, overlay with fingerprint + exclude, sheet = classifier ∪ labeled credits, limit = min(deadline, window_end), frame list (daily + 3 h + event-driven), `frameAt(D)`, `receipt()`
   - Surfaced by: D1, A4/D7, OV5, OV6a, OV4c/D14, OV1/D15, OV3/D16
   - Files: pipeline/offers.ts, pipeline/offers.test.ts

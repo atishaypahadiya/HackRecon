@@ -17,6 +17,8 @@ export interface Message {
   ts: Ts;
   /** Set only for thread replies; top-level messages leave it unset. */
   thread_ts?: Ts;
+  /** A thread reply also sent to the channel (thread_ts = its parent). Plain posts leave it unset. */
+  subtype?: "thread_broadcast";
   author_name: string;
   /** Only when Slack renders it inline (D6). Profile cards are never opened. */
   author_title?: string;
@@ -105,8 +107,10 @@ export interface CaptureFile {
   /** Which stop fired (D3). */
   stop_reason: StopReason;
   scroll_steps: number;
-  /** Joins, renames, topic changes etc. seen and not captured (D8). */
+  /** Joins, renames, topic changes etc. seen and not captured (D8). Includes non_posts_skipped. */
   system_rows_skipped: number;
+  /** Rows with a ts that aren't posts, by reason (pipeline/rows.ts). Absent in captures made before 2026-10-27 cleanup. */
+  non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice", number>>;
   /** ts of messages whose grouped author never resolved to a rendered header. */
   unresolved_authors: Ts[];
   messages: Message[];
@@ -137,6 +141,9 @@ function checkMessage(v: unknown, where: string, channelId: string): void {
   tsStr(m.ts, `${where}.ts`);
   if (m.id !== messageId(channelId, m.ts as Ts)) fail(`${where}.id`, "expected <channel_id>:<ts>");
   if (m.thread_ts !== undefined) tsStr(m.thread_ts, `${where}.thread_ts`);
+  if (m.subtype !== undefined && (m.subtype !== "thread_broadcast" || m.thread_ts === undefined)) {
+    fail(`${where}.subtype`, 'expected "thread_broadcast" with thread_ts set');
+  }
   arr(m.links, `${where}.links`).forEach((l, i) => str(l, `${where}.links[${i}]`));
 }
 
