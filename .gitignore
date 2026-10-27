@@ -3,3 +3,6 @@
 node_modules/
 .env
 fixtures/slack-dom/
+captures/
+extension/dist/
+config/organizers.json
