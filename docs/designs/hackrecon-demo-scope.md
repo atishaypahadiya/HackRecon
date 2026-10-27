@@ -842,12 +842,12 @@ Effort assumption: scaffolding/features ~30x, tests ~50x, human ÷ CC.
   - Surfaced by: CQ2/D9, CQ3/D10, OV6b/D17
   - Files: pipeline/classify.ts, pipeline/classify.test.ts
   - Verify: `bun test pipeline/classify`; `hr gate` prints the prompt hash and error count
-  - Status (2026-10-27): code and tests done, `--dry-run` verified on the 223 labeled messages; no API run yet (no key in `.env`); `hr gate` not built
+  - Status (2026-10-27): code and tests done, `--dry-run` verified on the 223 labeled messages; no API run yet (no key in `.env`). `hr gate` built (pipeline/gate.ts): scores only labeled rows and never prints classifier answers for unlabeled ones; reads the prompt hash from `data/classify_run.json`
 - [ ] **T6 (P1, human: ~2.5h labeling + 1h code / CC: ~10min code)** — pipeline/pool + labels — Pool of all 187 top-level keyword hits, plus classifier-flagged and 30 random miss checks; label columns = sheet columns + exclude + window_end
   - Surfaced by: A1/D4, OV4a/D12, OV4b/D13, OV1/D15, user direction
   - Files: pipeline/pool.ts, review/labels.csv
   - Verify: `hr gate` reports P/R, field accuracy with n, and both miss-check results
-  - Status (2026-10-27): `hr pool` done (223 rows); labeling in progress; `--add-flagged` (miss check 1) after the first full classify
+  - Status (2026-10-27): `hr pool` done (223 rows); labeling in progress. `hr pool --add-flagged` (miss check 1) is built and refuses to run until every captured candidate is classified. Both miss checks show as `pool = miss_check` in the sheet, with membership in `review/pool.json`, so the sheet doesn't reveal classifier answers
 - [ ] **T7 (P1, human: ~5h / CC: ~30min)** — pipeline/offers — URL merge, 30-min deadline key, overlay with fingerprint + exclude, sheet = classifier ∪ labeled credits, limit = min(deadline, window_end), frame list (daily + 3 h + event-driven), `frameAt(D)`, `receipt()`
   - Surfaced by: D1, A4/D7, OV5, OV6a, OV4c/D14, OV1/D15, OV3/D16
   - Files: pipeline/offers.ts, pipeline/offers.test.ts

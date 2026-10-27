@@ -15,8 +15,11 @@ The file is UTF-8 CSV. In Google Sheets, use File → Import and untick **Conver
 There is one row per message, in `sponsors.json` channel order, then by time.
 
 - `pool = keyword`: the message matched the design doc's keyword list in the baseline. This covers 187 top-level hits in the locked 25, plus 6 replies that were also sent to the channel.
-- `pool = random`: one of the 30 random top-level non-hits (miss check 2, seed in `review/pool.json`).
-- `pool = flagged`: added later. The classifier flagged these as credit or dated outside the keyword hits (miss check 1).
+- `pool = miss_check`: a row from either miss check:
+  - one of the 30 random top-level non-hits (miss check 2);
+  - a non-hit the classifier flagged as credit or dated (miss check 1, added by `hr pool --add-flagged` after a full `hr classify`).
+
+  The sheet doesn't say which, so a row's pool never tells you what the classifier thought. Membership is in `review/pool.json`.
 - `subtype = thread_broadcast`: a thread reply also sent to the channel. Label it like any other row. The gate reports these 6 separately from the 187.
 - `in_capture = n`: the extension didn't capture this message. Label it from `text`, which is then the baseline's Slack markup. Day 1 had 0 such rows.
 
@@ -31,7 +34,7 @@ Use exactly these values. Leave a cell empty when it doesn't apply.
 | `is_credit` | `y` / `n` | `y` if the post offers hackers something they can claim without winning: API or cloud credits, free usage, promo codes, discounts. Credits that only go to prize winners are `n` (write "prize" in `notes`). |
 | `is_dated` | `y` / `n` | `y` if the post states a time limit for hackers to act: a deadline (submission, form, claim, RSVP) or a claim window. Start times of talks or food are not limits. It's `y` exactly when `deadline_iso` or `window_end` is filled, or `deadline_status` is `unresolved`. |
 | `exclude` | `y` / `n` | `y` if the post talks about credits or a deadline but offers nothing. Examples: a hacker's question ("do we only get $5 of credit?"), a complaint, "codes ran out". Then `is_credit = n`. |
-| `credits_in_post` | `0`, `1`, `2`… | The number of distinct credit offers in the post. Fill the amount fields below only when it is `1`. For `2` or more, describe them in `notes`. |
+| `credits_in_post` | `0`, `1`, `2`… | The number of distinct credit offers in the post. Required when `is_credit = y`. Fill the amount fields below only when it is `1`. For `2` or more, describe them in `notes`. |
 | `amount_text` | text | The amount exactly as written, e.g. `$50 in Azure credits`, `up to $200`, `1M tokens`. |
 | `amount_usd_per_person` | number | Only when the post states a USD amount per person, e.g. "$50 credits for every hacker" → `50`. Never compute one: $100 per team is not $25 a person. Leave it empty for up-to, per-team, pool, tokens and hours. No `$` sign. |
 | `amount_basis` | `per_person` / `per_team` / `pool` / `up_to` / `unknown` | How the stated amount is given out. `unknown` if an amount is stated with no basis. |
@@ -42,9 +45,13 @@ Use exactly these values. Leave a cell empty when it doesn't apply.
 
 ## What the gate reads
 
-- Credit positives: `is_credit = y`. Dated positives: `is_dated = y`.
+`bun run hr gate` scores only labeled rows: `is_credit` and `is_dated` both filled, and nothing malformed. Other rows are skipped and counted, and nothing the classifier said about them is printed. A row where one of the two is filled counts as incomplete; check it with `hr pool --check`.
+
+- Credit positives: `is_credit = y`. Dated positives: `is_dated = y`. A message is predicted credit if it has a `credit` item, and dated if any item has a deadline status other than `none`.
+- Precision and recall cover the keyword hits plus the labeled rows the classifier flags outside them (D12). The random 30 and the flagged rows are each reported separately as miss checks.
 - Capture recall: positives with `in_capture = y` out of all positives.
 - Field accuracy:
-  - `amount_usd_per_person` exact (an empty cell must stay empty) on single-credit rows.
-  - `deadline_iso` to the day, or to the minute when a time is stated (no `date-only`).
+  - `amount_usd_per_person` exact on single-credit rows. An empty cell must stay unpriced, and a missed credit item counts as wrong.
+  - `deadline_iso`, or `window_end` when there is no deadline, matched by any classifier deadline in the post: to the minute when a time is stated, to the day when `notes` says `date-only`.
+  - `unresolved`-only labels are reported apart.
 - Every percentage is reported with its count, top-level and `thread_broadcast` rows separately.

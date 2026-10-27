@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCsv, readTable, toCsv } from "./csv.ts";
 import { COLUMNS, labelProblems, readLabels, type LabelRow } from "./labels.ts";
-import { buildRows, KEYWORD_RE, selectPool, writeSheet, type Candidate, type Sponsors } from "./pool.ts";
+import { buildRows, KEYWORD_RE, selectPool, withFlagged, writeSheet, type Candidate, type Sponsors } from "./pool.ts";
 import { messageId, type Message } from "./schema.ts";
 import { tsToEventIso, tsToEventIsoWithDay } from "./time.ts";
 
@@ -77,6 +77,18 @@ describe("selectPool", () => {
   });
 });
 
+describe("miss checks are blinded in the sheet", () => {
+  test("random and flagged rows both show pool = miss_check; flagged skips hits and random picks", () => {
+    const cands = [cand(1, "$5 credits"), cand(2, "see you at the booth"), cand(3, "booth closes soon-ish"), cand(4, "hi")];
+    const base = { keyword: [cands[0]!], random: [cands[3]!], flagged: [] };
+    const sel = withFlagged(base, cands, new Set([cands[0]!.id, cands[1]!.id, cands[3]!.id]));
+    expect(sel.flagged.map((c) => c.id)).toEqual([cands[1]!.id]);
+    const sponsors: Sponsors = { "spons-a": { sponsor: "A", kind: "sponsor", aliases: [] } };
+    const { rows } = buildRows(sel, { sponsors, captured: new Map(), workspace: "https://w", existing: [] });
+    expect(rows.map((r) => r.pool)).toEqual(["keyword", "miss_check", "miss_check"]);
+  });
+});
+
 describe("buildRows", () => {
   const sponsors: Sponsors = {
     "0-announcements": { sponsor: "event", kind: "event", aliases: [] },
@@ -103,7 +115,7 @@ describe("buildRows", () => {
   ]);
 
   test("sponsors.json order, capture text when captured, baseline text and a built permalink when not", () => {
-    const { rows } = buildRows({ keyword: [a, b], random: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] });
+    const { rows } = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] });
     expect(rows.map((r) => [r.channel, r.in_capture, r.text, r.author, r.permalink])).toEqual([
       ["0-announcements", "n", "deadline tonight", "Ada", "https://w.slack.com/archives/C0/p1792800001000000"],
       ["spons-a", "y", "$10 credits <https://a.dev/claim>", "Ada [A Corp]", "https://w.slack.com/archives/C1/p1792800002000000"],
@@ -111,12 +123,12 @@ describe("buildRows", () => {
   });
 
   test("re-running keeps every label column; labeled rows that left the pool are kept, not dropped", () => {
-    const first = buildRows({ keyword: [a, b], random: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] }).rows;
+    const first = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] }).rows;
     first[1]!.is_credit = "y";
     first[1]!.amount_usd_per_person = "10";
     first[1]!.amount_basis = "per_person";
     first[0]!.notes = "checked";
-    const again = buildRows({ keyword: [a], random: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: first });
+    const again = buildRows({ keyword: [a], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: first });
     expect(again.rows[0]).toMatchObject({ message_id: a.id, is_credit: "y", amount_usd_per_person: "10", amount_basis: "per_person" });
     expect(again.orphans.map((r) => [r.message_id, r.notes])).toEqual([[b.id, "checked"]]);
 
@@ -148,8 +160,8 @@ describe("labelProblems", () => {
         }),
       ),
     ).toEqual([]);
-    expect(labelProblems(row({ is_credit: "y", is_dated: "y", deadline_status: "unresolved" }))).toEqual([]);
-    expect(labelProblems(row({ is_credit: "y", is_dated: "y", window_end: "2026-10-24T19:00-07:00", deadline_status: "none" }))).toEqual([
+    expect(labelProblems(row({ is_credit: "y", credits_in_post: "1", is_dated: "y", deadline_status: "unresolved" }))).toEqual([]);
+    expect(labelProblems(row({ is_credit: "y", credits_in_post: "1", is_dated: "y", window_end: "2026-10-24T19:00-07:00", deadline_status: "none" }))).toEqual([
       "is_dated = y but deadline_status = none",
     ]);
   });
@@ -164,5 +176,6 @@ describe("labelProblems", () => {
       "deadline_iso must look like 2026-10-25T09:00-07:00",
     ]);
     expect(labelProblems(row({ is_dated: "n", window_end: "2026-10-24T19:00-07:00" }))).toEqual(["is_dated = n but a deadline or window_end is filled"]);
+    expect(labelProblems(row({ is_credit: "y" }))).toEqual(["is_credit = y needs credits_in_post 1 or more"]);
   });
 });

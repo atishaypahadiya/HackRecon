@@ -1,7 +1,7 @@
 // `hr pool`: builds the day-2 labeling sheet (D12). The pool is drawn from the slackdump baseline
 // (a sanctioned baseline use: labels must cover messages the capture missed, so capture recall can
 // be measured); text, author and permalink come from the capture when the message is in it.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { toCsv } from "./csv.ts";
 import { expectedAuthorNames, isTopLevel, readChannel, rowClass, type SlackExport } from "./export.ts";
@@ -63,7 +63,10 @@ function rng(seed: number): () => number {
 
 export interface Selection {
   keyword: Candidate[];
+  /** Miss check 2 (D12): random real top-level non-hits. */
   random: Candidate[];
+  /** Miss check 1 (D12): non-hits the classifier flagged as credit or dated, added by --add-flagged. */
+  flagged: Candidate[];
 }
 
 /** Every keyword hit (real top-level and broadcast), plus `randomN` real top-level non-hits.
@@ -79,7 +82,35 @@ export function selectPool(cands: Candidate[], seed = DEFAULT_SEED, randomN = RA
     const j = Math.floor(next() * (i + 1));
     [rest[i], rest[j]] = [rest[j]!, rest[i]!];
   }
-  return { keyword, random: [...kept, ...rest.slice(0, Math.max(0, randomN - kept.length))] };
+  return { keyword, random: [...kept, ...rest.slice(0, Math.max(0, randomN - kept.length))], flagged: [] };
+}
+
+/** Miss check 1: candidates outside the keyword hits and the random draw whose id is flagged
+ *  (classifier said credit or dated now, or on an earlier --add-flagged; never removed). */
+export function withFlagged(sel: Selection, cands: Candidate[], flaggedIds: Set<string>): Selection {
+  const taken = new Set([...sel.keyword, ...sel.random].map((c) => c.id));
+  return { ...sel, flagged: cands.filter((c) => flaggedIds.has(c.id) && !taken.has(c.id)) };
+}
+
+/** review/pool.json. Which miss check a row belongs to lives here, not in the sheet: the sheet shows
+ *  `miss_check` for both, so a flagged row doesn't tell the labeler what the classifier said. */
+export interface PoolMeta {
+  built_at: string;
+  runs: string[];
+  channels: string[];
+  keyword_regex: string;
+  keyword_flags: string;
+  seed: number;
+  random_n: number;
+  random_ids: string[];
+  flagged_ids: string[];
+  /** When the flagged check last ran, under which classifier prompt, over how many messages. */
+  flagged_check?: { at: string; prompt_hash: string; classified: number; candidates: number };
+  counts: Record<string, number>;
+}
+
+export function readPoolMeta(path: string): PoolMeta | null {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as PoolMeta) : null;
 }
 
 export function permalinkFor(workspace: string, channelId: string, ts: string): string {
@@ -103,7 +134,7 @@ export interface Built {
 export function buildRows(sel: Selection, o: BuildOpts): Built {
   const order = Object.keys(o.sponsors);
   const prev = new Map(o.existing.map((r) => [r.message_id, r]));
-  const tagged = [...sel.keyword.map((c) => ({ c, pool: "keyword" })), ...sel.random.map((c) => ({ c, pool: "random" }))];
+  const tagged = [...sel.keyword.map((c) => ({ c, pool: "keyword" })), ...[...sel.random, ...sel.flagged].map((c) => ({ c, pool: "miss_check" }))];
   tagged.sort((a, b) => order.indexOf(a.c.channel) - order.indexOf(b.c.channel) || (a.c.ts < b.c.ts ? -1 : a.c.ts > b.c.ts ? 1 : 0));
   const rows = tagged.map(({ c, pool }) => {
     const m = o.captured.get(c.id);
@@ -125,7 +156,7 @@ export function buildRows(sel: Selection, o: BuildOpts): Built {
     return row;
   });
   const inPool = new Set(rows.map((r) => r.message_id));
-  const orphans = o.existing.filter((r) => !inPool.has(r.message_id) && (hasLabel(r) || r.pool === "flagged"));
+  const orphans = o.existing.filter((r) => !inPool.has(r.message_id) && hasLabel(r));
   return { rows, orphans };
 }
 
