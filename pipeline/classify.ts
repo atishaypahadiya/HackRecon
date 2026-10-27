@@ -9,8 +9,9 @@ import type { Sponsors } from "./pool.ts";
 import type { PosterRole } from "./roles.ts";
 import { AMOUNT_BASES, AMOUNT_UNITS, DEADLINE_STATUSES, ITEM_KINDS, type Item, type Message } from "./schema.ts";
 import { ISO_WITH_OFFSET, tsToEventIsoWithDay } from "./time.ts";
+import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
 
-export const MODEL = "claude-haiku-5-5";
+export const MODEL = "claude-haiku-5-5" as const;
 /** Haiku 5.5 defaults to medium; set explicitly so the cache key names it. */
 export const EFFORT = "medium" as const;
 /** Adaptive thinking counts toward max_tokens; the JSON itself is small. */
@@ -33,6 +34,9 @@ export interface ClassifyRun {
   classified: string[];
   /** Message ids that failed this run (D10): scored as predicted negative. */
   errors: string[];
+  /** This run's API calls only (cached messages cost nothing). */
+  usage?: Usage;
+  cost_usd?: number;
 }
 
 export interface EventConfig {
@@ -69,6 +73,7 @@ export const OUTPUT_SCHEMA = {
           "amount_usd_per_person",
           "deadline_iso",
           "deadline_status",
+          "event_start_iso",
           "urls",
         ],
         properties: {
@@ -81,6 +86,7 @@ export const OUTPUT_SCHEMA = {
           amount_usd_per_person: nullable({ type: "number" }),
           deadline_iso: nullable({ type: "string" }),
           deadline_status: { type: "string", enum: [...DEADLINE_STATUSES] },
+          event_start_iso: nullable({ type: "string" }),
           urls: { type: "array", items: { type: "string" } },
         },
       },
@@ -98,6 +104,7 @@ export interface RawItem {
   amount_usd_per_person: number | null;
   deadline_iso: string | null;
   deadline_status: Item["deadline_status"];
+  event_start_iso: string | null;
   urls: string[];
 }
 
@@ -110,7 +117,7 @@ export function scheduleLines(e: EventConfig): string {
   return lines.join("\n");
 }
 
-export function systemPrompt(e: EventConfig): string {
+export function systemPrompt(e: EventConfig, rules: string): string {
   return `You extract offers and deadlines from one Slack post in a sponsor or event channel of ${e.event}, a hackathon. Hackers use your output to see what they could claim and by when, and every number they see must come from the post itself.
 
 Return {"items": [...]} with one item per distinct offer or deadline in the post. Return {"items": []} when there is none: chatter, thanks, introductions, technical help, logistics with nothing offered and no time limit.
@@ -119,7 +126,7 @@ Kinds:
 - credit: something any hacker or team can claim without winning: API or cloud credits, free usage or plan upgrades, promo codes, discounts.
 - prize: awarded to winners of a track or challenge, including prizes paid in credits.
 - job: jobs, internships, recruiting.
-- workshop: talks, workshops, office hours or demos at a stated time.
+- workshop: talks, workshops, office hours or demos at a stated time (the time goes in event_start_iso).
 - deadline: a time limit for hackers that isn't part of another item in this post (submissions due, a form closing, RSVP by).
 - other: any other concrete thing offered to hackers (swag, hardware, food), only when it is offered rather than mentioned.
 A post that bundles two credit programs and a prize yields three items.
@@ -133,14 +140,25 @@ Fields:
 - amount_unit: USD for dollar amounts; credits, tokens or hours when stated in those; other otherwise, including when there is no amount.
 - amount_basis: per_person, per_team, pool (a total shared by many), up_to ("up to $X"), or unknown (an amount with no stated basis, or no amount).
 - amount_usd_per_person: only when amount_unit is USD and amount_basis is per_person: the stated number. Otherwise null. Never compute or estimate it; $100 per team is not $25 per person.
-- deadline_iso: when the item must be acted on, ISO 8601 with the event offset, e.g. 2026-10-25T09:00:00-07:00. Resolve relative times ("tonight", "Sunday 11:59pm", "in 2 hours", "end of hacking") from the post's posted_at and the schedule below. A date with no time means 23:59:00 that day. null when it can't be pinned to an instant.
-- deadline_status: explicit (a calendar date is stated), resolved_relative (you resolved a relative time or a schedule reference), unresolved (a deadline is mentioned but can't be pinned; deadline_iso null), none (no deadline; deadline_iso null).
+- deadline_iso: a time limit hackers must act by: a deadline (submission, form, claim, RSVP) or the end of a claim window stated in the post. ISO 8601 with the event offset, e.g. 2026-10-25T09:00:00-07:00. Resolve relative times ("tonight", "Sunday 11:59pm", "in 2 hours", "end of hacking") from the post's posted_at and the schedule below. A date with no time means 23:59:00 that day. null when there is no limit or it can't be pinned to an instant. Start times of talks, workshops, food or other events are not limits: they go in event_start_iso, never here.
+- deadline_status: explicit (a calendar date is stated), resolved_relative (you resolved a relative time or a schedule reference), unresolved (a limit is mentioned but can't be pinned; deadline_iso null), none (no limit, including an item that only has a start time; deadline_iso null).
+- event_start_iso: when a workshop, talk, office hours, demo, meal or other scheduled event starts, resolved like deadline_iso. null when the item isn't a scheduled event or no start time is stated. It never makes an item dated.
 - urls: links from the post's links list that belong to this item (claim pages, forms, docs), copied exactly; [] if none.
 
 Names in posts are redacted as [person] and @person; ignore them.
 
 Event schedule (timezone ${e.timezone}, UTC-07:00 during the event):
-${scheduleLines(e)}`;
+${scheduleLines(e)}
+
+The same posts are labeled by the rules below, quoted verbatim from the labeling guide. They describe one row per post in a labeling sheet, not your output, but your items must agree with them:
+- is_credit = y exactly when you return a credit item; credits_in_post is the number of credit items.
+- is_dated = y exactly when some item has deadline_status explicit, resolved_relative or unresolved. A claim window's end (the sheet's window_end) goes in that item's deadline_iso.
+- exclude = y: the post offers nothing, so no credit item.
+- amount_text, amount_usd_per_person and amount_basis mean the same as your fields.
+
+<rules>
+${rules}
+</rules>`;
 }
 
 /** One message's request input. `user` is everything the model sees besides the system prompt. */
@@ -153,6 +171,7 @@ export interface ClassifyInput {
   key: string;
 }
 
+/** Covers the system prompt (schedule and the rules' Columns section included), the schema, model and effort. */
 export function promptHash(system: string): string {
   return sha256(JSON.stringify([MODEL, EFFORT, system, OUTPUT_SCHEMA])).slice(0, 16);
 }
@@ -187,6 +206,10 @@ export function checkItems(v: unknown, links: string[]): { items: RawItem[] } | 
     if (it.amount_usd_per_person !== null && !(it.amount_unit === "USD" && it.amount_basis === "per_person")) {
       return { error: `${at}: amount_usd_per_person set with ${it.amount_unit}/${it.amount_basis}` };
     }
+    if (it.amount_usd_per_person === null && it.amount_unit === "USD" && it.amount_basis === "per_person") {
+      return { error: `${at}: amount_unit USD and amount_basis per_person, so amount_usd_per_person is required (the stated number)` };
+    }
+    if (it.event_start_iso !== null && !ISO_WITH_OFFSET.test(it.event_start_iso)) return { error: `${at}.event_start_iso "${it.event_start_iso}" has no offset` };
     if (it.deadline_iso !== null) {
       if (!ISO_WITH_OFFSET.test(it.deadline_iso)) return { error: `${at}.deadline_iso "${it.deadline_iso}" has no offset` };
       if (it.deadline_status !== "explicit" && it.deadline_status !== "resolved_relative") return { error: `${at}: deadline_iso with status ${it.deadline_status}` };
@@ -223,7 +246,9 @@ export function writeJsonFile(path: string, v: unknown): void {
   writeFileSync(path, JSON.stringify(v, null, 2) + "\n");
 }
 
-/** Calls the model for one input: up to 1 + OUTPUT_RETRIES attempts on invalid output.
+/** Calls the model for one input: up to 1 + OUTPUT_RETRIES attempts on invalid output. Output that
+ *  fails validation goes back to the model unchanged (thinking blocks included) with the error, and
+ *  the model corrects it; a truncated or empty reply is retried fresh.
  *  API errors are retried by the SDK (maxRetries 2, with backoff); one that still fails ends here. */
 export async function classifyOne(
   client: Anthropic,
@@ -231,8 +256,10 @@ export async function classifyOne(
   hash: string,
   input: ClassifyInput,
   backoffMs = 1000,
-): Promise<{ entry: CacheEntry } | { error: ClassifyError }> {
+): Promise<({ entry: CacheEntry } | { error: ClassifyError }) & { usage: Usage }> {
   let reason = "";
+  let usage = NO_USAGE;
+  const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: input.user }];
   for (let attempt = 1; attempt <= 1 + OUTPUT_RETRIES; attempt++) {
     if (attempt > 1) await Bun.sleep(backoffMs * 2 ** (attempt - 2));
     try {
@@ -241,11 +268,17 @@ export async function classifyOne(
         max_tokens: MAX_TOKENS,
         system,
         output_config: { effort: EFFORT, format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
-        messages: [{ role: "user", content: input.user }],
+        messages: [...messages],
       });
+      usage = addUsage(usage, res.usage);
+      const sendBack = (why: string) =>
+        messages.push(
+          { role: "assistant", content: res.content },
+          { role: "user", content: `That output failed validation: ${why}. Return the corrected JSON for the same post.` },
+        );
       if (res.stop_reason === "refusal") {
         reason = `refusal${res.stop_details?.category ? ` (${res.stop_details.category})` : ""}`;
-        break; // not retried: the same input gets the same answer
+        return { error: { message_id: input.message.id, reason, attempts: attempt, at: new Date().toISOString() }, usage }; // not retried
       }
       if (res.stop_reason === "max_tokens") {
         reason = "hit max_tokens";
@@ -261,22 +294,24 @@ export async function classifyOne(
         parsed = JSON.parse(text.text);
       } catch {
         reason = "output is not JSON";
+        sendBack(reason);
         continue;
       }
       const checked = checkItems(parsed, input.message.links);
       if ("error" in checked) {
         reason = checked.error;
+        sendBack(reason);
         continue;
       }
-      return { entry: { message_id: input.message.id, prompt_hash: hash, model: MODEL, items: checked.items, classified_at: new Date().toISOString() } };
+      return { entry: { message_id: input.message.id, prompt_hash: hash, model: MODEL, items: checked.items, classified_at: new Date().toISOString() }, usage };
     } catch (e) {
       if (e instanceof Anthropic.APIError) {
-        return { error: { message_id: input.message.id, reason: `API ${e.status ?? "connection"}: ${e.message}`, attempts: attempt, at: new Date().toISOString() } };
+        return { error: { message_id: input.message.id, reason: `API ${e.status ?? "connection"}: ${e.message}`, attempts: attempt, at: new Date().toISOString() }, usage };
       }
       throw e;
     }
   }
-  return { error: { message_id: input.message.id, reason, attempts: 1 + OUTPUT_RETRIES, at: new Date().toISOString() } };
+  return { error: { message_id: input.message.id, reason, attempts: 1 + OUTPUT_RETRIES, at: new Date().toISOString() }, usage };
 }
 
 /** Cached items as schema Items. Sponsor names go through sponsors.json (sponsor or alias → sponsor). */
@@ -301,6 +336,7 @@ export function toItems(entry: CacheEntry, sponsors: Sponsors): Item[] {
     if (it.amount_value !== null) item.amount_value = it.amount_value;
     if (it.amount_usd_per_person !== null) item.amount_usd_per_person = it.amount_usd_per_person;
     if (it.deadline_iso !== null) item.deadline_iso = it.deadline_iso;
+    if (it.event_start_iso) item.event_start_iso = it.event_start_iso;
     return item;
   });
 }

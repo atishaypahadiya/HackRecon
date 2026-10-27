@@ -63,7 +63,7 @@ export interface GateInput {
   promptHash: string;
   /** Hash the current config would produce; differs when items.json is stale. */
   currentPromptHash: string;
-  /** Set once `hr pool --add-flagged` ran over the whole capture. */
+  /** Set once `hr pool --add-flagged` ran over the whole capture under the scored prompt. */
   flaggedCheckRan: boolean;
   /** The Opus judge's run record (review/prelabel_run.json) and the prompt hash the config gives now. */
   judge?: { model: string; promptHash: string; currentPromptHash: string } | null;
@@ -329,7 +329,7 @@ export function formatGate(rep: GateReport): string {
   L.push(`miss check 2, random ${rep.random.of} (outside the keyword list): ${rep.random.labeled} labeled`);
   L.push(`  credit positives found ${rep.random.credit_found.d}, classifier caught ${show(rep.random.credit_found)}`);
   L.push(`  dated positives found ${rep.random.dated_found.d}, classifier caught ${show(rep.random.dated_found)}`);
-  if (!rep.flagged.ran) L.push("miss check 1, classifier-flagged outside the hits: not run yet (bun run hr classify, then bun run hr pool --add-flagged)");
+  if (!rep.flagged.ran) L.push("miss check 1, classifier-flagged outside the hits: not run for this classifier prompt (bun run hr classify, then bun run hr pool --add-flagged, then bun run hr prelabel)");
   else {
     L.push(`miss check 1, classifier-flagged outside the hits: ${rep.flagged.labeled} labeled (${rep.flagged.of} rows added to the sheet)`);
     L.push(`  regex gaps found: credit ${count(rep.flagged.credit_found)}, dated ${count(rep.flagged.dated_found)}`);

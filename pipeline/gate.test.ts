@@ -199,7 +199,7 @@ describe("miss checks", () => {
     const r = scoreGate(input([gap, falseFlag], [item(gap.message_id, { amount_usd_per_person: 5 }), item(falseFlag.message_id)], { flaggedIds: new Set([gap.message_id, falseFlag.message_id]) }));
     expect(r.flagged).toMatchObject({ ran: true, labeled: 2, of: 2 });
     expect(r.flagged.credit_found.d).toBe(1);
-    expect(formatGate(scoreGate(input([gap], [], { flaggedCheckRan: false })))).toContain("miss check 1, classifier-flagged outside the hits: not run yet");
+    expect(formatGate(scoreGate(input([gap], [], { flaggedCheckRan: false })))).toContain("miss check 1, classifier-flagged outside the hits: not run for this classifier prompt");
   });
 });
 
