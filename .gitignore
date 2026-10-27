@@ -1,0 +1,4 @@
+.claude/skills/
+.gstack/
+node_modules/
+.env
