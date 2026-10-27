@@ -27,6 +27,7 @@ import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport 
 import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
 import { labelProblems, LABELS_PATH, POOL_META_PATH, readLabels } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
+import { labelApp } from "./label.ts";
 import {
   buildRows,
   candidatesFromExport,
@@ -64,6 +65,9 @@ const USAGE = `usage:
       hr classify) every non-hit the classifier flags as credit or dated. Which is which is kept in
       ${POOL_META_PATH} so the sheet doesn't reveal classifier answers. Re-running keeps every label
       column. --check only validates the labels entered so far. Labeling rules: docs/labeling.md
+  bun run hr label [--port N] [--open]
+      Local labeling page for ${LABELS_PATH} on 127.0.0.1: one row at a time, keys c/d/n/x, saves each
+      row as you go and resumes at the first unlabeled row. Never shows classifier output. Ctrl-C to stop.
   bun run hr gate [--json OUT]
       Scores ${ITEMS_PATH} against the labeled rows of ${LABELS_PATH}: capture recall, credit and dated
       precision/recall, amount and deadline accuracy, both miss checks, with counts and the prompt hash.
@@ -84,6 +88,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "organizers") return organizers(rest);
   if (cmd === "classify") return classify(rest);
   if (cmd === "gate") return gate(rest);
+  if (cmd === "label") return label(rest);
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -253,6 +258,21 @@ function pool(args: string[]): number {
   console.log(`wrote ${POOL_META_PATH} (which miss check each miss_check row belongs to)`);
   printLabelProblems([...rows, ...orphans]);
   return 0;
+}
+
+async function label(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { port: { type: "string", default: "4317" }, open: { type: "boolean", default: false } } });
+  if (!readLabels().length) {
+    console.error(`${LABELS_PATH} not found or empty: run \`bun run hr pool\` first`);
+    return 2;
+  }
+  const app = labelApp(LABELS_PATH);
+  const server = Bun.serve({ hostname: "127.0.0.1", port: Number(values.port), fetch: app.fetch });
+  const url = `http://127.0.0.1:${server.port}/`;
+  console.log(`labeling ${LABELS_PATH} at ${url} (saves after each row; Ctrl-C to stop)`);
+  console.log("Close the sheet in any spreadsheet app while labeling here, or its next save will overwrite these labels.");
+  if (values.open) Bun.spawn(["open", url]);
+  return new Promise<number>(() => {}); // serve until Ctrl-C
 }
 
 function gate(args: string[]): number {
