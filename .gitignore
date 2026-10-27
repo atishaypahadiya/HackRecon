@@ -2,3 +2,4 @@
 .gstack/
 node_modules/
 .env
+fixtures/slack-dom/
