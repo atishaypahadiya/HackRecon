@@ -9,7 +9,6 @@ import type { Sponsors } from "./pool.ts";
 import {
   applyJudge,
   checkLabels,
-  costUsd,
   JUDGE_EFFORT,
   JUDGE_MODEL,
   JUDGE_SCHEMA,
@@ -20,6 +19,7 @@ import {
   type Labels,
 } from "./prelabel.ts";
 import type { Message } from "./schema.ts";
+import { costUsd } from "./usage.ts";
 
 const event: EventConfig = {
   event: "Cal Hacks 13.0",
@@ -141,8 +141,10 @@ describe("judgeOne", () => {
     expect(bad.calls.length).toBe(3);
   });
 
-  test("cost at list price: $4 in, $20 out, $0.20 cache read, $5 cache write per MTok", () => {
-    expect(costUsd({ input: 1e6, output: 1e6, cache_read: 1e6, cache_write: 1e6 })).toBeCloseTo(29.2, 6);
+  test("cost at list price: Opus $4 in, $20 out, $0.20 cache read, $5 cache write per MTok; Haiku a fortieth", () => {
+    const m = { input: 1e6, output: 1e6, cache_read: 1e6, cache_write: 1e6 };
+    expect(costUsd(m, "claude-opus-5-5")).toBeCloseTo(29.2, 6);
+    expect(costUsd(m, "claude-haiku-5-5")).toBeCloseTo(0.735, 6);
   });
 });
 

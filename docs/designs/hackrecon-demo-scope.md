@@ -73,7 +73,7 @@ Approach A's pipeline, plus a day slider with "new since yesterday" badges, a mo
 ### Schema
 
 - `messages`: `id` (`<channel_id>:<ts>`), `channel_id`, `channel_name`, `ts`, `thread_ts?`, `author_name`, `author_title?`, `text`, `links[]`, `permalink`, `captured_at`, `run_id`
-- `items` (zero or more per message): `message_id`, `item_index`, `kind` (credit | job | prize | workshop | deadline | other), `sponsor` (normalized via `sponsors.json`), `offer_key`, `amount_text`, `amount_value?`, `amount_unit` (USD | credits | tokens | hours | other), `amount_basis` (per_person | per_team | pool | up_to | unknown), `amount_usd_per_person?`, `deadline_iso?` (with an explicit offset), `deadline_status` (explicit | resolved_relative | unresolved | none), `urls[]`, `model`, `classified_at`
+- `items` (zero or more per message): `message_id`, `item_index`, `kind` (credit | job | prize | workshop | deadline | other), `sponsor` (normalized via `sponsors.json`), `offer_key`, `amount_text`, `amount_value?`, `amount_unit` (USD | credits | tokens | hours | other), `amount_basis` (per_person | per_team | pool | up_to | unknown), `amount_usd_per_person?`, `deadline_iso?` (with an explicit offset: a deadline or a claim window's end, never a start time), `deadline_status` (explicit | resolved_relative | unresolved | none), `event_start_iso?` (when a workshop, talk or other scheduled event starts; added 2026-10-27 after the first gate run), `urls[]`, `model`, `classified_at`
 - `reps`: `rep_key` (`<sponsor>|<author_name>`), `sponsor`, `author_name`, `author_title?`, `sample_message_id`, `opener`, `confirmed` (bool), `model`, `generated_at`
 - `runs`: `run_id`, `started_at`, `channels[]`, `message_count`, `source` (always `extension`)
 - The slackdump baseline lives at `~/projects/hackrecon-data/calhacks`, outside the repo. The compare step reads it filtered to the channels in `sponsors.json`, and nothing else uses it.
@@ -138,6 +138,7 @@ Approach A's pipeline, plus a day slider with "new since yesterday" badges, a mo
 - **New badge:** `ts` after the previous frame and at or before this frame (D16).
 - **Time limit (D15):** a credit's *limit* is its stated deadline or a claim window stated in the post or its offer group, whichever is earlier (e.g. "$50 credits at the workshop happening now", "6:00–7:00, handing out credits"). The window end is recorded in a `window_end` column in the day-2 labels and the credit sheet, filled only from the post's own text. Wherever the money clock and Missed rules below say "deadline", read "limit". Credits with neither show "offered, no stated limit".
 - **Money clock at D:** the sum of the amount at D over distinct credit groups that are priced at D and where either (deadline status at D = `resolved` and that deadline > D) or (deadline status at D = `none`). Offers whose status is `unresolved` are never counted. The clock **rises when credits are posted and drops when deadlines pass**.
+- **Only limits are dated.** An item is dated only by a deadline or a claim window (`deadline_iso`, `deadline_status` ≠ `none`). `event_start_iso` (a talk, workshop or food time) never counts as a deadline, never feeds K, and never moves an offer to Missed. It's shown as the event's time only.
 - **Expired at D:** offers whose resolved deadline at D is ≤ D move to a greyed "Missed" section labeled "missed on <date>". Offers with status `none` stay in their section labeled "no stated deadline". Offers with status `unresolved` stay in their section with a "deadline unclear" badge. The receipt counts everything that was offered, including missed offers.
 
 ### Capture mechanics
@@ -231,6 +232,12 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
   - Model settings: effort `high`, JSON output checked like `hr pool --check`, retries ×2, a cached system prompt, and a list-price cost in `review/prelabel_run.json`.
   - Hand rows are kept unless `--include-hand`.
   - `hr gate` names its reference labels and reports agreement with Opus. Opus labels from an outdated prompt are stale.
+- **Classifier fixes after the first gate run (2026-10-27, user direction).** The first run failed `dated_precision` and `amount_agreement`. Three fixes, then one rerun, results reported before any further prompt tuning, so the classifier isn't fit to the 260 Opus-labeled rows:
+  - the classify prompt carries the same Columns section of `docs/labeling.md` verbatim as the judge's, with a short mapping from sheet columns to item fields;
+  - items get `event_start_iso`, so talk and workshop times never land in `deadline_iso`;
+  - the validator requires `amount_usd_per_person` when `amount_unit = USD` and `amount_basis = per_person`, and a failed validation is sent back to the model with the error.
+  
+  Miss check 1 now counts only if `hr pool --add-flagged` ran on the current prompt's flags.
   - `hr label` stays as an optional hand-correction page; a save sets `labeler = hand`.
 - **Classifier:** `hr classify --labeled-only` classifies the 223 messages with `claude-haiku-5-5`:
   - structured JSON output, adaptive thinking at effort `medium`;
@@ -238,6 +245,38 @@ Scope is the **locked 25** in `config/sponsors.json` (D11) [measured: export, 97
   - cache key = message id + sha256(prompt, schema, model, effort, full redacted input including poster_role);
   - D10 retries, `--dry-run`.
 - **`config/event.json` (only sourced entries):** submissions due 2026-10-25 09:00, extended to 09:30, and the judging window 10:30–12:30, each with its 0-announcements permalink. **Hacking start and end are not stated in any announcement and are left null for the user to fill.** Until then, "end of hacking" deadlines come out `unresolved`.
+
+### Day-2 result (2026-10-27): gate accepted with dated precision failing
+
+**Outcome (user decision, 2026-10-27): accepted as-is. No more prompt tuning**, so the classifier isn't fit to the 260 Opus-labeled rows.
+
+- **Basis:** classifier `claude-haiku-5-5`, prompt `20009fde3354ff3d`, 1,007 of 1,007 captured messages, 0 errors. Reference labels: 261 rows by `claude-opus-5-5` as an LLM judge (prompt `743650743af34e8f`, D21). Every percentage is **agreement with Opus, not accuracy**.
+
+| Metric | Result | Bar |
+|---|---|---|
+| capture recall | 100.0% (68/68) | ≥ 95% pass |
+| credit precision | 93.5% (43/46) | ≥ 85% pass |
+| credit recall | 97.7% (43/44) | ≥ 85% pass |
+| **dated precision** | **72.7% (24/33)** | **≥ 85% FAIL** |
+| dated recall | 88.9% (24/27) | ≥ 85% pass |
+| amount_usd_per_person | 95.5% (42/44; priced 3/4, unpriced 39/40) | ≥ 90% pass |
+| deadline_iso | 91.7% (22/24) | ≥ 90% pass |
+
+- **Scored set:** 209 rows (keyword hits plus classifier-flagged rows outside them). Positives: credit 44, dated 27. Miss check 2 (random 30): 0 credit and 0 dated positives. Miss check 1 (re-run under this prompt, 38 flagged rows in the sheet): regex gaps credit 1, dated 9.
+- **First run, before the fixes** (prompt `1e5a8d8a43dfe770`): dated precision 32.5% (25/77) and amount 88.6% (39/44) failed. Three fixes, then one rerun: the Columns rules in the classify prompt, `event_start_iso`, and the per-person amount validator with error feedback (see Day-2 setup).
+- **Fallback applied (D14):** classification failed only on dated precision, so nothing is cut.
+  - The receipt and money clock ship. Every input to them comes from the day-4 Opus-checked credit pass.
+  - Board cards for **non-credit dated items** (deadlines, prizes, jobs, other) get an **"unverified" badge** on their dates.
+  - Credit cards are checked by the credit pass and show no badge.
+  - K ("dated deadlines") counts dated items of any kind, so it inherits the failed precision until the day-4 K list scan. The receipt states it with that basis.
+- **Receipt preview** (`hr preview`, before offers.ts and the credit pass; for choosing the board headline, not a receipt number):
+  - 25 captured channels, 23 sponsors.
+  - 38 distinct credit offers after URL merge: 4 priced per person, totalling $270, and 34 unpriced.
+  - 4 offers with a deadline or claim window.
+  - 17 of 23 sponsors with at least one credit offer.
+  - 24 rep candidates at 15 sponsors, unconfirmed.
+  - K = 23.
+  - Two of the four priced offers are Anthropic "$50 of Claude API credits" posts (Oct 20, no link; Oct 23, with the claim link). URL merge can't join them. If the offer_key pass does, it's 3 priced offers and $220.
 
 ## Open Questions
 
@@ -845,16 +884,16 @@ Effort assumption: scaffolding/features ~30x, tests ~50x, human ÷ CC.
   - Surfaced by: R3-19, OV2
   - Files: pipeline/redact.ts, pipeline/redact.test.ts
   - Verify: `bun test pipeline/redact` (collision case)
-- [ ] **T5 (P1, human: ~3h / CC: ~20min)** — pipeline/classify — Haiku classifier with a JSON schema, cache key message_id + sha256(redacted text, prompt, schema, model, poster_role), retry ×2 → classify_errors.json, `poster_role` shape rule
+- [x] **T5 (P1, human: ~3h / CC: ~20min)** — pipeline/classify — Haiku classifier with a JSON schema, cache key message_id + sha256(redacted text, prompt, schema, model, poster_role), retry ×2 → classify_errors.json, `poster_role` shape rule
   - Surfaced by: CQ2/D9, CQ3/D10, OV6b/D17
   - Files: pipeline/classify.ts, pipeline/classify.test.ts
   - Verify: `bun test pipeline/classify`; `hr gate` prints the prompt hash and error count
-  - Status (2026-10-27): code and tests done, `--dry-run` verified on the 223 labeled messages; no API run yet (no key in `.env`). `hr gate` built (pipeline/gate.ts): scores only labeled rows and never prints classifier answers for unlabeled ones; reads the prompt hash from `data/classify_run.json`
-- [ ] **T6 (P1, human: ~2.5h labeling + 1h code / CC: ~10min code)** — pipeline/pool + labels — Pool of all 187 top-level keyword hits, plus classifier-flagged and 30 random miss checks; label columns = sheet columns + exclude + window_end
+  - Status (2026-10-27): done. All 1,007 captured messages classified under prompt `20009fde3354ff3d`; `hr classify` logs token usage and list-price cost to `data/classify_run.json`. Gate result accepted (see Day-2 result). `hr gate` built (pipeline/gate.ts): scores only labeled rows and never prints classifier answers for unlabeled ones; reads the prompt hash from `data/classify_run.json`
+- [x] **T6 (P1, human: ~2.5h labeling + 1h code / CC: ~10min code)** — pipeline/pool + labels — Pool of all 187 top-level keyword hits, plus classifier-flagged and 30 random miss checks; label columns = sheet columns + exclude + window_end
   - Surfaced by: A1/D4, OV4a/D12, OV4b/D13, OV1/D15, user direction
   - Files: pipeline/pool.ts, review/labels.csv
   - Verify: `hr gate` reports P/R, field accuracy with n, and both miss-check results
-  - Status (2026-10-27): `hr pool` done (260 rows now); labeling moved to the Opus judge (D21): `hr prelabel` built and dry-run verified, not run yet. `hr gate` reports agreement with Opus. `hr pool --add-flagged` (miss check 1) is built and refuses to run until every captured candidate is classified. Both miss checks show as `pool = miss_check` in the sheet, with membership in `review/pool.json`, so the sheet doesn't reveal classifier answers
+  - Status (2026-10-27): done. 261 rows labeled by the Opus judge (D21); `hr gate` run and accepted (see Day-2 result). `hr pool --add-flagged` (miss check 1) is built and refuses to run until every captured candidate is classified. Both miss checks show as `pool = miss_check` in the sheet, with membership in `review/pool.json`, so the sheet doesn't reveal classifier answers
 - [ ] **T7 (P1, human: ~5h / CC: ~30min)** — pipeline/offers — URL merge, 30-min deadline key, overlay with fingerprint + exclude, sheet = classifier ∪ labeled credits, limit = min(deadline, window_end), frame list (daily + 3 h + event-driven), `frameAt(D)`, `receipt()`
   - Surfaced by: D1, A4/D7, OV5, OV6a, OV4c/D14, OV1/D15, OV3/D16
   - Files: pipeline/offers.ts, pipeline/offers.test.ts

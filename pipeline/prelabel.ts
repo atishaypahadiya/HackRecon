@@ -8,21 +8,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { OUTPUT_RETRIES, scheduleLines, type ClassifyInput, type EventConfig } from "./classify.ts";
 import { HAND_LABELER, LABEL_COLUMNS, labelerOf, labelProblems, OPUS_LABELER, type LabelColumn, type LabelRow } from "./labels.ts";
+export { RULES_PATH, rulesSection } from "./labels.ts";
 import { AMOUNT_BASES, DEADLINE_STATUSES } from "./schema.ts";
+import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
 
-export const JUDGE_MODEL = "claude-opus-5-5";
+export const JUDGE_MODEL = "claude-opus-5-5" as const;
 /** Thinking is always on for Opus 5.5; effort is the only control (default medium). */
 export const JUDGE_EFFORT = "high" as const;
 /** Thinking counts toward max_tokens; the JSON itself is small. */
 export const JUDGE_MAX_TOKENS = 16000;
-export const RULES_PATH = "docs/labeling.md";
-export const RULES_HEADING = "## Columns";
 export const JUDGE_CACHE_PATH = "review/prelabel_cache.json";
 /** Which prompt the judge's labels in the sheet came from (read by `hr gate`). */
 export const JUDGE_RUN_PATH = "review/prelabel_run.json";
-/** USD per million tokens for claude-opus-5-5: input, output, cache read, 5-minute cache write
- *  (claude-api skill: shared/models.md and shared/prompt-caching.md). */
-export const JUDGE_PRICES = { input: 4, output: 20, cache_read: 0.2, cache_write: 5 } as const;
 
 export type Labels = Record<LabelColumn, string>;
 
@@ -34,14 +31,6 @@ export interface JudgeEntry {
   labeled_at: string;
 }
 export type JudgeCache = Record<string, JudgeEntry>;
-
-export interface Usage {
-  input: number;
-  output: number;
-  cache_read: number;
-  cache_write: number;
-}
-export const NO_USAGE: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
 
 export interface JudgeRun {
   model: string;
@@ -57,15 +46,6 @@ export interface JudgeRun {
   /** This run's API calls only (cached rows cost nothing). */
   usage: Usage;
   cost_usd: number;
-}
-
-/** The labeling rules exactly as written: the Columns section of docs/labeling.md, heading included. */
-export function rulesSection(md: string): string {
-  const start = md.split("\n").findIndex((l) => l.trim() === RULES_HEADING);
-  if (start < 0) throw new Error(`${RULES_PATH} has no "${RULES_HEADING}" section`);
-  const lines = md.split("\n").slice(start);
-  const end = lines.findIndex((l, i) => i > 0 && /^## /.test(l));
-  return (end < 0 ? lines : lines.slice(0, end)).join("\n").trim();
 }
 
 export function judgeSystemPrompt(rules: string, e: EventConfig): string {
@@ -127,24 +107,6 @@ export function checkLabels(v: unknown): { labels: Labels } | { error: string } 
   if (!/^[yn]$/.test(labels.is_credit) || !/^[yn]$/.test(labels.is_dated)) return { error: "is_credit and is_dated must be y or n" };
   const problems = labelProblems({ ...labels } as LabelRow);
   return problems.length ? { error: problems.join("; ") } : { labels };
-}
-
-function addUsage(u: Usage, r: Anthropic.Messages.Usage): Usage {
-  return {
-    input: u.input + r.input_tokens,
-    output: u.output + r.output_tokens,
-    cache_read: u.cache_read + (r.cache_read_input_tokens ?? 0),
-    cache_write: u.cache_write + (r.cache_creation_input_tokens ?? 0),
-  };
-}
-
-export function sumUsage(us: Usage[]): Usage {
-  return us.reduce((a, u) => ({ input: a.input + u.input, output: a.output + u.output, cache_read: a.cache_read + u.cache_read, cache_write: a.cache_write + u.cache_write }), NO_USAGE);
-}
-
-export function costUsd(u: Usage): number {
-  const p = JUDGE_PRICES;
-  return (u.input * p.input + u.output * p.output + u.cache_read * p.cache_read + u.cache_write * p.cache_write) / 1e6;
 }
 
 /** One row: up to 1 + OUTPUT_RETRIES attempts on output that fails the sheet's rules. API errors are

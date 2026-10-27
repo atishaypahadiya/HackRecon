@@ -8,6 +8,10 @@ import { AMOUNT_BASES, DEADLINE_STATUSES } from "./schema.ts";
 import { ISO_WITH_OFFSET } from "./time.ts";
 
 export const LABELS_PATH = "review/labels.csv";
+/** The labeling rules. Their Columns section goes verbatim into both prompts: the Opus judge's
+ *  (D21) and the classifier's, so both read the same rules. */
+export const RULES_PATH = "docs/labeling.md";
+export const RULES_HEADING = "## Columns";
 export const POOL_META_PATH = "review/pool.json";
 
 export const CONTEXT_COLUMNS = [
@@ -62,6 +66,19 @@ export function readLabels(path = LABELS_PATH): LabelRow[] {
 /** The labeler of a row with labels: its labeler cell, or hand when a label predates the column. */
 export function labelerOf(r: LabelRow): string {
   return r.labeler.trim() || (hasLabel(r) ? HAND_LABELER : "");
+}
+
+/** The labeling rules exactly as written: the Columns section of docs/labeling.md, heading included. */
+export function rulesSection(md: string): string {
+  const start = md.split("\n").findIndex((l) => l.trim() === RULES_HEADING);
+  if (start < 0) throw new Error(`${RULES_PATH} has no "${RULES_HEADING}" section`);
+  const lines = md.split("\n").slice(start);
+  const end = lines.findIndex((l, i) => i > 0 && /^## /.test(l));
+  return (end < 0 ? lines : lines.slice(0, end)).join("\n").trim();
+}
+
+export function readRules(path = RULES_PATH): string {
+  return rulesSection(readFileSync(path, "utf8"));
 }
 
 export function hasLabel(r: LabelRow): boolean {

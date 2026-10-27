@@ -24,7 +24,7 @@ import {
 } from "./classify.ts";
 import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
 import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
-import { HAND_LABELER, labelerOf, labelProblems, LABELS_PATH, OPUS_LABELER, POOL_META_PATH, readLabels } from "./labels.ts";
+import { HAND_LABELER, labelerOf, labelProblems, LABELS_PATH, OPUS_LABELER, POOL_META_PATH, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
 import {
@@ -42,9 +42,10 @@ import {
   type PoolMeta,
 } from "./pool.ts";
 import { messageFromRow, redactedInputs } from "./inputs.ts";
+import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
+import { formatPreview, preview } from "./preview.ts";
 import {
   applyJudge,
-  costUsd,
   JUDGE_CACHE_PATH,
   JUDGE_EFFORT,
   JUDGE_MODEL,
@@ -54,13 +55,11 @@ import {
   judgeSystemPrompt,
   RULES_PATH,
   rulesSection,
-  sumUsage,
   type JudgeCache,
   type JudgeRun,
   type Labels,
-  type Usage,
 } from "./prelabel.ts";
-import { buildOrganizers, ORGANIZERS_PATH } from "./roles.ts";
+import { buildOrganizers, loadOrganizerIds, ORGANIZERS_PATH, posterRole } from "./roles.ts";
 import { buildRun, MESSAGES_PATH, readMessages, readRuns, RUNS_PATH, saveRun } from "./runs.ts";
 import type { Item } from "./schema.ts";
 
@@ -95,6 +94,10 @@ const USAGE = `usage:
       precision/recall, amount and deadline match, both miss checks, with counts and both prompt hashes.
       With Opus labels every number is agreement with Opus, not accuracy, and the report says so.
       Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
+  bun run hr preview
+      Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
+      person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
+      receipt: URL merge only, no Opus credit pass, reps unconfirmed; it prints its basis and gaps.
   bun run hr organizers [--export DIR]
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
@@ -113,6 +116,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "gate") return gate(rest);
   if (cmd === "label") return label(rest);
   if (cmd === "prelabel") return prelabel(rest);
+  if (cmd === "preview") return receiptPreview(rest);
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -388,7 +392,7 @@ async function prelabel(args: string[]): Promise<number> {
     kept_hand: applied.hand,
     errors,
     usage,
-    cost_usd: Number(costUsd(usage).toFixed(4)),
+    cost_usd: Number(costUsd(usage, JUDGE_MODEL).toFixed(4)),
   };
   writeJsonFile(JUDGE_RUN_PATH, run);
   const opusRows = applied.rows.filter((r) => r.labeler === OPUS_LABELER);
@@ -398,10 +402,7 @@ async function prelabel(args: string[]): Promise<number> {
       `${errors.length} errors` + (errors.length ? ` (rerun to retry them)` : ""),
   );
   for (const e of errors) console.log(`  error ${e.message_id}: ${e.reason}`);
-  console.log(
-    `this run: ${usages.length} rows sent; tokens in ${usage.input}, out ${usage.output} (incl. thinking), cache read ${usage.cache_read}, ` +
-      `cache write ${usage.cache_write}; $${run.cost_usd.toFixed(2)} at list price. Wrote ${JUDGE_RUN_PATH}`,
-  );
+  console.log(`${formatUsage(usages.length, usage, JUDGE_MODEL)}. Wrote ${JUDGE_RUN_PATH}`);
   printLabelProblems(applied.rows);
   return errors.length ? 1 : 0;
 }
@@ -429,8 +430,9 @@ function gate(args: string[]): number {
     randomIds,
     flaggedIds: new Set(meta?.flagged_ids ?? []),
     promptHash: run.prompt_hash,
-    currentPromptHash: promptHash(systemPrompt(readEvent())),
-    flaggedCheckRan: !!meta?.flagged_check,
+    currentPromptHash: promptHash(systemPrompt(readEvent(), readRules())),
+    // Miss check 1 counts only if it ran on this prompt's flags: a reclassify flags a different set.
+    flaggedCheckRan: meta?.flagged_check?.prompt_hash === run.prompt_hash,
     judge: judgeRun
       ? { model: judgeRun.model, promptHash: judgeRun.prompt_hash, currentPromptHash: judgeHash(judgeSystemPrompt(rulesSection(readFileSync(RULES_PATH, "utf8")), readEvent())) }
       : null,
@@ -438,6 +440,32 @@ function gate(args: string[]): number {
   console.log(formatGate(report));
   if (values.json) writeJsonFile(values.json, report), console.log(`\nwrote ${values.json}`);
   return Object.values(report.pass).every(Boolean) && report.complete ? 0 : 1;
+}
+
+function receiptPreview(args: string[]): number {
+  const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: "config/sponsors.json" } } });
+  const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
+  if (!run) {
+    console.error(`${RUN_PATH} not found: run \`bun run hr classify\` first`);
+    return 2;
+  }
+  const sponsors = readSponsors(values.sponsors!);
+  const messages = readMessages();
+  const last = readRuns().at(-1);
+  const organizerIds = loadOrganizerIds();
+  const all = Object.values(sponsors);
+  const p = preview({
+    items: readJsonFile<Item[]>(ITEMS_PATH, []),
+    labels: readLabels(),
+    messages,
+    sponsors,
+    channels: last?.channels ?? [],
+    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+  });
+  const current = promptHash(systemPrompt(readEvent(), readRules()));
+  const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";
+  console.log(formatPreview(p, `classifier prompt ${run.prompt_hash}${stale}, ${run.classified.length} messages classified, run ${last?.run_id ?? "none"}`));
+  return 0;
 }
 
 function organizers(args: string[]): number {
@@ -481,7 +509,7 @@ async function classify(args: string[]): Promise<number> {
   }
   if (values.limit) selected = selected.slice(0, Number(values.limit));
 
-  const system = systemPrompt(readEvent());
+  const system = systemPrompt(readEvent(), readRules());
   const hash = promptHash(system);
   // Inputs for every captured message: items.json covers all of them classified under this prompt.
   const allInputs = redactedInputs(messages, sponsors, hash);
@@ -515,11 +543,13 @@ async function classify(args: string[]): Promise<number> {
     return 2;
   }
   const errors: ClassifyError[] = [];
+  const usages: Usage[] = [];
   let done = 0;
   const queue = [...todo];
   const worker = async () => {
     for (let i: ClassifyInput | undefined; (i = queue.shift()); ) {
       const r = await classifyOne(client, system, hash, i);
+      usages.push(r.usage);
       if ("entry" in r) cache[i.key] = r.entry;
       else errors.push(r.error);
       if (++done % 20 === 0) writeJsonFile(CACHE_PATH, cache), console.log(`  ${done}/${todo.length}`);
@@ -539,6 +569,8 @@ async function classify(args: string[]): Promise<number> {
     written_at: new Date().toISOString(),
     classified: classified.map((i) => i.message.id),
     errors: errors.map((e) => e.message_id),
+    usage: sumUsage(usages),
+    cost_usd: Number(costUsd(sumUsage(usages), MODEL).toFixed(4)),
   };
   writeJsonFile(RUN_PATH, run);
   console.log(
@@ -546,6 +578,7 @@ async function classify(args: string[]): Promise<number> {
       `${errors.length} errors` + (errors.length ? ` (see ${ERRORS_PATH})` : ""),
   );
   for (const e of errors) console.log(`  error ${e.message_id}: ${e.reason}`);
+  console.log(formatUsage(usages.length, run.usage!, MODEL));
   return errors.length ? 1 : 0;
 }
 

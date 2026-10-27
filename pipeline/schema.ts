@@ -63,8 +63,10 @@ export interface Item {
   amount_basis: AmountBasis;
   /** Set only when amount_unit = USD and amount_basis = per_person. Never estimated. */
   amount_usd_per_person?: number;
-  /** ISO 8601 with an explicit offset. */
+  /** A time limit hackers act by (deadline, or the end of a claim window). ISO 8601 with an explicit offset. */
   deadline_iso?: string;
+  /** When a workshop, talk or other scheduled event starts. Never a limit: not dated, never moves an offer to Missed. */
+  event_start_iso?: string;
   deadline_status: DeadlineStatus;
   urls: string[];
   model: string;
