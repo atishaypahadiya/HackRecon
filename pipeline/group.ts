@@ -179,6 +179,20 @@ export function checkGroups(v: unknown, ids: string[], links: Set<string> = new 
   return { offers: o.offers.map((f) => ({ ...f, posts: [...f.posts].sort((a, b) => Number(a.split(":")[1]) - Number(b.split(":")[1])) })), not_offers: o.not_offers };
 }
 
+/** Per-person amounts come from the day-2 Opus labels, not from the grouping pass: each offer takes the
+ *  amount_usd_per_person of its earliest source post whose label states one (basis per_person), and is
+ *  unpriced when none does. The grouping pass only decides which posts belong together. */
+export function withLabelAmounts(offers: Offer[], labels: Map<string, { amount_usd_per_person: string; amount_basis: string }>): Offer[] {
+  return offers.map((f) => {
+    const id = f.posts.find((p) => {
+      const l = labels.get(p);
+      return l?.amount_basis === "per_person" && /^\d+(\.\d+)?$/.test(l.amount_usd_per_person);
+    });
+    const usd = id ? labels.get(id)!.amount_usd_per_person : "";
+    return { ...f, amount_usd_per_person: usd, amount_basis: usd ? "per_person" : f.amount_basis === "per_person" ? "unknown" : f.amount_basis };
+  });
+}
+
 /** One streamed request; on output that fails the check, the error goes back to the model (up to OUTPUT_RETRIES). */
 export async function groupOffers(
   client: Anthropic,

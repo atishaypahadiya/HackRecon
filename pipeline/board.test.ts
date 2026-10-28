@@ -27,11 +27,16 @@ describe("excerpts", () => {
   test("plain text keeps link labels, drops the capture's hrefs and emoji codes, shortens bare URLs", () => {
     expect(plainText("Claim here <https://a.dev/x> now :tada: or see https://docs.b.dev/y/z")).toBe("Claim here now or see docs.b.dev");
     expect(plainText("form <https://f.dev/x|the form> !")).toBe("form the form!");
+    expect(plainText("Line one :wave:\n\n  Line two")).toBe("Line one\nLine two");
   });
 
   test("quotes the post that states the code, from the sentence that has it", () => {
     const texts = [{ raw: "Welcome all.", plain: "Welcome all." }, { raw: "Hi there. Use code ABC at checkout.", plain: "Hi there. Use code ABC at checkout." }];
-    expect(excerpt(texts, { promo_code: "ABC", amount_text: "", claim_url: "" })).toBe("…Use code ABC at checkout.");
+    expect(excerpt(texts, { promo_code: "ABC", amount_text: "", claim_url: "" })).toBe("Use code ABC at checkout.");
+    const long = "Hi. Head over to the portal and after a very long winding sentence enter ABC there. More after.";
+    expect(excerpt([{ raw: long, plain: long }], { promo_code: "ABC", amount_text: "", claim_url: "" }, 30)).toBe("Head over to the portal and…");
+    expect(excerpt([{ raw: "x", plain: "Intro line\nUse ABC now" }], { promo_code: "ABC", amount_text: "", claim_url: "" })).toBe("Use ABC now");
+    expect(excerpt([{ raw: "x", plain: "Hi. Then head to billing\nand enter ABC." }], { promo_code: "ABC", amount_text: "", claim_url: "" })).toBe("Then head to billing and enter ABC.");
     expect(excerpt([{ raw: "Yes all hackers get $50", plain: "Yes all hackers get $50" }], { promo_code: "", amount_text: "$50", claim_url: "" })).toBe("Yes all hackers get $50");
     expect(excerpt(texts, { promo_code: "", amount_text: "", claim_url: "" })).toBe("Welcome all.");
   });

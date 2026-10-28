@@ -97,33 +97,37 @@ const host = (u: string) => {
 };
 
 /** Post text as plain reading text: link labels kept (the capture writes anchors as `label <href>`, so the
- *  href goes), bare URLs shortened to their host, emoji codes dropped. */
+ *  href goes), bare URLs shortened to their host, emoji codes dropped. Line breaks are kept (one per break)
+ *  because they end sentences in Slack posts; excerpt() flattens them. */
 export function plainText(s: string): string {
   return s
     .replace(/<(https?:\/\/[^|>\s]+)\|([^>]*)>/g, "$2")
-    .replace(/\s*<https?:\/\/[^>\s]+>/g, "")
+    .replace(/[ \t]*<https?:\/\/[^>\s]+>/g, "")
     .replace(/https?:\/\/[^\s)>\]]+/g, (u) => host(u))
     .replace(/:[a-z0-9_+'-]+:/g, "")
-    .replace(/\s+([,.!?;:])/g, "$1")
-    .replace(/\s+/g, " ")
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ ?\n[\s]*/g, "\n")
     .trim();
 }
 
 /** The evidence: the post that states the offer (its code, then its amount, then its claim link, else the first),
- *  starting at the sentence that mentions it, about three lines long. */
+ *  from the start of the sentence that mentions it, trimmed at the end to about three lines. */
 export function excerpt(texts: { raw: string; plain: string }[], f: Pick<Offer, "promo_code" | "claim_url" | "amount_text">, max = 280): string {
   const keys = [f.promo_code, f.amount_text, f.claim_url].filter(Boolean);
   for (const k of [...keys, ""]) {
     const t = texts.find((x) => (k ? x.raw.includes(k) || x.plain.includes(k) : true));
     if (!t) continue;
     const at = k ? Math.max(0, t.plain.indexOf(k === f.claim_url ? host(k) : k)) : 0;
-    const start = Math.max(0, ...[". ", "! ", "? "].map((d) => {
-      const k = t.plain.lastIndexOf(d, at);
-      return k < 0 ? 0 : k + 2;
-    }));
-    const from = at - start > max / 2 ? at : start;
-    const body = t.plain.slice(from);
-    return (from > 0 ? "…" : "") + (body.length > max ? body.slice(0, max).replace(/\s+\S*$/, "") + "…" : body);
+    // Sentence ends: ". ", "! ", "? ", and a line break unless the next line carries on in lowercase.
+    let from = 0;
+    for (const m of t.plain.matchAll(/[.!?] |\n(?!\p{Ll})/gu)) {
+      const end = m.index + m[0].length;
+      if (end > at) break;
+      from = end;
+    }
+    const body = t.plain.slice(from).replace(/\n/g, " ");
+    return body.length > max ? body.slice(0, max).replace(/\s+\S*$/, "") + "…" : body;
   }
   return "";
 }

@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EventConfig } from "./classify.ts";
-import { checkGroups, GROUP_EFFORT, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type Offer } from "./group.ts";
+import { checkGroups, withLabelAmounts, GROUP_EFFORT, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type Offer } from "./group.ts";
 import { redactedInputs } from "./inputs.ts";
 import { rulesSection } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
@@ -66,6 +66,19 @@ describe("checkGroups", () => {
   });
   test("a post can belong to two offers", () => {
     expect("offers" in checkGroups({ offers: [offer({ posts: ids }), offer({ title: "Pro plan", amount_usd_per_person: "", amount_basis: "unknown", posts: ["C1:1.0"] })], not_offers: [] }, ids)).toBe(true);
+  });
+});
+
+describe("withLabelAmounts", () => {
+  test("the earliest source post's labeled per-person amount wins; the grouping pass's own amount never does", () => {
+    const L = (usd: string) => ({ amount_usd_per_person: usd, amount_basis: usd ? "per_person" : "" });
+    const labels = new Map([["C1:1.0", L("")], ["C1:2.0", L("20")], ["C1:3.0", L("25")]]);
+    const [a, b] = withLabelAmounts(
+      [offer({ amount_usd_per_person: "", amount_basis: "unknown", posts: ["C1:1.0", "C1:2.0", "C1:3.0"] }), offer({ posts: ["C1:1.0"] })],
+      labels,
+    );
+    expect(a).toMatchObject({ amount_usd_per_person: "20", amount_basis: "per_person" });
+    expect(b).toMatchObject({ amount_usd_per_person: "", amount_basis: "unknown" });
   });
 });
 

@@ -46,7 +46,7 @@ import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
 import { BOARD_DATA_PATH, BOARD_PAGE, boardData } from "./board.ts";
-import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type GroupResult } from "./group.ts";
+import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
   JUDGE_CACHE_PATH,
@@ -536,6 +536,7 @@ async function board(args: string[]): Promise<number> {
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
   const all = Object.values(sponsors);
+  const labels = readLabels();
   const data = boardData({
     event: event.event,
     timezone: event.timezone,
@@ -543,10 +544,10 @@ async function board(args: string[]): Promise<number> {
     channels: last?.channels ?? [],
     messages: readMessages(),
     sponsors,
-    offers: grouped.offers,
+    offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
     role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
-    permalinks: new Map(readLabels().map((r) => [r.message_id, r.permalink])),
+    permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
   writeJsonFile(BOARD_DATA_PATH, data);
   console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
@@ -589,10 +590,11 @@ function receiptPreview(args: string[]): number {
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
   const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
   if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
+  const labels = readLabels();
   const p = preview({
-    ...(fresh ? { opus: grouped.offers } : {}),
+    ...(fresh ? { opus: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))) } : {}),
     items: readJsonFile<Item[]>(ITEMS_PATH, []),
-    labels: readLabels(),
+    labels,
     messages,
     sponsors,
     channels: last?.channels ?? [],
