@@ -1,11 +1,13 @@
 // `hr preview`: the receipt's numbers from the current data, to choose the board headline before
-// day 3. It is not the receipt: offers.ts (offer_key, cross-message merges, deadline linking) and
-// the day-4 Opus credit pass aren't built, and reps aren't confirmed. It stands in for them:
-//   - credits: the classifier's credit items, overlaid with the day-2 Opus label where a row has one
-//     (what `hr sheet` pre-fills, D13): a label of "not a credit" drops the items, a single-credit
-//     label supplies the amount and limit, a credit the classifier missed is added (D14);
-//   - grouping: URL merge within a sponsor only (design doc, offer grouping step 1);
-//   - reps: candidates by the A5 signals, before the day-3 confirmation.
+// day 3. It is not the receipt: offers.ts isn't built and reps aren't confirmed. Offers come from
+// one of two sources:
+//   - the Opus grouping pass (`hr group`, review/offers.json) when it's current: distinct offers
+//     over the posts the judge labeled as credits, each with its source posts;
+//   - otherwise the stand-in: the classifier's credit items overlaid with the day-2 Opus label
+//     (a label of "not a credit" drops the items, a single-credit label supplies the amount and limit,
+//     a credit the classifier missed is added, D14), grouped by URL merge within a sponsor only.
+// Reps are candidates by the A5 signals, before the day-3 confirmation.
+import type { Offer } from "./group.ts";
 import { labelProblems, type LabelRow } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
 import type { PosterRole } from "./roles.ts";
@@ -23,11 +25,13 @@ export interface CreditOffer {
   limit_iso?: string;
   limit_unresolved: boolean;
   urls: string[];
-  source: "classifier" | "opus label";
+  source: "classifier" | "opus label" | "opus group";
 }
 
 export interface OfferGroup {
   sponsor: string;
+  /** From the Opus grouping pass only. */
+  title?: string;
   offers: CreditOffer[];
   /** The first priced offer's amount, by post time. */
   usd_per_person?: number;
@@ -119,6 +123,38 @@ export function urlMerge(offers: CreditOffer[]): OfferGroup[] {
   });
 }
 
+/** The Opus grouping pass's offers as groups, one member per source post. */
+export function opusGroups(offers: Offer[], messages: Map<string, Message>, permalinks: Map<string, string> = new Map()): OfferGroup[] {
+  return offers.map((f) => {
+    const usd = f.amount_usd_per_person ? Number(f.amount_usd_per_person) : undefined;
+    return {
+      sponsor: f.sponsor,
+      title: f.title,
+      offers: f.posts.map((id) => ({
+        message_id: id,
+        ts: messages.get(id)?.ts ?? id.split(":")[1]!,
+        sponsor: f.sponsor,
+        permalink: messages.get(id)?.permalink ?? permalinks.get(id) ?? "",
+        amount_text: f.amount_text,
+        ...(usd !== undefined ? { usd_per_person: usd } : {}),
+        ...(f.limit_iso ? { limit_iso: f.limit_iso } : {}),
+        limit_unresolved: f.limit_status === "unresolved",
+        urls: [],
+        source: "opus group" as const,
+      })),
+      ...(usd !== undefined ? { usd_per_person: usd } : {}),
+      amount_conflict: false,
+      has_limit: !!f.limit_iso,
+      limit_unresolved_only: !f.limit_iso && f.limit_status === "unresolved",
+    };
+  });
+}
+
+/** P: real top-level posts in the capture (no subtype, not an app or bot post), the same set the day-1 compare scores. */
+export function realPosts(messages: Message[]): number {
+  return messages.filter((m) => !m.subtype && m.author_kind !== "bot").length;
+}
+
 /** K: distinct (sponsor, deadline rounded to the nearest 30 minutes) over every dated item. */
 export function deadlineKeys(items: Item[]): number {
   const half = 30 * 60 * 1000;
@@ -142,6 +178,8 @@ export function repCandidates(messages: Message[], sponsors: Sponsors, role: (m:
 }
 
 export interface Preview {
+  grouping: "opus" | "url";
+  posts: number;
   channels: number;
   sponsors_in_capture: number;
   offers: number;
@@ -158,15 +196,27 @@ export interface Preview {
   dropped_by_label: number;
   added_by_label: number;
   priced_groups: OfferGroup[];
+  groups: OfferGroup[];
 }
 
-export function preview(o: { items: Item[]; labels: LabelRow[]; messages: Message[]; sponsors: Sponsors; channels: string[]; role: (m: Message) => PosterRole }): Preview {
+export function preview(o: {
+  items: Item[];
+  labels: LabelRow[];
+  messages: Message[];
+  sponsors: Sponsors;
+  channels: string[];
+  role: (m: Message) => PosterRole;
+  /** Current Opus grouping offers; without them the URL-merge stand-in is used. */
+  opus?: Offer[];
+}): Preview {
   const msgs = new Map(o.messages.map((m) => [m.id, m]));
-  const c = creditOffers(o.items, o.labels, msgs);
-  const groups = urlMerge(c.offers);
+  const c = o.opus ? { offers: [], dropped_by_label: 0, added_by_label: 0 } : creditOffers(o.items, o.labels, msgs);
+  const groups = o.opus ? opusGroups(o.opus, msgs, new Map(o.labels.map((r) => [r.message_id, r.permalink]))) : urlMerge(c.offers);
   const priced = groups.filter((g) => g.usd_per_person !== undefined);
   const sponsorNames = new Set(o.channels.map((ch) => o.sponsors[ch]?.sponsor).filter((s): s is string => !!s && s !== "event"));
   return {
+    grouping: o.opus ? "opus" : "url",
+    posts: realPosts(o.messages),
     channels: o.channels.length,
     sponsors_in_capture: sponsorNames.size,
     offers: groups.length,
@@ -183,6 +233,7 @@ export function preview(o: { items: Item[]; labels: LabelRow[]; messages: Messag
     dropped_by_label: c.dropped_by_label,
     added_by_label: c.added_by_label,
     priced_groups: priced,
+    groups,
   };
 }
 
@@ -190,8 +241,10 @@ export function formatPreview(p: Preview, basis: string): string {
   const L: string[] = [];
   L.push(`RECEIPT PREVIEW (not the receipt) — ${basis}`);
   L.push("");
+  L.push(`Headline: ${p.offers} offers from ${p.sponsors_with_credit} sponsors, found in ${p.posts} posts across ${p.channels} channels.`);
+  L.push("");
   L.push(`Found in ${p.channels} captured channels (${p.sponsors_in_capture} sponsors):`);
-  L.push(`  credit offers (distinct after URL merge)   ${p.offers}`);
+  L.push(`  credit offers (${p.grouping === "opus" ? "distinct, Opus grouping" : "distinct after URL merge"})${p.grouping === "opus" ? "  " : "   "}${p.offers}`);
   L.push(`    priced per person                        ${p.priced}`);
   L.push(`    unpriced                                 ${p.unpriced}`);
   L.push(`  $ total of priced per-person offers        $${p.usd_total}${p.amount_conflicts ? ` (${p.amount_conflicts} offers state two amounts; first one used)` : ""}`);
@@ -200,16 +253,35 @@ export function formatPreview(p: Preview, basis: string): string {
   L.push(`  reps found                                 ${p.reps.candidates} candidates at ${p.reps.sponsors} sponsors (unconfirmed; day 3 confirms)`);
   L.push(`  K dated deadlines (any kind)               ${p.deadline_keys}  (classifier items; dated precision failed the gate, so likely high)`);
   L.push("");
-  L.push("Priced offers:");
-  for (const g of p.priced_groups) {
-    const shown = g.offers.find((o) => o.usd_per_person !== undefined)!;
-    L.push(`  $${g.usd_per_person}  ${g.sponsor}  "${shown.amount_text}"  ${shown.permalink}${g.offers.length > 1 ? `  (+${g.offers.length - 1} merged)` : ""}`);
+  if (p.grouping === "opus") {
+    L.push("Offers and their source posts:");
+    const when = (ts: string) => new Date(Number(ts) * 1000).toLocaleString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const sorted = [...p.groups].sort((a, b) => Number(a.offers[0]!.ts) - Number(b.offers[0]!.ts));
+    sorted.forEach((g, i) => {
+      const f = g.offers[0]!;
+      const amount = g.usd_per_person !== undefined ? `$${g.usd_per_person}/person` : "unpriced";
+      const limit = f.limit_iso ? `limit ${f.limit_iso}` : g.limit_unresolved_only ? "limit unclear" : "no stated limit";
+      L.push(`  ${String(i + 1).padStart(2)}. ${g.sponsor}: ${g.title}${f.amount_text ? ` ("${f.amount_text}")` : ""}; ${amount}; ${limit}; ${g.offers.length} post${g.offers.length === 1 ? "" : "s"}`);
+      for (const o of g.offers) L.push(`        ${when(o.ts)}  ${o.permalink}`);
+    });
+  } else {
+    L.push("Priced offers:");
+    for (const g of p.priced_groups) {
+      const shown = g.offers.find((o) => o.usd_per_person !== undefined)!;
+      L.push(`  $${g.usd_per_person}  ${g.sponsor}  "${shown.amount_text}"  ${shown.permalink}${g.offers.length > 1 ? `  (+${g.offers.length - 1} merged)` : ""}`);
+    }
   }
   L.push("");
   L.push("Basis and gaps:");
-  L.push(`  - credits = classifier credit items, overlaid with the day-2 Opus label where a row has one (${p.dropped_by_label} item${p.dropped_by_label === 1 ? "" : "s"} dropped as not a credit, ${p.added_by_label} credit${p.added_by_label === 1 ? "" : "s"} the classifier missed added)`);
-  L.push("  - grouping is URL merge only: no offer_key pass yet, so reminders and cross-posts without a shared link still count twice");
-  L.push("  - no day-4 Opus credit pass yet: unresolved deadlines and amount conflicts are as the classifier or label left them");
+  if (p.grouping === "opus") {
+    L.push("  - offers = the Opus grouping pass (hr group) over the posts the day-2 Opus judge labeled as credits; posts it labeled not a credit are dropped");
+    L.push("  - amounts and limits are the grouping pass's reading of the posts, under the labeling rules; no hand check");
+  } else {
+    L.push(`  - credits = classifier credit items, overlaid with the day-2 Opus label where a row has one (${p.dropped_by_label} item${p.dropped_by_label === 1 ? "" : "s"} dropped as not a credit, ${p.added_by_label} credit${p.added_by_label === 1 ? "" : "s"} the classifier missed added)`);
+    L.push("  - grouping is URL merge only (run hr group for the Opus grouping): reminders and cross-posts without a shared link still count twice");
+    L.push("  - no Opus credit pass: unresolved deadlines and amount conflicts are as the classifier or label left them");
+  }
+  L.push(`  - posts = real top-level posts in the capture (no app or bot posts, no replies sent to the channel), the set the day-1 compare scores`);
   L.push("  - reps: sponsor-side posters by the A5 signals, before the day-3 confirmation");
   L.push("  - top-level posts only (thread replies not captured, D4)");
   return L.join("\n");

@@ -20,7 +20,7 @@
 
 **What:** Capture thread replies in the locked 25. Open each thread pane and record its replies, using the same `ts` key, the parent-message stop and the 5 × 1.5 s fallback.
 
-**Why:** The receipt is top-level only (D4). If the day-1 stretch misses, the footnote states "N of M credit mentions were thread replies, not included". This item closes that gap.
+**Why:** The summary (the receipt before D22) is top-level only (D4). If the day-1 stretch misses, the footnote states "N of M credit mentions were thread replies, not included". This item closes that gap.
 
 **Status (2026-10-27):** the day-1 stretch did not land, so this stays. Day 1 captured the locked 25 top-level only. Replies that were also sent to the channel are captured as top-level rows marked `thread_broadcast` (26 in run `day1-2026-10-27`). Other replies are not captured.
 
@@ -71,5 +71,17 @@
 **Effort:** S
 **Priority:** P2
 **Depends on:** the MLH reply
+
+### Money clock (cut from the demo board, D22)
+
+**What:** Bring back the money clock on the replay board. It showed the open per-person credit value at each frame D: the sum of the amount at D over distinct credit groups that are priced at D, where either the deadline status at D is `resolved` and that deadline is after D, or the status is `none`. Offers with status `unresolved` are never counted. It rises when credits are posted and drops when deadlines pass. The rule is the one removed from the design doc's Replay semantics, unchanged.
+
+**Why:** It was the demo's original hook (the Missed-It Receipt). It was cut after day 2 because only 4 of 38 credit offers stated a per-person amount ($270, possibly $220 after one merge), so the clock would barely move. The board leads with signal-in-noise instead.
+
+**Context:** Reconsider it when an event has enough priced, time-limited credits to make the line move, e.g. after the stretch 29 or thread capture adds priced offers, or for a live event under Approach B. It needs the offer aggregation in `offers.ts` (amount at D, deadline at D), which the board builds anyway.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** offers.ts (T7); enough priced offers to be worth showing
 
 ## Completed

@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HackRecon</title>
+<style>
+  /* Tokens: pipeline/label.html, as-is. */
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
+    --accent: #2f5bd3; --credit: #1f7a4d; --dated: #9a5b00; --excl: #a3312b; --chip: #efefea;
+    --bar: rgba(247, 247, 245, 0.82);
+    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --ink: #ecece6; --muted: #9c9c94; --line: #33332f;
+      --accent: #8aa8ff; --credit: #5cc591; --dated: #e0a64a; --excl: #f07a72; --chip: #2a2a27;
+      --bar: rgba(22, 22, 21, 0.82);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scrollbar-color: var(--line) transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased; accent-color: var(--ink);
+  }
+  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:visited { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
+  button { font: inherit; color: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+
+  /* Top bar */
+  header {
+    position: sticky; top: 0; z-index: 2; background: var(--bar);
+    -webkit-backdrop-filter: saturate(1.6) blur(20px); backdrop-filter: saturate(1.6) blur(20px);
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  }
+  header .wrap { display: flex; align-items: center; gap: 16px; height: 52px; }
+  .mark { font-weight: 650; letter-spacing: -0.01em; }
+  .seg { display: flex; background: var(--chip); border-radius: 9px; padding: 2px; }
+  .seg button { border: 0; background: none; padding: 4px 14px; border-radius: 7px; font-size: 14px; color: var(--muted); cursor: pointer; min-height: 32px; }
+  .seg button[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+  .pill { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  @media (max-width: 440px) { .pill .long { display: none; } header .wrap { gap: 12px; } }
+
+  /* Stats line */
+  .stats { padding: 28px 0 4px; }
+  .stats p { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -0.015em; font-weight: 500; }
+  .stats b { font-weight: 650; }
+  .stats small { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); letter-spacing: 0; }
+
+  /* Sections and cards */
+  main { padding-bottom: 148px; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 32px 0 10px; display: flex; gap: 8px; align-items: baseline; }
+  h2 .n { font-weight: 500; }
+  .stack { display: grid; gap: 12px; }
+  .card { min-width: 0; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
+  .card .top { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .card .sponsor { font-weight: 600; color: var(--ink); }
+  .card .when { margin-left: auto; white-space: nowrap; }
+  .card .when.closes { color: var(--dated); font-weight: 600; }
+  .card .when.new { color: var(--credit); font-weight: 600; }
+  .card .when.new::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; }
+  .card h3 { margin: 6px 0 0; font-size: 19px; line-height: 1.3; font-weight: 650; letter-spacing: -0.012em; }
+  .card .amt { margin-top: 2px; font-size: 15px; color: var(--muted); }
+  .card .amt b { color: var(--credit); font-weight: 650; }
+  .act { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 16px; border-radius: 10px;
+    border: 0; background: var(--ink); color: var(--bg); font-size: 15px; font-weight: 600; text-decoration: none; cursor: pointer;
+    transition: transform 120ms var(--ease), opacity 120ms;
+  }
+  .btn:visited { color: var(--bg); }
+  .btn:active { transform: scale(0.97); }
+  .btn code { font: 600 15px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.04em; }
+  .btn .sub { font-weight: 500; opacity: 0.7; font-size: 13px; }
+  .how { font-size: 14px; color: var(--muted); }
+  .how.solo { color: var(--ink); font-size: 15px; font-weight: 500; }
+  .quote { margin: 14px 0 0; padding: 0; font-size: 14px; line-height: 1.5; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .quote.open { -webkit-line-clamp: unset; }
+  .src { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .src button { border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+  .src ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+  .missed .card { background: transparent; }
+  .missed .card h3, .missed .card .sponsor { color: var(--muted); }
+  .missed .btn { display: none; }
+  details > summary { list-style: none; cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary h2::after { content: "Show"; margin-left: auto; font-weight: 500; color: var(--accent); }
+  details[open] > summary h2::after { content: "Hide"; }
+
+  .empty { text-align: center; padding: 72px 12px 24px; }
+  .empty p { margin: 0; }
+  .empty .big { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; }
+  .empty .sub { color: var(--muted); margin-top: 6px; }
+  .empty .btn { margin-top: 20px; }
+
+  /* Reps */
+  .rep { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .rep:first-of-type { border-top: 0; }
+  .rep .s { font-weight: 600; }
+  .rep .c { font-size: 13px; color: var(--muted); }
+  .rep .r { grid-column: 1 / -1; font-size: 14px; color: var(--muted); }
+  .rep .r b { color: var(--ink); font-weight: 600; }
+
+  footer { margin-top: 40px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  /* Scrubber */
+  .scrub {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--bar);
+    -webkit-backdrop-filter: saturate(1.6) blur(20px); backdrop-filter: saturate(1.6) blur(20px);
+    border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  }
+  .scrub .wrap { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "play when step" "track track track"; gap: 8px 14px; align-items: center; }
+  .play { grid-area: play; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--ink); color: var(--bg); cursor: pointer; display: grid; place-items: center; }
+  .play svg { width: 16px; height: 16px; fill: currentColor; }
+  .whenbox { grid-area: when; min-width: 0; }
+  .whenbox .d { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+  .whenbox .t { font-size: 13px; color: var(--muted); }
+  .step { grid-area: step; display: flex; gap: 4px; }
+  .step button { width: 44px; height: 44px; border: 0; border-radius: 10px; background: var(--chip); cursor: pointer; font-size: 18px; }
+  .track { grid-area: track; position: relative; height: 28px; }
+  .track input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+  .track input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+  .track input::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+  .track input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: var(--panel); border: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(0,0,0,0.1); }
+  .track input::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--panel); border: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+  .ticks { position: absolute; left: 10px; right: 10px; top: 50%; height: 0; pointer-events: none; }
+  .ticks i { position: absolute; top: -9px; width: 2px; height: 6px; margin-left: -1px; border-radius: 1px; background: var(--credit); opacity: 0.85; }
+  .fill { position: absolute; left: 10px; top: 12px; height: 4px; border-radius: 2px; background: var(--ink); pointer-events: none; }
+
+  @media (min-width: 760px) {
+    .stats p { font-size: 26px; }
+    .scrub .wrap { grid-template-columns: auto 180px 1fr auto; grid-template-areas: "play when track step"; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="mark">HackRecon</span>
+    <div class="seg" role="tablist" aria-label="View">
+      <button role="tab" aria-selected="true" aria-controls="offers" id="tab-offers">Offers</button>
+      <button role="tab" aria-selected="false" aria-controls="reps" id="tab-reps">Reps</button>
+    </div>
+    <span class="pill"><span class="long">Demo mode · </span>Names hidden</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="stats" aria-live="polite"><p id="stats"></p><small id="basis"></small></section>
+  <div id="offers" role="tabpanel" aria-labelledby="tab-offers"></div>
+  <div id="reps" role="tabpanel" aria-labelledby="tab-reps" hidden></div>
+  <footer id="foot"></footer>
+</main>
+
+<div class="scrub" id="scrub" aria-label="Replay">
+  <div class="wrap">
+    <button class="play" id="play" aria-label="Play the week"></button>
+    <div class="whenbox" aria-live="polite"><div class="d num" id="day"></div><div class="t num" id="time"></div></div>
+    <div class="track"><div class="fill" id="fill"></div><div class="ticks" id="ticks"></div><input type="range" id="range" min="0" value="0" aria-label="Replay time"></div>
+    <div class="step"><button id="prev" aria-label="Earlier">‹</button><button id="next" aria-label="Later">›</button></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ICON = { play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9.5-5.5z"/></svg>', pause: '<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"/></svg>' };
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let D, F, i = 0, timer = null, tab = "offers";
+const openSrc = new Set();
+
+const fmt = (t, o) => new Date(t * 1000).toLocaleString("en-US", { timeZone: D.timezone, ...o });
+const dayTime = (t) => fmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
+const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+function sections(now, prev) {
+  const vis = D.offers.filter((o) => o.first <= now);
+  const missed = vis.filter((o) => o.limit !== null && o.limit <= now).sort((a, b) => b.limit - a.limit);
+  const live = vis.filter((o) => !missed.includes(o));
+  const closing = live.filter((o) => o.limit !== null).sort((a, b) => a.limit - b.limit);
+  const fresh = live.filter((o) => o.limit === null && o.first > prev).sort((a, b) => b.first - a.first);
+  const latest = (o) => Math.max(...o.posts.filter((p) => p.ts <= now).map((p) => p.ts));
+  const open = live.filter((o) => o.limit === null && o.first <= prev).sort((a, b) => latest(b) - latest(a));
+  return { vis, missed, closing, fresh, open };
+}
+
+function action(o) {
+  if (o.promo_code) return `<button class="btn" data-copy="${esc(o.promo_code)}"><code>${esc(o.promo_code)}</code><span class="sub">Copy code</span></button>${o.claim_url ? `<a class="how" href="${esc(o.claim_url)}" target="_blank" rel="noopener">${esc(o.claim_how || "Use it at " + host(o.claim_url))}</a>` : o.claim_how ? `<span class="how">${esc(o.claim_how)}</span>` : ""}`;
+  if (o.claim_url) return `<a class="btn" href="${esc(o.claim_url)}" target="_blank" rel="noopener">Claim<span class="sub">${esc(host(o.claim_url))}</span></a>${o.claim_how ? `<span class="how">${esc(o.claim_how)}</span>` : ""}`;
+  return o.claim_how ? `<span class="how solo">${esc(o.claim_how)}</span>` : "";
+}
+
+function card(o, now, prev) {
+  const posts = o.posts.filter((p) => p.ts <= now);
+  let when = "";
+  if (o.limit !== null) when = o.limit <= now ? `<span class="when">Closed ${dayTime(o.limit)}</span>` : `<span class="when closes">Closes ${dayTime(o.limit)}</span>`;
+  else if (o.first > prev) when = `<span class="when new">New</span>`;
+  else if (o.limit_unclear) when = `<span class="when">Deadline unclear</span>`;
+  const amt = o.usd !== null ? `<div class="amt"><b>$${o.usd}</b> per person</div>` : o.amount_text ? `<div class="amt">“${esc(o.amount_text)}”</div>` : "";
+  const chans = [...new Set(posts.map((p) => "#" + p.channel))].join(", ");
+  const open = openSrc.has(o.id);
+  return `<article class="card" data-id="${o.id}">
+    <div class="top"><span class="sponsor">${esc(o.sponsor)}</span>${when}</div>
+    <h3>${esc(o.title)}</h3>${amt}
+    <div class="act">${action(o)}</div>
+    <p class="quote${open ? " open" : ""}">${esc(o.excerpt)}</p>
+    <div class="src"><button data-src="${o.id}" aria-expanded="${open}">${plural(posts.length, "post")} in ${esc(chans)}</button>
+      ${open ? `<ul>${posts.map((p) => `<li><a href="${esc(p.permalink)}" target="_blank" rel="noopener">${dayTime(p.ts)} in #${esc(p.channel)}</a></li>`).join("")}</ul>` : ""}</div>
+  </article>`;
+}
+
+function renderOffers(now, prev) {
+  const s = sections(now, prev);
+  const box = $("offers");
+  if (!s.vis.length) {
+    const firstOffer = Math.min(...D.offers.map((o) => o.first));
+    const j = F.findIndex((f) => f >= firstOffer);
+    const read = D.posts.filter((p) => p <= now).length;
+    box.innerHTML = `<div class="empty"><p class="big">Nothing to grab yet.</p><p class="sub">${plural(read, "post")} so far, none of them an offer.</p>
+      <button class="btn" data-jump="${j}">Jump to the first offer · ${fmt(F[j], { weekday: "short", month: "short", day: "numeric" })}</button></div>`;
+    return;
+  }
+  const sec = (title, list, extra = "") => list.length ? `<h2>${title}<span class="n num">${list.length}</span></h2><div class="stack">${list.map((o) => card(o, now, prev)).join("")}</div>${extra}` : "";
+  box.innerHTML =
+    sec("Closes soon", s.closing) +
+    sec(i ? `New since ${dayTime(prev)}` : "New", s.fresh) +
+    sec("Open, no deadline stated", s.open) +
+    (s.missed.length ? `<details class="missed"><summary><h2>Missed<span class="n num">${s.missed.length}</span></h2></summary><div class="stack">${s.missed.map((o) => card(o, now, prev)).join("")}</div></details>` : "");
+}
+
+function renderReps() {
+  $("reps").innerHTML = `<h2>Sponsor channels<span class="n num">${D.reps.length}</span></h2>` + D.reps.map((r) => `<div class="rep">
+    <span class="s">${esc(r.sponsor)}</span><span class="c num">${plural(r.offers, "offer")}</span>
+    <span class="r">${r.candidates ? `<b>${plural(r.candidates, "rep candidate")}</b> · not confirmed yet` : "No rep found in captured posts"} · ${plural(r.posts, "post")} in #${esc(r.channel)}</span></div>`).join("");
+}
+
+function render(next, animate = true) {
+  i = Math.max(0, Math.min(F.length - 1, next));
+  const now = F[i], prev = i ? F[i - 1] : -Infinity;
+  const before = new Map([...document.querySelectorAll(".card")].map((el) => [el.dataset.id, el.getBoundingClientRect()]));
+  $("range").value = i;
+  $("fill").style.width = `calc((100% - 20px) * ${F.length > 1 ? i / (F.length - 1) : 0})`;
+  $("day").textContent = fmt(now, { weekday: "long", month: "short", day: "numeric" });
+  $("time").textContent = i === F.length - 1 ? `${fmt(now, { hour: "numeric", minute: "2-digit" })} · the morning after` : fmt(now, { hour: "numeric", minute: "2-digit" });
+  const vis = D.offers.filter((o) => o.first <= now);
+  const sp = new Set(vis.map((o) => o.sponsor).filter((s) => s !== D.event)).size;
+  const read = D.posts.filter((p) => p <= now).length;
+  $("stats").innerHTML = `<b class="num">${vis.length}</b> ${vis.length === 1 ? "offer" : "offers"} from <b class="num">${sp}</b> ${sp === 1 ? "sponsor" : "sponsors"}, found in <b class="num">${read}</b> posts`;
+  renderOffers(now, prev);
+  if (animate && !reduce) {
+    for (const el of document.querySelectorAll(".card")) {
+      const b = before.get(el.dataset.id), a = el.getBoundingClientRect();
+      if (b) {
+        const dy = b.top - a.top;
+        if (Math.abs(dy) > 1) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+      } else el.animate([{ opacity: 0, transform: "translateY(10px) scale(0.98)" }, { opacity: 1, transform: "none" }], { duration: 360, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
+    }
+  }
+}
+
+function setPlaying(on) {
+  clearInterval(timer); timer = null;
+  $("play").innerHTML = on ? ICON.pause : ICON.play;
+  $("play").setAttribute("aria-label", on ? "Pause" : "Play the week");
+  if (!on) return;
+  if (i >= F.length - 1) render(0);
+  timer = setInterval(() => (i >= F.length - 1 ? setPlaying(false) : render(i + 1)), 900);
+}
+
+function setTab(t) {
+  tab = t;
+  for (const [b, p] of [["tab-offers", "offers"], ["tab-reps", "reps"]]) { $(b).setAttribute("aria-selected", p === t); $(p).hidden = p !== t; }
+}
+
+document.addEventListener("click", async (e) => {
+  const c = e.target.closest("[data-copy]"), s = e.target.closest("[data-src]"), j = e.target.closest("[data-jump]");
+  if (c) {
+    try { await navigator.clipboard.writeText(c.dataset.copy); const sub = c.querySelector(".sub"); sub.textContent = "Copied"; setTimeout(() => (sub.textContent = "Copy code"), 1400); } catch {}
+  } else if (s) { openSrc.has(s.dataset.src) ? openSrc.delete(s.dataset.src) : openSrc.add(s.dataset.src); render(i, false); }
+  else if (j) render(Number(j.dataset.jump));
+});
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input:not([type=range]), textarea") || e.metaKey || e.ctrlKey) return;
+  if (e.target.id === "range" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
+  if (e.key === "ArrowLeft") render(i - 1), e.preventDefault();
+  else if (e.key === "ArrowRight") render(i + 1), e.preventDefault();
+  else if (e.key === " " && !e.target.matches("button, a")) setPlaying(!timer), e.preventDefault();
+});
+$("range").addEventListener("input", (e) => (setPlaying(false), render(Number(e.target.value))));
+$("prev").onclick = () => (setPlaying(false), render(i - 1));
+$("next").onclick = () => (setPlaying(false), render(i + 1));
+$("play").onclick = () => setPlaying(!timer);
+$("tab-offers").onclick = () => setTab("offers");
+$("tab-reps").onclick = () => setTab("reps");
+
+fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
+  D = data; F = D.frames;
+  $("range").max = F.length - 1;
+  $("ticks").innerHTML = D.offers.map((o) => { const k = F.findIndex((f) => f >= o.first); return `<i style="left:${(k / (F.length - 1)) * 100}%"></i>`; }).join("");
+  const stated = D.offers.filter((o) => o.usd !== null);
+  $("basis").textContent = `${D.event} · ${D.channels} channels · offers grouped by ${D.basis.model}, not checked by hand`;
+  $("foot").innerHTML = `Every offer links to the Slack posts it came from. ${plural(stated.length, "offer")} ${stated.length === 1 ? "states" : "state"} a per-person amount ($${stated.reduce((n, o) => n + o.usd, 0)} in total); the other ${D.offers.length - stated.length} don't, and no amount is estimated. Top-level posts only: thread replies aren't captured. Posts counts real top-level posts, no app or bot posts.`;
+  renderReps();
+  setPlaying(false);
+  render(F.length - 1, false);
+}).catch(() => { $("offers").innerHTML = `<div class="empty"><p class="big">Couldn't load the board data.</p><p class="sub">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></div>`; });
+</script>
+</body>
+</html>

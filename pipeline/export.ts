@@ -15,6 +15,9 @@ export interface ExportMessage {
   text?: string;
   user_profile?: { display_name?: string; real_name?: string; name?: string };
   bot_profile?: { name?: string };
+  /** Set on app posts. Without a subtype and without a user_profile (e.g. the GitHub app) the web client shows the
+   *  app as the sender, with the APP badge; with a user_profile it's a person posting through an app, shown as them. */
+  bot_id?: string;
 }
 
 export interface ExportUser {
@@ -60,7 +63,7 @@ export function isChannelVisible(m: ExportMessage): boolean {
 /** Real posts (keyed-recall denominator, D8), bot posts and broadcasts (kept, reported apart),
  *  and everything else (joins, topic changes, tombstones). */
 export function rowClass(m: ExportMessage): "real" | "bot" | "broadcast" | "system" {
-  if (m.subtype === undefined) return "real";
+  if (m.subtype === undefined) return m.bot_id && !m.user_profile ? "bot" : "real";
   if (m.subtype === "bot_message") return "bot";
   if (m.subtype === "thread_broadcast") return "broadcast";
   return "system";
