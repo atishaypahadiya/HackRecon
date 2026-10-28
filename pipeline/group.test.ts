@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EventConfig } from "./classify.ts";
-import { checkGroups, withLabelAmounts, GROUP_EFFORT, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type Offer } from "./group.ts";
+import { checkGroups, foreignWords, withLabelAmounts, GROUP_EFFORT, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type Offer } from "./group.ts";
 import { redactedInputs } from "./inputs.ts";
 import { rulesSection } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
@@ -19,7 +19,7 @@ const msg = (ts: string, text: string, links: string[] = []): Message => ({
 });
 const offer = (o: Partial<Offer>): Offer => ({
   sponsor: "Acme", title: "API credits", amount_text: "$50 credits", amount_usd_per_person: "50", amount_basis: "per_person",
-  limit_iso: "", limit_status: "none", claim_url: "", promo_code: "", claim_how: "", posts: ["C1:2.0"], reason: "one post", ...o,
+  limit_iso: "", limit_status: "none", claim_url: "", promo_code: "", claim_how: "", value_short: "$50 credits", claim_short: "", posts: ["C1:2.0"], reason: "one post", ...o,
 });
 
 describe("group prompt and request", () => {
@@ -63,6 +63,18 @@ describe("checkGroups", () => {
     expect(e({ offers: [offer({ posts: ids, amount_basis: "pool" })], not_offers: [] })).toContain("amount_basis");
     expect(e({ offers: [offer({ posts: ids, limit_status: "explicit" })], not_offers: [] })).toContain("no limit_iso");
     expect(e({ offers: [offer({ posts: ids, claim_url: "https://made.up/x" })], not_offers: [] })).toContain("claim_url");
+  });
+  test("value_short and claim_short: short, and only in the offer's own posts' words", () => {
+    const texts = new Map([["C1:1.0", "Get $50 credits! Scan the QR code."], ["C1:2.0", "reminder"], ["C1:3.0", "Free pizza"]]);
+    const e = (o: Partial<Offer>) => {
+      const r = checkGroups({ offers: [offer({ posts: ["C1:1.0", "C1:2.0"], ...o })], not_offers: [{ post: "C1:3.0", reason: "x" }] }, ids, links, texts);
+      return "error" in r ? r.error : "";
+    };
+    expect(e({ claim_short: "Scan QR code" })).toBe("");
+    expect(e({ value_short: "$50 free credits" })).toContain("free");
+    expect(e({ value_short: "" })).toContain("1 to 4 words");
+    expect(e({ claim_short: "Scan the QR code" })).toContain("at most 3 words");
+    expect(foreignWords("Free Pizza!", ["free pizza"])).toEqual([]);
   });
   test("a post can belong to two offers", () => {
     expect("offers" in checkGroups({ offers: [offer({ posts: ids }), offer({ title: "Pro plan", amount_usd_per_person: "", amount_basis: "unknown", posts: ["C1:1.0"] })], not_offers: [] }, ids)).toBe(true);

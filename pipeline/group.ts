@@ -34,6 +34,10 @@ export interface Offer {
   promo_code: string;
   /** Imperative, a few words, from the posts: "Fill out the form", "Show your badge at the booth". "" if unstated. */
   claim_how: string;
+  /** What a hacker gets, 1 to 4 words, every word from the offer's posts: "$50 API credits", "1 month free". */
+  value_short: string;
+  /** The claim step, 1 to 3 words, every word from the offer's posts: "Scan QR code". "" if no post says. */
+  claim_short: string;
   /** message_ids, oldest first. */
   posts: string[];
   reason: string;
@@ -70,13 +74,15 @@ How to group:
 
 Fields of an offer, under the rules below for the amount and limit columns:
 - sponsor: the sponsor field of its posts; "event" for the organizers' own offers.
-- title: two to six plain words naming what is offered, from the posts (e.g. "Claude API credits", "Startup plan, first month free"). No marketing words.
+- title: two to six plain words naming what is offered, from the posts (e.g. "Claude API credits", "Startup plan, first month free"). No marketing words. If a product name alone doesn't say what it is, add the posts' own word for it ("Nova Pro tier", not "Nova Pro").
 - amount_text: the amount as one of the posts states it, copied exactly; "" if no post states one.
 - amount_usd_per_person and amount_basis: as the rules define them, from what the posts state. If posts state different per-person amounts for the same offer, use the earliest post's and say so in reason.
 - limit_iso and limit_status: the earliest stated deadline or claim-window end across the offer's posts (the rules' deadline_iso, deadline_status and window_end). "" and none when no post states a limit.
 - claim_url: the one link a hacker uses to claim this offer (a claim page, form or signup), copied exactly from a post's links list; the latest post's link when a later post replaces it. "" if no post gives one. Never a docs or homepage link that doesn't claim anything.
 - promo_code: the code exactly as a post states it, "" if none.
 - claim_how: what a hacker does to claim it, imperative, at most eight words, from the posts ("Redeem the code at checkout", "Visit the booth during the workshop"). "" if no post says.
+- value_short: what a hacker gets, one to four words, for a compact list row. Use only words that appear in this offer's posts, and keep the stated amount when a post states one ("$50 API credits", "1 month free", "Pro plan"). Never a word the posts don't use.
+- claim_short: the claim step, one to three words, for a button. Use only words that appear in this offer's posts ("Scan QR code", "Fill form", "Enter code"). "" if no post says how to claim.
 - posts: the ids of every post about this offer, oldest first.
 - reason: one short sentence on why these posts are one offer (or why it stands alone).
 
@@ -110,7 +116,7 @@ export const GROUP_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["sponsor", "title", "amount_text", "amount_usd_per_person", "amount_basis", "limit_iso", "limit_status", "claim_url", "promo_code", "claim_how", "posts", "reason"],
+        required: ["sponsor", "title", "amount_text", "amount_usd_per_person", "amount_basis", "limit_iso", "limit_status", "claim_url", "promo_code", "claim_how", "value_short", "claim_short", "posts", "reason"],
         properties: {
           sponsor: str,
           title: str,
@@ -122,6 +128,8 @@ export const GROUP_SCHEMA = {
           claim_url: str,
           promo_code: str,
           claim_how: str,
+          value_short: str,
+          claim_short: str,
           posts: { type: "array", items: str },
           reason: str,
         },
@@ -150,8 +158,22 @@ export function inputHash(system: string, request: string): string {
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?[+-]\d{2}:\d{2}$/;
 
-/** The answer as offers, or why it fails: every post accounted for, no unknown ids, numbers only where stated. */
-export function checkGroups(v: unknown, ids: string[], links: Set<string> = new Set()): { offers: Offer[]; not_offers: NotOffer[] } | { error: string } {
+const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+
+/** The words of a short field that don't appear in the posts' text (case-insensitive, punctuation ignored). */
+export function foreignWords(phrase: string, texts: string[]): string[] {
+  const own = new Set(texts.flatMap(words));
+  return words(phrase).filter((w) => !own.has(w));
+}
+
+/** The answer as offers, or why it fails: every post accounted for, no unknown ids, numbers only where stated,
+ *  and value_short / claim_short in the posts' own words (checked when texts are given). */
+export function checkGroups(
+  v: unknown,
+  ids: string[],
+  links: Set<string> = new Set(),
+  texts: Map<string, string> = new Map(),
+): { offers: Offer[]; not_offers: NotOffer[] } | { error: string } {
   const o = v as { offers?: Offer[]; not_offers?: NotOffer[] };
   if (!o || !Array.isArray(o.offers) || !Array.isArray(o.not_offers)) return { error: "offers and not_offers must be arrays" };
   const known = new Set(ids);
@@ -168,6 +190,16 @@ export function checkGroups(v: unknown, ids: string[], links: Set<string> = new 
     if (!f.limit_iso && ["explicit", "resolved_relative"].includes(f.limit_status)) return { error: `offers[${i}] has limit_status ${f.limit_status} but no limit_iso` };
     if (!f.title.trim()) return { error: `offers[${i}] has no title` };
     if (f.claim_url && !links.has(f.claim_url)) return { error: `offers[${i}].claim_url is not one of its posts' links: ${f.claim_url}` };
+    const nv = words(f.value_short).length;
+    if (nv < 1 || nv > 4) return { error: `offers[${i}].value_short must be 1 to 4 words: "${f.value_short}"` };
+    if (words(f.claim_short).length > 3) return { error: `offers[${i}].claim_short must be at most 3 words: "${f.claim_short}"` };
+    if (texts.size) {
+      const own = f.posts.map((p) => texts.get(p) ?? "");
+      for (const k of ["value_short", "claim_short"] as const) {
+        const bad = foreignWords(f[k], own);
+        if (bad.length) return { error: `offers[${i}].${k} uses words not in its posts: ${bad.join(", ")} (in "${f[k]}")` };
+      }
+    }
   }
   for (const n of o.not_offers) {
     if (!known.has(n.post)) return { error: `not_offers names unknown post ${n.post}` };
@@ -200,6 +232,7 @@ export async function groupOffers(
   request: string,
   ids: string[],
   links: Set<string>,
+  texts: Map<string, string> = new Map(),
 ): Promise<({ offers: Offer[]; not_offers: NotOffer[] } | { error: string }) & { usage: Usage; calls: number }> {
   let usage = NO_USAGE;
   let reason = "";
@@ -238,7 +271,7 @@ export async function groupOffers(
       reason = "output is not JSON";
       continue;
     }
-    const checked = checkGroups(parsed, ids, links);
+    const checked = checkGroups(parsed, ids, links, texts);
     if ("error" in checked) {
       reason = checked.error;
       messages.push({ role: "assistant", content: res.content }, { role: "user", content: `That output failed validation: ${reason}. Return the corrected JSON for the same posts.` });

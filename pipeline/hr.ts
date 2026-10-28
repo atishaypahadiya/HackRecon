@@ -45,7 +45,7 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_DATA_PATH, BOARD_PAGE, boardData } from "./board.ts";
+import { BOARD_DATA_PATH, BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData } from "./board.ts";
 import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
@@ -100,10 +100,10 @@ const USAGE = `usage:
   bun run hr group [--dry-run] [--force]
       The Opus grouping pass: claude-opus-5-5 reads every post the judge labeled is_credit = y (same redacted
       input as classify and prelabel, blind to the classifier) and writes the distinct offers with their source
-      posts to ${"$"}{GROUP_PATH}. One streamed request; skipped while the input is unchanged unless --force.
+      posts to ${GROUP_PATH}. One streamed request; skipped while the input is unchanged unless --force.
   bun run hr board [--build-only] [--port N]
-      Builds ${"$"}{BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
-      127.0.0.1. Needs a current ${"$"}{GROUP_PATH}.
+      Builds ${BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
+      127.0.0.1. Needs a current ${GROUP_PATH}.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -115,6 +115,8 @@ const USAGE = `usage:
       Classifies captured messages with ${MODEL} (redacted text only). --labeled-only: just the messages
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
+
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -129,6 +131,11 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "preview") return receiptPreview(rest);
   if (cmd === "group") return group(rest);
   if (cmd === "board") return board(rest);
+  if (cmd) {
+    // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
+    const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
+    console.error(`Unknown command: ${JSON.stringify(cmd)}${near ? `. Did you mean \`bun run hr ${near}\`?` : ""}\n`);
+  }
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -466,7 +473,8 @@ function groupInput(sponsors: Sponsors) {
   const inputs = rows.map((r) => byId.get(r.message_id)!);
   const request = groupRequest(inputs);
   const links = new Set(inputs.flatMap((i) => i.message.links));
-  return { system, hash, request, ids: inputs.map((i) => i.message.id), links, input_hash: inputHash(system, request), uncaptured: uncaptured.length };
+  const texts = new Map(inputs.map((i) => [i.message.id, i.message.text]));
+  return { system, hash, request, ids: inputs.map((i) => i.message.id), links, texts, input_hash: inputHash(system, request), uncaptured: uncaptured.length };
 }
 
 async function group(args: string[]): Promise<number> {
@@ -496,7 +504,7 @@ async function group(args: string[]): Promise<number> {
     console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
     return 2;
   }
-  const r = await groupOffers(client, g.system, g.request, g.ids, g.links);
+  const r = await groupOffers(client, g.system, g.request, g.ids, g.links, g.texts);
   const cost = Number(costUsd(r.usage, GROUP_MODEL).toFixed(4));
   if ("error" in r) {
     console.error(`grouping failed after ${r.calls} call(s): ${r.error}. Nothing written. ${formatUsage(r.calls, r.usage, GROUP_MODEL)}`);
@@ -540,6 +548,7 @@ async function board(args: string[]): Promise<number> {
   const data = boardData({
     event: event.event,
     timezone: event.timezone,
+    schedule: event.schedule,
     run_id: last?.run_id ?? "",
     channels: last?.channels ?? [],
     messages: readMessages(),
@@ -564,10 +573,12 @@ async function board(args: string[]): Promise<number> {
           headers: {
             ...headers,
             "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'",
           },
         });
       if (path === "/board.json") return new Response(readFileSync(BOARD_DATA_PATH, "utf8"), { headers: { ...headers, "Content-Type": "application/json" } });
+      const font = BOARD_FONTS.find((f) => path === `/fonts/${f}`);
+      if (font) return new Response(readFileSync(BOARD_FONT_DIR + font), { headers: { "Content-Type": "font/woff2", "Cache-Control": "max-age=86400" } });
       return new Response("not found", { status: 404 });
     },
   });

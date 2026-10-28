@@ -3,6 +3,7 @@
 // never shows a number it can't link to source posts. Demo mode (D18, amended 2026-10-27) hides author
 // names only: offer text is the evidence, so excerpts are shown, with people's names in the text
 // redacted the same way as the classifier input.
+import type { EventConfig } from "./classify.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -11,6 +12,9 @@ import type { Message } from "./schema.ts";
 
 export const BOARD_DATA_PATH = "data/board.json";
 export const BOARD_PAGE = new URL("../board/index.html", import.meta.url).pathname;
+/** Self-hosted (CSP font-src 'self'), OFL texts beside them; see DESIGN.md. Only these names are served. */
+export const BOARD_FONT_DIR = new URL("../board/fonts/", import.meta.url).pathname;
+export const BOARD_FONTS = ["manrope.woff2", "atkinson-hyperlegible-mono.woff2"] as const;
 
 export interface BoardPost {
   ts: number;
@@ -21,6 +25,8 @@ export interface BoardOffer {
   id: string;
   sponsor: string;
   title: string;
+  value_short: string;
+  claim_short: string;
   amount_text: string;
   /** Stated USD per person; null when the posts don't state one. */
   usd: number | null;
@@ -41,6 +47,18 @@ export interface BoardRep {
   posts: number;
   offers: number;
   candidates: number;
+  /** When each rep candidate first posted (epoch seconds), ascending: the board counts candidates found by
+   *  the replay's time. Times only, never names (demo mode). */
+  candidate_first: number[];
+}
+export interface BoardEventDeadline {
+  what: string;
+  /** Epoch seconds. */
+  at: number;
+  until: number | null;
+  /** When the organizers announced it (the source post's time), so the replay shows it only from then. */
+  posted: number;
+  source: string;
 }
 export interface BoardData {
   event: string;
@@ -52,7 +70,22 @@ export interface BoardData {
   offers: BoardOffer[];
   frames: number[];
   reps: BoardRep[];
+  /** The organizers' own deadlines from config/event.json, superseded entries left out. */
+  event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
+}
+
+/** A Slack permalink's message time: .../p1792918203114859 is ts 1792918203.114859. */
+export function permalinkTs(url: string): number | null {
+  const m = /\/p(\d{10})(\d{6})(?:\b|$)/.exec(url);
+  return m ? Number(`${m[1]}.${m[2]}`) : null;
+}
+
+export function eventDeadlines(schedule: EventConfig["schedule"]): BoardEventDeadline[] {
+  return schedule
+    .filter((s) => !s.superseded_by)
+    .map((s) => ({ what: s.what, at: Date.parse(s.at) / 1000, until: s.until ? Date.parse(s.until) / 1000 : null, posted: permalinkTs(s.source) ?? Date.parse(s.at) / 1000, source: s.source }))
+    .sort((a, b) => a.at - b.at);
 }
 
 /** Epoch seconds of 08:00 local time on the calendar day containing t, in tz. */
@@ -111,10 +144,11 @@ export function plainText(s: string): string {
     .trim();
 }
 
-/** The evidence: the post that states the offer (its code, then its amount, then its claim link, else the first),
+/** The evidence: the post that states the offer (its code, then its amount, then its short value, then its claim
+ *  link, else the first),
  *  from the start of the sentence that mentions it, trimmed at the end to about three lines. */
-export function excerpt(texts: { raw: string; plain: string }[], f: Pick<Offer, "promo_code" | "claim_url" | "amount_text">, max = 280): string {
-  const keys = [f.promo_code, f.amount_text, f.claim_url].filter(Boolean);
+export function excerpt(texts: { raw: string; plain: string }[], f: Pick<Offer, "promo_code" | "claim_url" | "amount_text"> & { value_short?: string }, max = 280): string {
+  const keys = [f.promo_code, f.amount_text, f.value_short ?? "", f.claim_url].filter(Boolean);
   for (const k of [...keys, ""]) {
     const t = texts.find((x) => (k ? x.raw.includes(k) || x.plain.includes(k) : true));
     if (!t) continue;
@@ -135,6 +169,7 @@ export function excerpt(texts: { raw: string; plain: string }[], f: Pick<Offer, 
 export function boardData(o: {
   event: string;
   timezone: string;
+  schedule?: EventConfig["schedule"];
   run_id: string;
   channels: string[];
   messages: Message[];
@@ -158,6 +193,8 @@ export function boardData(o: {
       id: `o${i + 1}`,
       sponsor: f.sponsor === "event" ? o.event : f.sponsor,
       title: f.title,
+      value_short: f.value_short,
+      claim_short: f.claim_short,
       amount_text: f.amount_text,
       usd: f.amount_usd_per_person ? Number(f.amount_usd_per_person) : null,
       limit: f.limit_iso ? Date.parse(f.limit_iso) / 1000 : null,
@@ -174,12 +211,15 @@ export function boardData(o: {
     .filter(([ch, s]) => o.channels.includes(ch) && s.sponsor !== "event")
     .map(([ch, s]) => {
       const inCh = o.messages.filter((m) => m.channel_name === ch && !m.subtype && m.author_kind !== "bot");
+      const firstBy = new Map<string, number>();
+      for (const m of inCh) if (o.role(m) === "sponsor-side") firstBy.set(m.author_name, Math.min(firstBy.get(m.author_name) ?? Infinity, Number(m.ts)));
       return {
         sponsor: s.sponsor,
         channel: ch,
         posts: inCh.length,
         offers: offers.filter((f) => f.posts.some((p) => p.channel === ch)).length,
-        candidates: new Set(inCh.filter((m) => o.role(m) === "sponsor-side").map((m) => m.author_name)).size,
+        candidates: firstBy.size,
+        candidate_first: [...firstBy.values()].sort((a, b) => a - b),
       };
     })
     .sort((a, b) => b.offers - a.offers || b.candidates - a.candidates || b.posts - a.posts);
@@ -192,6 +232,7 @@ export function boardData(o: {
     offers,
     frames: replayFrames(posts, offers, o.timezone),
     reps,
+    event_deadlines: eventDeadlines(o.schedule ?? []),
     basis: o.basis,
   };
 }
