@@ -1,0 +1,1312 @@
+# Design: HackRecon v2, the hacker's operating system for a hackathon
+
+Written 2026-10-28 from the user's v2 brief.
+Branch: v2. Base: tag `v1` (`6dcefc1`).
+Status: REVIEWED by /plan-eng-review 2026-10-28 (decisions D1–D20, see Decision ledger).
+Predecessor: `docs/designs/hackrecon-demo-scope.md` (v1, decisions D1–D26). Its constraints carry over unless this doc changes them by name.
+
+## The brief (user, 2026-10-28, verbatim)
+
+> v1 is done (tag it v1). Starting v2: HackRecon becomes the hacker's operating system for a hackathon, with five views: Build (tracks + track stacker), Claim (v1 offers), Now (schedule + live changes), Meet (reps + booths + openers), Ship (submission checklist). Key architecture change: multi-source. Public pages are canon (Devpost: tracks, prizes, judging criteria, submission rules; event site: schedule), Slack is the live layer (changes, credits, reps, fixes). Merge rule: page is canon, Slack updates override with both shown. Also add thread capture to the extension. Per-event config so it runs at the next hackathon. Build order: sources → entities + Opus-judged eval → merge → views (Build, Ship, Now, Meet) → generalize.
+
+## Problem
+
+v1 answers one question: "what can I grab right now?" It does this from Slack alone, replayed over a finished event. A hacker at a live event has four more questions, and Slack is the wrong place to start answering any of them:
+
+- **What should I build, and which prizes can one project enter?** Devpost answers this. Slack only adds clarifications.
+- **What's happening now, and what changed?** The event site answers the first part and Slack the second. At Cal Hacks the Devpost deadline moved from 09:00 to 09:30 in a Slack post (`config/event.json`, hand-sourced in v1).
+- **Who should I talk to, and where are they?** Slack holds the rep posts and "find us at table 14". v1 found 22 candidates across 15 of 23 sponsors.
+- **Am I ready to submit?** Devpost's submission rules plus each chosen track's requirements answer this. It's the most expensive one to get wrong.
+
+v1 also ran off hand-written config (`config/event.json`, `config/sponsors.json`) and off `config/organizers.json`, which was built from a Slack export that won't exist at the next event.
+
+## What changes from v1
+
+| | v1 | v2 |
+|---|---|---|
+| Sources | Slack top-level posts (and broadcast replies) | Public pages (Devpost, event site) as canon; Slack top-level **and thread replies** as the live layer |
+| Unit | Offer (Opus-grouped from credit posts) | Typed entities: Track, Prize, Criterion, Rule, ScheduleItem, Offer, Rep, Booth. Each has sources and a change history |
+| Truth | Whatever Slack said | Page is canon. An authorized Slack update overrides a field, and both values are shown |
+| Views | One board (Claim) | Build, Claim, Now, Meet, Ship |
+| Config | Cal Hacks, hand-written | Per event: `events/<slug>/`, with the next event set up by a command and a short hand check |
+| Time | Replay of a finished week | Runs at a live event (capture, `hr sync`, board). Replay stays as a demo mode over a finished one |
+
+## Constraints (carried over, restated where v2 touches them)
+
+- **No self-bots.** The product never sends a request to Slack beyond what the user's open web client makes in response to UI actions in the visible tab. Opening a thread pane is a UI action, so thread capture stays inside the rule if it opens threads the way a user does: one at a time, at a human pace, user-started, in a visible tab. No Slack API calls with the session token.
+- **Public pages** are read the same way: the extension snapshots the page the user has open. See "Sources" for the `hr fetch` question.
+- **No LinkedIn scraping.** Search URLs only. The user sends every message. Openers are drafts with a `{first_name}` placeholder filled in locally.
+- **No invented numbers.** Every number, date and requirement on screen traces to a quoted source span. "Not stated" is a first-class value and is never filled with a guess.
+- **No backend, no accounts.** Data stays on disk. Slack text sent to the Anthropic API is redacted as in v1. Page text (D12): a snapshot marked `access: "public"` (opens without logging in) is sent as published; one marked `"authenticated"` (e.g. Hive) is redacted like Slack, with quotes checked against the redacted text. The flag is set in the capture popup, never inferred from the domain, and a missing flag means redacted. The one-sentence project idea typed in Build is sent with track and criterion quotes for idea fit (D6).
+- **Local board server** listens on 127.0.0.1 only. Its one POST route (`/fit`, D6) accepts a request only when the Origin header is the board's own origin and the per-run token embedded in the page matches.
+- **Demo mode** hides author names only. The evidence (offer text, page quotes) is always shown (D24).
+- **Labels:** the labeling and gate tools (`hr label`, `hr gate`) never print classifier answers for rows the user hasn't labeled. The views show model output labeled with its model, as v1's board does ("Grouped by claude-opus-5-5 · not hand-checked").
+
+## Premises
+
+1. **Canon vs live.** A public page is what the organizer committed to in writing before the event. Slack is where it changes. When they disagree, the newest authorized Slack statement wins on that field, and the page value stays visible beside it ("Page: 09:00 · Slack, organizer, Sat 8:12 PM: 09:30"). A false override is then visible and checkable, never silent.
+2. **Authority (D8).** Only some posters can override canon. Organizers can override any event entity. A sponsor-side poster can override only their own sponsor's Track, Prize, Offer or Booth. A hacker's post never overrides anything. It can raise a question ("Is the deadline 9 or 9:30?") but can't change a value.
+3. **Cal Hacks 13.0 is the development fixture.** It's the only event with captured Slack, v1 labels and a slackdump baseline (thread-reply recall is measured against the export's 494 replies in the locked 25). The generalize step proves the config works for a second event before any claim that "it runs at the next hackathon".
+4. **Opus is the judge, Haiku or Sonnet the worker, as in v1 (D21).** Every eval number is "agreement with Opus", labeled that way, never "accuracy". No hand check on canon (D15): model-free coverage checks back the judge instead.
+
+## Architecture
+
+```
+            ┌───────────── capture (extension, user-started, visible tab) ─────────────┐
+            │  Slack channel (top-level + threads)        Public page snapshot          │
+            └──────────────┬──────────────────────────────────────┬────────────────────┘
+                           ▼                                       ▼
+            events/<slug>/captures/slack/*.json      events/<slug>/captures/pages/*.json
+                           │                                       │
+                           ▼                                       ▼
+            classify (Haiku): kind + entity hints     extract (Opus): canon entities,
+            per message, cached by input hash          every field with a quoted span
+                           │                                       │
+                           ▼                                       ▼
+            link (Opus): Slack message → change        verify (code): quotes exist, numbers
+            on an entity field, or new entity           inside quotes, enums valid
+                           │                                       │
+                           └──────────────►  merge (code)  ◄───────┘
+                                     canon + authorized overrides, history kept
+                                                   │
+                                                   ▼
+                                  events/<slug>/data/entities.json
+                                                   │
+                                                   ▼
+                       hr board → Build · Claim · Now · Meet · Ship (one local page)
+                                   │                       ▲
+                                   │ POST /fit (Origin +   │ ranked tracks, each with a
+                                   ▼  per-run token, D6)   │ verified quoted requirement
+                              fit.ts: idea + track/criterion quotes → Sonnet → verify → cache
+```
+
+Page snapshots carry `access: public | authenticated` (D12); authenticated text is redacted before any model call, like Slack.
+
+Each stage is a pure function of its inputs and is cached by input hash, as `hr group` is today. Re-running `hr sync` after a fresh capture only pays for what changed.
+
+### Module layout (eng review D2)
+
+| Module | Owns | Hides |
+|---|---|---|
+| `pipeline/event.ts` | Every per-event path and config load (`events/<slug>/…`, `--event`) | Path layout; no other module holds a path constant |
+| `pipeline/canon.ts` | Page snapshot → verified canon entities | Snapshot parsing, the extraction prompt, quote verification, retries |
+| `pipeline/live.ts` | Slack messages → `Change`s and Slack-only entities | Kind hints, the link prompt, quote verification, retries |
+| `pipeline/merge.ts` | `merge(canon, changes, roles)`, pure | Authority and conflict rules |
+| `pipeline/schema.ts` | Entity, FieldValue, SourceRef, Change, PageSnapshot types | — |
+| shared helper (lifted from `group.ts`) | Model call → parse → check → retry with the error | Used by `group.ts`, `canon.ts`, `live.ts`; v1 grouping keeps its tests |
+| `pipeline/fit.ts` (D6, D16) | Idea + track/criterion quotes → Sonnet → ranked tracks with a verified quoted requirement each; cached by input hash | Served by `hr board` as POST /fit (Origin + per-run token) |
+| `board/views.js` | Build, Now, Meet, Ship render functions | Shares the board shell, fonts, drawer and done state with Claim (`board/index.html`) |
+
+### 1. Sources
+
+**Slack, top-level** works as in v1, plus **incremental capture**. A channel captured before resumes from its newest stored `ts` and stops when it reaches it (new stop reason `caught_up`), then keeps scrolling back over parents from the last 48 h (`thread_lookback_hours`, D20) to read their reply counts and last-reply times. Older parents that are entity sources are checked by opening their permalink (D20). Sync time is measured at step 5.
+
+**Slack, threads (new).** For each captured top-level message with a reply count, open its thread pane by clicking "N replies", the way a user does. Scroll the pane to its end, record the replies with `thread_ts` set, close it, and wait 1.5 s before the next one. Details:
+- The keys, the `ts` rule and the 5 × 1.5 s no-new-keys fallback are the same as for channels.
+- Order: threads with the most replies first, inside channels in the event's priority order.
+- Budget (D17): the one-time fixture capture is uncapped. Live syncs skip threads whose parent row shows the same reply count and "last reply" time as last sync, order changed threads by parent kind (offers, tracks, deadlines, rep posts) then new-reply count, and cap at 60 after that filter; the rest carry over.
+- Recall is measured against the export's 494 replies in the locked 25 by `ts`. The target is ≥ 90% (v1's channel bar).
+- New selectors go in `selectors.ts` with DOM samples in `fixtures/slack-dom/` (thread pane, reply count, "N more replies", the pane close button).
+
+**Public pages (new).** A second extension action, **Capture this page**, works on any http(s) tab. It snapshots the rendered page:
+- the URL, the title and `captured_at`;
+- a heading-structured outline (h1–h6 with their text blocks and block order; Devpost puts prize titles in h5/h6, measured 2026-10-28: 11 h5, 48 h6), which D7's anchors need;
+- tables as rows;
+- every link with its label;
+- (no edit time: a content script can't read response headers, and `document.lastModified` is the load time on dynamic pages, so edit times come only from snapshot windows, D13).
+
+That covers JS-rendered and login-gated pages (e.g. an event's live site) with the same "read what the user's browser shows" rule. Each snapshot is hashed over its normalized outline text (counters, participant counts and relative times like "3 days left" stripped). A recapture with the same hash is a no-op. A changed hash triggers re-extraction, and only a changed extracted field is a canon change shown in Now (the organizer edited the page). Devpost multi-page events (overview, rules, prizes, resources) are captured page by page. The event config lists which URLs make up canon (`canon_pages`, and `schedule_pages` for the schedule, D3), so a missing one is reported. With no schedule page listed, every schedule item is Slack-only and labeled "from Slack".
+
+Resolved (D11): extension-only. `hr fetch` is in TODOS, triggered if re-capturing canon by click becomes the bottleneck at a live event (Devpost and calhacks.io do serve plain HTML, probed 2026-10-28).
+
+### 2. Entities
+
+```ts
+type EntityKind = "track" | "prize" | "criterion" | "rule" | "schedule_item" | "offer" | "rep" | "booth";
+
+interface SourceRef {
+  kind: "page" | "slack";
+  url: string;                 // page URL or Slack permalink
+  quote: string;               // verbatim span the value came from (verified to exist in the source)
+  captured_at: string;         // ISO, when we captured it
+  posted_at?: string;          // slack only: the post's own time (from ts); merge orders Slack changes by this (D13)
+  author_role?: PosterRole;    // slack only: v1's "organizer" | "sponsor-side" | "other" ("other" = hackers and unknown posters), plus "bot"
+  snapshot_hash?: string;      // page only
+}
+
+interface FieldValue<T> {
+  value: T | null;             // null = not stated (never guessed)
+  source: SourceRef;
+}
+
+interface Entity {
+  id: string;                  // D7: page entity = kind + canonical URL + heading path of its quote; Slack-origin = kind + first post's permalink.
+                               // Re-extraction keeps an id when its quote matches after normalizing whitespace, case and punctuation, above a similarity
+                               // threshold. Below it, or with two candidates, the mark is listed as "no longer on the page"; never attached to the wrong entity.
+  kind: EntityKind;
+  sponsor: string | "event";
+  name: FieldValue<string>;
+  fields: Record<string, FieldValue<unknown>>;   // kind-specific, below
+  history: AppliedChange[];    // every override and page edit, oldest first, computed by merge
+  origin: "page" | "slack";    // where the entity was first stated
+}
+
+interface Change {             // emitted by canon.ts (page diffs) and live.ts (Slack); never carries merge results
+  entity_id: string;           // which entity it touches (D7 id)
+  field: string;
+  to: FieldValue<unknown>;     // the proposed value, with its source (posted_at for Slack, snapshot window for pages)
+  kind: "set" | "question";
+}
+interface AppliedChange extends Change {   // computed by merge.ts only
+  from: FieldValue<unknown>;   // the value it replaced, computed in timeline order (D13)
+  status: "applied" | "unauthorized" | "question" | "ambiguous";   // set by merge from roles (D8) and windows (D13)
+}
+```
+
+Kind-specific fields. Each one is a `FieldValue`, so it's quoted or explicitly null.
+
+| Kind | Fields | Canon source | Live source |
+|---|---|---|---|
+| track | description, requirements[] (e.g. "must use the Claude API"), eligible_with (stacking rule text), max_entries | Devpost | Slack clarifications by organizers or that sponsor |
+| prize | track_id, place, award_text, amount_usd (only if stated), per (team or person) | Devpost | Slack (rare) |
+| criterion | name, weight (if stated), description | Devpost | Slack |
+| rule | text, applies_to (all or track_id), kind (submission, eligibility, conduct), deadline | Devpost rules page | Slack (deadline moves, "demo video optional now") |
+| schedule_item | what, start, end, place | Pages listed in event.json `schedule_pages` (e.g. a live site such as Hive); none listed → Slack-only, labeled "from Slack" (D3) | Slack (time and room changes) |
+| offer | v1 Offer fields (value_short, claim_short, limit, code, claim_url, usd) | Devpost resources (rare) | Slack (the main source, as in v1) |
+| rep | sponsor, role_hint, first_post (permalink), candidate_first | none | Slack (v1 rule A5) |
+| booth | sponsor, place_text, hours | Event site map (if any) | Slack ("we're at table 14") |
+
+Extraction:
+- **Pages → entities:** one Opus call per page snapshot with a JSON schema. Code then **verifies** every field (v1's `checkGroups` pattern):
+  - the `quote` exists verbatim in the snapshot text;
+  - every number and date in `value` appears in the `quote`;
+  - enum fields are valid;
+  - nothing references an id that doesn't exist.
+  - A failed check goes back to the model with the error, up to 2 retries, as in `groupOffers`.
+- **Slack → candidates:** the Haiku classifier grows from the v1 item kinds to "which entity kinds does this message touch". It's cached by input hash. Its prompt carries entity kinds only, so a page edit doesn't invalidate the cache for every message; naming the entity a message is about happens in the link pass, cached per message and the candidate entities' ids and values.
+- **Slack → changes:** the **link** pass (Opus, batched per channel and day) turns candidate messages into one of four outcomes:
+  - `Change`s on existing entities;
+  - new `offer`, `rep` or `booth` entities;
+  - questions;
+  - nothing.
+
+  It runs under the same quote verification.
+- **Offers** keep v1's grouping pass (`hr group`) and `withLabelAmounts`, moved behind the entity interface. Claim must not regress.
+
+### 3. Merge
+
+`merge(canon: Entity[], changes: Change[], roles): Entity[]` is pure code with no model in it:
+
+1. Start from page canon: a page's first snapshot is the baseline.
+2. A later snapshot that changes a field is a page `Change`, placed in its window (previous snapshot's `captured_at`, this snapshot's `captured_at`], because the edit time is unknown (D13).
+3. Authorized Slack changes (D8) are placed at their `ts`. An unauthorized one is kept with `status: "unauthorized"` in history, never as the value.
+4. One timeline: the latest change wins. A Slack change whose ts falls inside a page change's window is ambiguous: both values are shown with "Page and Slack disagree; page changed between <t1> and <t2>", and no winner is picked (D13).
+5. The baseline page value is always kept and displayed beside the shown value. A Slack change that a later snapshot repeats exactly collapses into the page (no double display).
+6. Slack-only entities (offers, reps, booths, and tracks announced only in Slack) have `origin: "slack"` and are labeled "from Slack" in every view.
+
+**Override authority (D19)** trusts only signals a poster can't set themselves:
+- organizer: an id in `organizers.json` backed by workspace admin/owner status (from the export), or an id the user lists; or any post in an `authority_channels` channel;
+- `authority_channels` at a new event: channels where Slack restricts posting ("only certain members can post") are proposed automatically by the capture, and the user confirms the list once in config;
+- sponsor-side (own sponsor's Track, Prize, Offer or Booth only): Slack's external-org badge, or an id the user lists for that sponsor;
+- a display-name tag (e.g. `[CAL HACKS]`), profile title or sponsor name alone never grants authority: the post shows as "unverified poster" in the entity's history, and the run report lists every such poster so the user can add real organizers.
+
+v1's name/title patterns stay as classifier hints only. Anything unresolved is `other`, so it can't override. That's the safe default.
+
+### 4. Views
+
+One local page per event with five tabs. DESIGN.md applies throughout: daylight glass, the de-slop test, mono metadata, ink actions. Every value shows its source on demand. Every overridden value shows both. Done and selection state is per viewer in browser storage, as v1's done state is.
+
+- **Build:** tracks with their prizes, requirements and criteria. The **track stacker** (D4):
+  - **Idea fit:** the user describes their project in one sentence, and Build ranks tracks by how well the idea matches each track's stated requirements and criteria. Each ranked track quotes the matching requirement ("likely fits: uses an LLM agent → Microsoft challenge"). Fit is a suggestion with evidence, never a guarantee.
+  - **Selecting tracks** shows the union of their requirements, criteria per track, and stated prize per track (never a summed "expected value"), and adds each track's stated entry steps (opt-ins, supplemental forms, "say which track in your description"), quoted, to Ship.
+  - Stated stacking limits, where a page has one, show as ordinary quoted rules. There's no pairwise "allowed together?" grid.
+- **Claim:** v1's board, unchanged in behavior. Offers now also come from thread replies and Devpost resources.
+- **Now:** the schedule (D3: config-listed schedule pages, else Slack), merged. Hacker questions never appear here (D9); an entity that ≥ 3 distinct hackers asked about with no authorized answer yet carries a muted "N asked" marker, no text or names. It shows:
+  - what's on now and next;
+  - every change, with old and new values and the source post;
+  - deadlines in one strip, both organizer and offer deadlines (v1's Closes-soon, extended).
+  - The replay scrubber becomes a demo-mode control, shown only when the event is finished or `?replay` is set.
+- **Meet:** reps by sponsor with their first post. Plus:
+  - booths with a place and hours, from quoted posts or the map;
+  - per rep, a drafted one-line opener that refers to their actual post (redacted input, `{first_name}` filled in locally), plus a LinkedIn **search** URL. Owner: `live.ts`, worker model per D21, cached by input hash; verify: every number, product name and date in the opener appears in the rep's quoted post, else the opener is dropped and Meet shows the post alone.
+  - The user copies the opener and sends it themselves.
+- **Ship:** a checklist built from:
+  - submission rules;
+  - the stated entry steps of the tracks selected in Build (D4);
+  - the requirements of the tracks selected in Build;
+  - the submission deadline, merged with any Slack extension;
+  - judging logistics (be at your table 10:30–12:30).
+  - Each item has its source and a done check. Items added by a Slack change are marked as such.
+
+### 5. Per-event config and generalize
+
+```
+events/<slug>/
+  event.json        name, timezone, slack workspace URL, canon page URLs, channel priority, authority channels, organizer patterns
+  sponsors.json     channel → sponsor (as in v1), plus Devpost sponsor names for matching
+  config/organizers.json                                   (gitignored, D10)
+  captures/         slack/*.json, pages/*.json            (gitignored)
+  data/             caches, entities.json, board.json      (gitignored)
+  review/           labels, judge runs, eval reports       (gitignored, D10)
+  fixtures/         DOM and page samples                   (gitignored, D10)
+```
+
+`hr` takes `--event <slug>`, defaulting to `events/current` (a one-line file).
+- **Cal Hacks migration:** `calhacks-13` moves into this layout with `git mv` for config and a move for the gitignored data. Paths in `hr` stop being constants.
+- **Generalize** (the last step): write a second event's `event.json` and `sponsors.json` by hand (about an hour for Cal Hacks), capture its pages and whatever Slack access the user has there, and build its board. It's done when that event's pages pass the D15 coverage checks with no code changes (D18). Auto-drafting the config (`hr init`) is deferred to TODOS (eng review D1).
+
+Resolved (D10): the per-event layout is step 0, right after step −1, with .gitignore safeguards first. (`hr init` auto-drafting is deferred, D1.)
+
+## Eval (step 2: entities + Opus-judged eval)
+
+Like v1, every number is agreement with Opus, said so on every report, plus a hand check where the set is small.
+
+| Set | Size (Cal Hacks, est.) | Producer | Judge | Gate |
+|---|---|---|---|---|
+| Canon entities from pages | [estimated] ~20–40 tracks/prizes, 5 criteria [measured: Devpost page, 2026-10-28], ~10–20 rules, schedule items: none on calhacks.io (F1) | Opus extract + code verify | Opus judge (fresh context: "given this page, list what's missing or misplaced") plus model-free coverage checks (D15) | Verify: 100% of quotes found, numbers in quotes. Judge: no missing track, prize, criterion or rule. Coverage (D15): prize sum reconciles with the page total ($159,822 at Cal Hacks) with unmatched figures listed; prize-block count = extracted prize count; every $-amount and date on the page attached or listed "unattached". Any mismatch fails |
+| Slack → kind candidates | 977 top-level + replies captured | Haiku | Opus prelabel (v1 `hr prelabel`, extended to kinds) | Recall ≥ 0.9 on `change` and `booth`; as v1's gate for `credit` |
+| Slack → changes (link) | Every candidate | Opus link | Opus judge on a stratified sample + every applied change to a deadline or time | **Applied-change precision ≥ 0.95** on deadlines and times (a false override shows a wrong deadline). Recall ≥ 0.8. Every miss is listed with its permalink |
+| Idea fit (D16) | ~50 public gallery projects (winners + random) [precondition: labels public, probe at step 2 start] | Sonnet ranker | Devpost outcomes: won tracks (strong), submitted tracks (weak) | 100% cited quotes verified; report recall@3 on won tracks and precision vs submitted; threshold set after the first run |
+| Thread capture | 494 export replies in the locked 25 | Extension | Export (ground truth) | Keyed recall ≥ 0.9 |
+| Claim regression (D14) | 20 offers, 3 priced [measured: data/board.json] | v1 pipeline | Checked-in fingerprint of v1's board.json (ids, counts, times, excerpt hashes; no workspace text) | `bun test` matches on every build; allowed differences listed per field with the decision that allows them |
+
+The judge never sees the producer's reasoning, only the source and the output (v1 rule: blind to Haiku). Disagreements land in `hr label` for the user to settle, and the user's label wins.
+
+## Build order and exit gates
+
+| Step | Builds | Exit gate | Est. |
+|---|---|---|---|
+| −1 Capture first (D5) | No code: capture the 29 stretch channels top-level with the v1 extension; `hr compare`, then `hr record-run`; save raw thread-pane DOM samples (OV7) | 29 captures recorded; keyed recall per channel reported | ~1 h [estimated] |
+| 0 (D10) | .gitignore for `events/*/{captures,review,data,fixtures}/`, `events/*/config/organizers.json` and `events/current` first; a test that fails if any is tracked; then `events/<slug>/` layout, `--event`, Cal Hacks migrated. v1 board renders unchanged from the new paths | `bun test`, D14 fingerprint matches; user checks `git status --short` after the move | 0.5 d [estimated] |
+| 1 Thread fixture (D5) | Thread capture, run uncapped on the locked 25 before anything else (D17); `hr compare` for threads | Thread recall ≥ 0.9 vs export (or "unmeasured" if access is lost, OV7); selectors backed by fixtures | 1–1.5 d [estimated] |
+| **Page half (D18)** | | | |
+| 2 Page sources | Page snapshot action with access flag (D12), outline h1–h6, normalized hash; Devpost snapshot for Cal Hacks, Hive if it still opens (D3) | Snapshots captured; iframe/PDF reported | 1 d [estimated] |
+| 3 Canon entities + eval | Entity schema, page extraction + verify, coverage checks (D15), Opus judge, source-anchored ids (D7), offer ids (OV5); D16 label probe, then the fit eval if labels are public | D15 gates; D16 baseline reported (or D16 returned to the user) | 2–3 d [estimated] |
+| 4 Build + Ship | Build (idea fit, POST /fit, D4/D6) and Ship from `entities.json`. /plan-design-review before, /design-review after | Both views at 1440 and 390; fit quotes 100% verified | 1.5–2 d [estimated] |
+| **Slack live half (D18)** | | | |
+| 5 Live sources + link | Incremental capture, live thread selection (D17, D20), kind classifier, link pass | Link eval with n printed (OV9) | 1.5–2 d [estimated] |
+| 6 Merge + Now + Meet | `merge()`, authority (D8, D19), "N asked" (D9), Now and Meet views; /design-review after | Unit tests over every Merge rule; Cal Hacks deadline shows page 09:00 / Slack 09:30 | 2–3 d [estimated] |
+| 7 Generalize | Second-event dry run with hand-written config (`hr init` deferred, D1) | The second event's pages pass the D15 coverage checks with no code changes (D18) | 0.5–1 d [estimated] |
+
+Live-only behavior (incremental capture, the live thread budget, Now's on-now/next, roles at a new event) is unproven until a named event; next event: <TBD>, platform: <Slack/Discord> (D18).
+
+Total: about 10–14 solo days [estimated, no basis beyond v1's pace]. Steps 1 and 2 can overlap once the thread fixture run has started.
+
+## Decisions for review
+
+- ~~**E1**~~ Resolved: D11.
+- ~~**E2**~~ Resolved: D10.
+- ~~**E3**~~ Resolved: D15 (Opus judge + model-free coverage checks, no hand check).
+- ~~**E4**~~ Resolved: D17 (was: thread capture budget per sync (60 by default) and order (most replies first). Or capture every thread in priority channels only?
+- ~~**E5**~~ Resolved: D12 (public pages unredacted, authenticated pages redacted, by snapshot flag).
+- ~~**E6**~~ Resolved: authority D8; hacker questions D9.
+- ~~**E7**~~ Not a choice: the brief never asked for the side panel; it stays in Not in scope.
+- ~~**E8** Stacking rules default~~ Moot after D4: there's no pairwise answer to default.
+
+## Risks
+
+- **Cal Hacks' canon may have changed since the event.** The event site may be gone or rewritten, and Devpost pages persist but show the final state. If the site's schedule is gone, `config/event.json`'s 4 hand-sourced entries plus Slack are the fixture, and the schedule-from-page path is proven at generalize instead.
+- **Thread capture is the slowest part of a sync.** 60 threads at about 3 s each is about 3 minutes. The budget and incremental capture keep it bounded, and the user sees progress.
+- **Slack DOM drift.** All selectors stay in one file, fixture-tested, as in v1.
+- **Override precision is the safety-critical number.** A wrong "deadline moved" is worse than a missed one, because the user trusts the board. Hence the gate at 0.95, both values always shown, and the source one click away.
+- **Workspace access** may be revoked at any time. Capture Cal Hacks threads first, before anything else in step 1 (TODOS already says this for the 29 stretch channels).
+
+## Not in scope
+
+- The live side-panel extension, IndexedDB and `chrome.alarms` (TODOS Approach B).
+- Posting to Slack, DMing reps, and any LinkedIn fetch.
+- Accounts, sync between devices, and a hosted board.
+- Team features (shared stacks or checklists).
+- Non-Devpost submission platforms (Devfolio, the organizer's own portal) beyond what the generic page snapshot extracts. Named adapters come after generalize, if needed.
+- Prize "expected value" or any number not stated by a source.
+
+## Eng Review (plan-eng-review, 2026-10-28)
+
+Target: `docs/designs/hackrecon-v2.md` (this file), named by the user. Report file: this file.
+
+### Scope record
+feature answers: D1 = B) Defer `hr init` auto-drafting to TODOS (user, 2026-10-28); structure: D2 = B) Smaller arrangement (user, 2026-10-28); accepted scope: the brief's full feature set (five views, multi-source canon + live, merge rule, thread capture, per-event config, build order) with `hr init` deferred and step 5 reduced to a hand-written second-event config plus a no-code-change board build; modules arranged as pipeline/event.ts, pipeline/canon.ts, pipeline/live.ts, pipeline/merge.ts, entity types in pipeline/schema.ts, board/views.js, and one shared verify-and-retry helper lifted from pipeline/group.ts; pending remedies: F1–F5 (Scope Challenge C).
+
+### Scope Challenge findings
+1. F1 `[CRITICAL] (confidence: 9/10) docs/designs/hackrecon-v2.md §Sources, §Build order step 1` — "event site: schedule" is canon, but calhacks.io has no schedule: "Palace of Fine Arts! The schedule and more details will be sent closer to the event!" (probe 2026-10-28). The Devpost page links the real one as "Live Site: Hive Platform" (unverified, probably behind a login). The step-1 gate "Devpost and event site snapshots captured for Cal Hacks" can't produce schedule canon.
+2. F2 `[INFORMATIONAL] (confidence: 8/10) §Views Build` — Devpost states no general stacking rule. The stated entry steps are per prize, e.g. Commit Fellowship: "opt into the Commit Fellowship Prize Category when you submit your project … submit this supplemental form", and "In your project description, indicate which track … you are submitting for". The stacker as written would show "rules don't say" for every pair.
+3. F3 `[CRITICAL] (confidence: 8/10) TODOS.md:39-45` — "Capture the 29 stretch channels … do this before anything else post-demo" (workspace access may be revoked). The v2 doc's step 1 captures Cal Hacks threads but not the 29 stretch channels, and puts no capture ahead of the code work.
+4. F4 factual correction (no question): the "Labels" constraint is scoped to `hr label` / `hr gate`; views show model output labeled with its model.
+5. F5 factual correction (no question): unmeasured sizes and the effort total are now tagged [estimated]; calhacks.io is plain HTML, not client-rendered.
+
+### Section 1: Architecture
+Design-twice: the two shapes compared in D2 (split by step vs. split by knowledge); the knowledge split won because one module owns each rule and each path. Red flags: information leakage (model-named ids) fixed by D7; hand-synced list (`COMMANDS` vs USAGE in pipeline/hr.ts:119) is pre-existing and minor, listed under Suppressed findings.
+Findings, most severe first:
+- A1 `[CRITICAL] (confidence: 9/10)` §Views Build + pipeline/hr.ts board route: idea fit (D4) had no path to a model → D6 accepted (guarded POST /fit).
+- A2 `[INFORMATIONAL] (confidence: 8/10)` §Entities id: model-named ids orphan marks on re-extraction → D7 accepted, amended with tolerant matching (D8 answer).
+- A3 `[INFORMATIONAL] (confidence: 7/10)` §Premises 2: authority → D8 accepted; hacker questions → D9 accepted (drawer only + "N asked" marker).
+- A5 `[INFORMATIONAL] (confidence: 7/10)` E2 path timing → D10 accepted (step 0 with .gitignore safeguards first).
+- A6 `[INFORMATIONAL] (confidence: 6/10)` E1 → D11 accepted (extension only; `hr fetch` to TODOS).
+- A7 `[INFORMATIONAL] (confidence: 6/10)` E5 → D12 accepted (redaction by snapshot access flag).
+Failure per new integration: page layout change → verify fails → retries → reported, never shown unverified; Slack DOM drift → thread recall drops → `hr compare` flags it; false Slack override → precision gate (Eval) + both values shown; API down on /fit → Build shows tracks unranked with the reason.
+Distribution: the extension is rebuilt locally (`bun run build:ext`) and loaded unpacked, as in v1; no store listing (Not in scope).
+Dispositions: A1 accepted (D6), A2 accepted (D7 + amendment), A3 accepted (D8, D9), A5 accepted (D10), A6 accepted (D11), A7 accepted (D12).
+
+### Section 2: Code quality
+Findings: CQ1 `[CRITICAL] (confidence: 8/10)` §Merge steps 1–3: an older Slack post overrode a newer page edit → D13 accepted (one timeline, ambiguity flag). Edge cases carried into tests (no new policy): a canon page whose text is in an iframe or PDF yields no text and is reported as "no text captured", like a missing page; a thread reply whose parent wasn't captured keeps its `thread_ts` and is reported, not dropped.
+Dispositions: CQ1 accepted (D13).
+Shared-code rubric (D2's helper): existing caller `groupOffers` (pipeline/group.ts:229-280: model call → parse → `checkGroups` → retry with the error, up to 1 + OUTPUT_RETRIES); proposed callers canon.ts, live.ts, fit.ts (assumptions from D2, D4, D6). Contract `(request, check(parsed) → {ok} | {error}) → result | {error, usage, calls}`. Estimated −50 / +60 implementation lines [estimated]; the saving is three future copies not written. Covered by group.test.ts today; the helper gets its own contract tests (Test review).
+
+### Section 3: Test review
+Framework: `bun test` (package.json "test"), 16 test files, 194 passing at v1.
+```
+CODE PATHS (proposed unless marked)                          USER FLOWS
+[+] pipeline/event.ts (D10)                                  [+] Re-sync mid-event
+  ├── [GAP] path resolution per --event, default current       ├── [GAP] [→E2E] capture → hr sync → board: marks survive (D7)
+  ├── [GAP] tracked-file guard: events/*/{captures,review,       ├── [GAP] page edit after Slack override → newer wins (D13)
+  │         data,fixtures}/, events/*/config/organizers.json    └── [GAP] ambiguous window → both values, no winner (D13)
+  └── [GAP] v1 board identical after move (regression)       [+] Build
+[+] shared verify-and-retry helper (D2)                         ├── [GAP] type idea → ranked tracks, quote per track (D4/D6)
+  ├── [★★★ TESTED] via groupOffers — group.test.ts (11)         ├── [GAP] API down → tracks unranked + reason (D6)
+  └── [GAP] contract: check error fed back, retry cap,          ├── [GAP] POST /fit from wrong Origin / bad token → 403 (D6)
+            refusal, API error                                   └── [GAP] select tracks → entry steps appear in Ship (D4)
+[+] extension: thread capture (D5)                           [+] Now
+  ├── [★★★ TESTED] accumulate ts dedupe — accumulate.test.ts    ├── [GAP] override shows page + Slack values (D8)
+  ├── [GAP] open pane → scroll → record replies → close         ├── [GAP] ≥3 distinct hackers, unanswered → "N asked"; clears (D9)
+  ├── [GAP] parent missing → reply kept + reported              └── [GAP] hacker post never in feed, never a value (D8/D9)
+  └── [GAP] [→E2E] recall ≥ 0.9 vs export (494) — compare     [+] Meet / Ship / Claim
+[+] extension: page snapshot (D3, D12)                          ├── [GAP] booth from quoted post; opener {first_name} local
+  ├── [GAP] outline/tables/links captured; content hash         ├── [GAP] Ship item per submission rule + selected entry step
+  ├── [GAP] access flag set in popup; missing → authenticated   └── [GAP] Claim unchanged vs v1 (regression)
+  └── [GAP] iframe/PDF → "no text captured" reported
+[+] pipeline/canon.ts
+  ├── [GAP] quote exists verbatim (public) / in redacted text (authenticated, D12)
+  ├── [GAP] numbers and dates in value appear in quote
+  ├── [GAP] source-anchored id; tolerant re-match; ambiguous → orphan list (D7)
+  └── [GAP] [→EVAL] extraction completeness vs Opus judge (E3)
+[+] pipeline/live.ts
+  ├── [GAP] kind hints cached by input hash
+  └── [GAP] [→EVAL] link precision ≥ 0.95 on deadlines/times, recall ≥ 0.8
+[+] pipeline/merge.ts (pure)
+  ├── [GAP] authority: organizer any; sponsor-side own only; other → unauthorized (D8); name-only → "unverified poster" (D19)
+  ├── [GAP] timeline: page window, Slack ts, latest wins, ambiguity (D13)
+  └── [GAP] baseline kept; repeat collapses
+[+] pipeline/fit.ts
+  ├── [GAP] cited requirement verified in that track's sources
+  ├── [GAP] cache hit by hash(idea + entities)
+  └── [GAP] [→EVAL] fit ranking quality
+[+] pipeline/roles.ts (existing, extended)
+  └── [GAP] organizer by config display-name pattern / authority channel at a new event
+COVERAGE: 2/41 paths tested (5%) | Code paths: 2/27 | User flows: 0/14   [counted from this diagram]
+QUALITY: ★★★:2 | GAPS: 39 (3 E2E, 4 EVAL)
+```
+Every [GAP] row protects an approved behavior (D2–D13) and is required proof of that approval; each gets its test in the step that builds it. Value cards are in the Test Plan artifact.
+Tests made obsolete: none (v1 tests move with their modules; paths change via event.ts).
+
+Findings, most severe first:
+- T1 `[CRITICAL] (confidence: 9/10)` §Eval Claim regression: no automated proof that v1's Claim board survives the move, the helper lift and threads → D14 accepted (fingerprint test).
+- T2 `[INFORMATIONAL] (confidence: 7/10)` §Eval E3: the hand check conflicted with D21 → D15 accepted (Opus judge + model-free coverage checks).
+- T3 `[INFORMATIONAL] (confidence: 8/10)` idea fit had no quality eval → D16 accepted (Devpost outcomes, Sonnet ranker), with a public-label precondition.
+- Threshold for tolerant quote matching (D7): calibrated in step 2 on real re-extraction pairs (re-extract the Cal Hacks Devpost snapshot twice and from a re-capture); required proof of D7, no new policy.
+Dispositions: T1 accepted (D14), T2 accepted (D15), T3 accepted (D16, precondition pending a probe).
+
+### Section 4: Performance
+Measured [export, locked 25]: 494 replies in 209 threads; the largest threads hold 30, 19, 12, 11 and 10 replies; median 2; the top 60 threads hold 286 replies (58%).
+Other paths: entities and merge are small, pure, in-memory passes (dozens to hundreds of entities per event) [estimated]; the /fit cache grows by one entry per distinct idea; page snapshots are content-hashed, so an unchanged page costs no model call. No N+1 or unbounded query exists (no database).
+Findings:
+- P1 `[INFORMATIONAL] (confidence: 8/10)` §Sources "A per-run thread budget (default 60)": at the measured shape, one run at 60 captures 58% of fixture replies; the full Cal Hacks fixture needs 4 runs, or one uncapped run → D17.
+Dispositions: P1 accepted (D17, with change-skip and kind-first ordering).
+
+## Outside Voice (Claude Plan subagent, 2026-10-28; Codex not installed)
+Read the plan body plus v1 code. 2 Critical, 5 High, 7 Medium, 7 Low, 1 strategic. Verified by the reviewer before disposition:
+- roles.ts:59 `posterRole` marks organizer on `ORG_TAG` (display name) or `ORG_TITLE` (profile title): free-text fields any member sets [verified].
+- board.ts:193 offer ids are positional (`o${i + 1}`), and board/index.html keys done state by them [verified].
+- Devpost Cal Hacks headings: 2 h1, 8 h3, 4 h4, 11 h5, 48 h6 [measured 2026-10-28]; prize titles sit below h4.
+- Devpost still reads "You must submit your hack by October 25th @ 9 AM PST" [measured 2026-10-28], so the outside voice's guess that the page shows 09:30 is refuted; the 09:00 page / 09:30 Slack fixture holds.
+- `Rep.opener` exists in schema.ts but no module generates it [verified].
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| OV1 | Critical | Step-3 gate may be unmeetable: post-event snapshot; baseline position on the timeline unstated | Premise refuted (page still 09:00). Baseline position: already decided by D13 (the first snapshot is the baseline, not a change, so it sits before every Slack change). Residual, documented: a first snapshot that already reflects a later organizer edit can't be told apart from the original |
+| OV2 | Critical | `Change` lacks entity_id, Slack post time; `from`/`status` set before merge | Accepted (D21): `Change {entity_id, field, to, kind}`, `SourceRef.posted_at`, merge computes `AppliedChange.from/status` |
+| OV3 | High | Override authority spoofable via display name / title | D19 accepted: unspoofable signals only; restricted-posting channels proposed automatically, user confirms |
+| OV4 | High | Incremental capture never re-shows older parent rows, so D17's skip rule can't see late replies | D20 accepted: 48 h lookback + permalink checks for older entity parents |
+| OV5 | High | Unstable ids: prizes below h4; positional offer ids break done marks and D14 | Fixed as D7/D14 mechanism: outline h1–h6 with block order; offer id = first post's permalink ts (`o-<channel>-<ts>`); D14 fingerprint keyed by it; done marks migrate once from `o<n>` by matching v1's board.json |
+| OV6 | High | No named live event; step 5 can pass with an empty board | D18 accepted: full brief, page half first, live-only behavior labeled; step 7 gated on D15 coverage checks |
+| OV7 | High | "Capture first" gap | Fixed (mechanism of D5): step −1 also saves raw thread-pane DOM samples; if access is lost before step 1 ends, thread recall is reported "unmeasured" and downstream work uses the export's 494 replies |
+| OV8 | Medium | Prize-sum gate ambiguous; number normalization unstated | D15 stands as the user wrote it (any nonzero gap fails; report lists unmatched figures). Normalization fixed: `$1k`, `$1,000`, `1000 USD` compare equal; spelled-out numbers aren't matched and are listed "unattached" |
+| OV9 | Medium | 0.95 link precision meaningless on few cases | Fixed (reporting, no new policy): the eval prints n beside every rate; with n < 20 it lists each applied deadline/time change individually instead of a rate |
+| OV10 | Medium | Entity list in classifier prompt invalidates the cache | Fixed: classifier gets entity kinds only; naming moves to the link pass, cached per message + candidate entities |
+| OV11 | Medium | Meet opener has no owner or check | Fixed: owned by live.ts, verified against the rep's post (§Views Meet) |
+| OV12 | Medium | Idea fit is heavy for one text box | User decisions D4, D6, D16 stand (custom answers); not re-asked |
+| OV13 | Medium | Raw hash flags counters as canon changes | Fixed: hash normalized outline text; only changed extracted fields show in Now |
+| OV14 | Medium | Uncapped fixture capture looks bot-like | Fixed within D17: paced at the measured ~3 s per thread, stops on any Slack error or rate-limit banner, reports where it stopped; rerun resumes |
+| Low | Low | Premise 4 vs D15; E4 dangling; "DRAFT" header; role names; `events/current`; `last-modified`; view estimates | Fixed in the body; `events/current` is gitignored (local pointer); estimates already tagged [estimated] |
+
+## Decision ledger
+
+### R-F1: where schedule canon comes from
+Finding: F1, CRITICAL, 9/10, §Sources / step 1, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: "event site: schedule" is canon; step 1 gate "Devpost and event site snapshots captured for Cal Hacks".
+Runtime evidence: calhacks.io serves 1,817 words, none of them a schedule [measured: curl 2026-10-28]; Hive "Live Site" not probed (unknown).
+Comparison grid:
+| Choice | Current | A | B | C |
+|---|---|---|---|---|
+| R-F1 schedule canon source | "the event site" | any page config lists as `schedule_pages` (e.g. Hive), snapshotted by the extension in the user's own logged-in tab; none listed → schedule is Slack-only (`origin: "slack"`) | Slack-only schedule; no page path | unchanged |
+| Cal Hacks step-1 gate | event site snapshot | Devpost snapshot + a Hive snapshot if the user can still open it; otherwise schedule fixture = Slack + `config/event.json`'s 4 sourced entries, and schedule-from-page is proven at step 5 | Devpost only | unchanged (unmeetable) |
+| Other pending choices (F2, F3, E1–E8) | pending | pending | pending | pending |
+Question D3:
+D3 — Where does the schedule's canon come from, given calhacks.io has none?
+Project/branch/task: hackrecon v2 design doc, branch v2, Sources step.
+ELI10: The plan treats "the event site" as the official schedule, but calhacks.io only says the schedule will be sent closer to the event. Devpost links a "Live Site" on Hive, which is probably login-only. The extension reads whatever page you have open, logins included, so it can snapshot Hive the same way as Devpost. The question is whether schedule canon becomes "whatever schedule page the event config lists" or whether the schedule comes from Slack only.
+Stakes if we pick wrong: Keep the plan as written, and step 1's exit gate can never pass for Cal Hacks. Go Slack-only, and the Now view can never show "page said X, Slack changed it to Y" for times and rooms.
+Recommendation: A) Config-listed schedule pages, because it keeps the canon-vs-live rule for the schedule at events that publish one, costs one config field, and falls back to Slack honestly when none exists.
+Completeness: A=9/10, B=6/10, C=3/10
+Pros / cons:
+A) Config-listed schedule pages (recommended)
+  ✅ Works for login-gated live sites such as Hive, because the snapshot runs in the user's own tab
+  ✅ No schedule page means Slack-only items labeled "from Slack", never an empty canon presented as complete
+  ❌ The page path can't be proven on Cal Hacks unless Hive still opens; proof may slip to step 5 (human: ~0.5 day / CC: ~20 min)
+B) Slack-only schedule
+  ✅ The smallest build: no schedule extraction from pages at all
+  ✅ Matches where Cal Hacks' schedule changes were actually announced (0-announcements)
+  ❌ Loses the canon-vs-live comparison for times and rooms at every future event that does publish a schedule
+C) Keep as written
+  ✅ No doc change
+  ❌ The step-1 gate is unmeetable for the only fixture event
+Net: one config field and a fallback, versus giving up schedule canon everywhere.
+Header: Schedule src
+Options:
+A) Config schedule pages (recommended)
+Schedule canon = pages listed in event.json `schedule_pages`, snapshotted by the extension in the user's tab (logins work). None listed → schedule items are Slack-only, labeled "from Slack". Cal Hacks gate: Devpost + Hive snapshot if it still opens, else Slack + event.json's 4 sourced entries, with schedule-from-page proven at step 5. (human: ~0.5 day / CC: ~20 min)
+B) Slack-only schedule
+Drop schedule extraction from pages. Every schedule item comes from Slack (and event.json's sourced entries). Now never shows a page-vs-Slack pair for times or rooms.
+C) Keep as written
+Leave "event site: schedule" and the step-1 gate unchanged.
+
+State: approved
+Actual answer: A) Config schedule pages (recommended) — user, D3, 2026-10-28
+Accepted scope: Schedule canon = pages listed in event.json `schedule_pages`, snapshotted by the extension in the user's tab (logins work). None listed → schedule items are Slack-only, labeled "from Slack". Cal Hacks gate: Devpost + Hive snapshot if it still opens, else Slack + event.json's 4 sourced entries, with schedule-from-page proven at step 5.
+History: none
+
+### R-F2: what the track stacker shows when stacking rules aren't stated
+Finding: F2, INFORMATIONAL, 8/10, §Views Build, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: pick tracks → "whether the set is allowed under the stated stacking rules"; unstated pairs say "Rules don't say. Ask in #help."; E8 (no default) pending.
+Runtime evidence: Devpost Cal Hacks page states no general stacking rule; it states per-prize entry steps ("opt into the Commit Fellowship Prize Category … submit this supplemental form"; "indicate which track … you are submitting for") [measured: curl 2026-10-28].
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-F2 stacker's main output | "allowed together?" per pair | per selected track: stated requirements, criteria, stated prize, and stated entry steps (opt-ins, forms, "say which track"); one line on stacking: the stated rule, or "Rules don't say whether these stack" | "allowed together?" per pair, "rules don't say" per unstated pair |
+| Entry steps in Ship | not in plan | each stated entry step for the selected tracks becomes a Ship checklist item with its quote | not added |
+| E8 default when unstated | pending | resolved: no default (never "yes") | resolved: no default (never "yes") |
+| Other pending choices (F3, E1–E7) | pending | pending | pending |
+Question D4:
+D4 — What should the track stacker show when the rules don't say whether prizes stack?
+Project/branch/task: hackrecon v2 design doc, branch v2, Build view.
+ELI10: The stacker was going to answer "can I enter these prizes together?" But Cal Hacks' Devpost never says, so it would print "rules don't say" for every pair. What the page does state is how to enter each prize: opt in when you submit, fill a supplemental form, name the track in your description. Missing one of those is how teams lose a prize they qualified for.
+Stakes if we pick wrong: A stacker that says "rules don't say" everywhere is noise, and the entry steps that actually decide eligibility stay buried in the page.
+Recommendation: A) Lead with stated entry steps, because those are on the page, they're the thing teams miss, and they feed Ship directly. Neither option ever assumes two prizes stack.
+Completeness: A=9/10, B=6/10
+Pros / cons:
+A) Lead with stated entry steps (recommended)
+  ✅ Shows what Devpost actually states per prize: requirements, criteria, opt-ins, forms, "say which track"
+  ✅ Each entry step becomes a quoted Ship checklist item, so the opt-in isn't forgotten at submit time
+  ❌ The "can these stack?" answer shrinks to one line, which may feel less like a stacker (human: ~0.5 day / CC: ~15 min)
+B) Keep pairwise "allowed?"
+  ✅ Matches the brief's word "stacker" literally, with a yes/no/unknown per pair
+  ✅ Becomes useful at events whose rules do state stacking limits
+  ❌ At Cal Hacks every pair says "rules don't say", and entry steps aren't surfaced anywhere
+Net: lead with what the page states and teams miss, versus a pairwise grid that's empty at the fixture.
+Header: Stacker
+Options:
+A) Lead with entry steps (recommended)
+Per selected track: stated requirements, criteria, stated prize, and stated entry steps (opt-ins, forms, "say which track"), each quoted. One line on stacking: the stated rule, or "Rules don't say whether these stack." Entry steps become Ship items. No default; never assume yes. (human: ~0.5 day / CC: ~15 min)
+B) Keep pairwise allowed?
+Keep the per-pair "allowed together?" grid, with "Rules don't say. Ask in #help." for unstated pairs. Entry steps aren't added to Ship. No default; never assume yes.
+
+State: approved
+Actual answer: Other (user, D4, 2026-10-28): "Keep the idea-fit half of the stacker: the user describes their project in a sentence, and Build ranks tracks by how well the idea matches each track's stated requirements and criteria, with the matching requirement quoted per track ("likely fits: uses an LLM agent → Microsoft challenge"). Fit is a suggestion with evidence, never a guarantee. Selecting tracks adds their entry steps to Ship."
+Accepted scope: Build: the user types a one-sentence project idea; tracks are ranked by fit to each track's stated requirements and criteria, each with the matching requirement quoted; worded as a suggestion ("likely fits"), never a guarantee. Selecting tracks adds each track's stated entry steps (opt-ins, forms, "say which track"), quoted, to Ship. The pairwise "allowed together?" grid is removed; stated stacking limits, where a page has one, show as ordinary quoted rule entities. E8 is moot (no pairwise answer exists to default). New data flow (the idea text goes to a model) is reviewed in Section 1.
+History: none
+
+### R-F3: capture the at-risk Cal Hacks data before building
+Finding: F3, CRITICAL, 8/10, TODOS.md:39-45, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: step 0 (layout migration) first, then step 1 builds thread capture and captures Cal Hacks threads; the 29 stretch channels aren't mentioned.
+Runtime evidence: TODOS.md: "Access to the workspace may be revoked at any time, so do this before anything else post-demo"; 26 capture files exist, i.e. the locked 25 (+1) top-level only [measured: ls captures/]. Workspace access today: unknown.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-F3 first work item | step 0 layout migration | step −1 "capture first": with the existing v1 extension, capture the 29 stretch channels top-level now (no code needed, about 1 hour), record with `hr record-run`; thread capture for the locked 25 runs as the first build of step 1, before any other step-1 work | unchanged; stretch channels stay a TODO |
+| Order of thread capture within step 1 | unspecified | first, before incremental capture and page snapshots | unspecified |
+| Other pending choices (E1–E7) | pending | pending | pending |
+Question D5:
+D5 — Capture the at-risk Cal Hacks Slack data before any v2 code work?
+Project/branch/task: hackrecon v2 design doc, branch v2, build order.
+ELI10: v2 is developed against Cal Hacks' Slack, but your access to that workspace can be revoked at any time. 29 sponsor channels were never captured, and no thread replies were. The v1 extension can capture the 29 channels today with no new code, in about an hour. Thread capture needs new code, so it should be the very first thing built in step 1. Otherwise v2's thread recall and reps work could lose its only fixture mid-build.
+Stakes if we pick wrong: If access goes before capture, v2 loses the thread fixture (494 replies) and the reps for 29 sponsors, and the thread-recall gate can't be measured at all.
+Recommendation: A) Capture first, because it's an hour with existing tools, and losing the fixture would cost far more than the reorder.
+Completeness: A=10/10, B=5/10
+Pros / cons:
+A) Capture first (recommended)
+  ✅ Locks in the 29 stretch channels today with the v1 extension, no code (human: ~1h / CC: n/a, it's clicks)
+  ✅ Builds thread capture first in step 1, so the 494 replies are saved before anything else is built
+  ❌ Delays the layout migration (step 0) by about an hour plus the thread-capture build
+B) Keep the order
+  ✅ The build order stays exactly as the brief lists it
+  ✅ The capture work happens anyway, just later in step 1
+  ❌ A revoked workspace before step 1 means no thread fixture and no reps for 29 sponsors, permanently
+Net: an hour now versus betting the only fixture on workspace access lasting.
+Header: Capture 1st
+Options:
+A) Capture first (recommended)
+New step −1: capture the 29 stretch channels top-level with the existing extension now and record them with `hr record-run`. In step 1, thread capture for the locked 25 is built and run first, before incremental capture and page snapshots. (human: ~1h + thread build)
+B) Keep the order
+Step 0 then step 1 as written; the 29 stretch channels stay a TODO; thread capture has no fixed position in step 1.
+
+State: approved
+Actual answer: A) Capture first (recommended) — user, D5, 2026-10-28
+Accepted scope: New step −1: capture the 29 stretch channels top-level with the existing extension now and record them with `hr record-run`. In step 1, thread capture for the locked 25 is built and run first, before incremental capture and page snapshots.
+History: none
+
+### R-A1: how the idea text reaches a model (idea fit, D4)
+Finding: A1, CRITICAL, 9/10, §Views Build + pipeline/hr.ts board route (GET-only, CSP `default-src 'none'`), reviewer plan-eng-review (Claude)
+Plan baseline: D4 approved idea fit; no mechanism specified.
+Runtime evidence: `hr board` serves the page, data/board.json and fonts on 127.0.0.1, GET only [static read: pipeline/hr.ts]. The board makes no network calls beyond that.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A1 idea-fit mechanism | none | `hr board` adds `POST /fit` on 127.0.0.1: checks the Origin header equals the board's own origin and a per-run token embedded in the page; sends the idea plus track/criterion entities (quotes only) to Opus; verifies each quoted requirement exists in that track's sources (shared verify helper); caches by hash of idea + entities | `hr fit "<idea>"` CLI writes `events/<slug>/data/fit.json`; the board shows the ranking after a reload |
+| What leaves the machine | captured Slack text (redacted), page text | + the typed idea sentence | + the typed idea sentence |
+| API down / no key | n/a | Build shows tracks unranked with "Couldn't rank: <reason>" | the CLI prints the error; Build shows no ranking |
+| Other pending choices (A2–A6) | pending | pending | pending |
+Question D6:
+D6 — How should the idea you type in Build reach the model that ranks tracks?
+Project/branch/task: hackrecon v2 design doc, branch v2, Build view (idea fit from D4).
+ELI10: Idea fit needs a model to read your sentence next to each track's requirements. The board is a local page with no server logic, so something has to make that call. Option A adds one endpoint to the local board server. It only accepts requests from the board's own page carrying a secret token, so another website open in your browser can't use your API key. Option B makes it a terminal command whose result shows up when you reload the board.
+Stakes if we pick wrong: An unguarded local endpoint would let any web page you visit spend your API credits. A CLI-only path makes idea fit a context switch nobody uses mid-hackathon.
+Recommendation: A) Local endpoint with Origin and token checks, because idea fit only helps if it's one text box away, and the two checks close the localhost hole.
+Completeness: A=9/10, B=7/10
+Pros / cons:
+A) Local endpoint, guarded (recommended)
+  ✅ Type a sentence in Build and see ranked tracks in place; reruns of the same idea come from the cache
+  ✅ The Origin check plus a per-run token stop other sites in your browser from calling it with your key
+  ❌ The board server gains its first POST route and its first model call (human: ~1 day / CC: ~30 min)
+B) CLI `hr fit`
+  ✅ The board stays static and GET-only, with no new attack surface
+  ✅ It reuses the CLI pattern every other model step already uses
+  ❌ Means a terminal round trip and a reload for each idea, which is clumsy while brainstorming
+Net: an in-page box with two guards versus keeping the board static at the cost of a clumsy loop.
+Header: Idea fit
+Options:
+A) Local endpoint, guarded (recommended)
+`hr board` adds POST /fit on 127.0.0.1, accepted only with the board's own Origin and a per-run page token. It sends the idea plus track and criterion quotes to Opus, verifies each cited requirement exists in that track's sources, and caches by input hash. On API failure Build shows tracks unranked with the reason. The idea sentence is added to what leaves the machine. (human: ~1 day / CC: ~30 min)
+B) CLI hr fit
+`hr fit "<idea>"` writes events/<slug>/data/fit.json with the same verification; the board shows the ranking after a reload. The board stays GET-only. The idea sentence is added to what leaves the machine.
+
+State: approved
+Actual answer: A) Local endpoint, guarded (recommended) — user, D6, 2026-10-28
+Accepted scope: `hr board` adds POST /fit on 127.0.0.1, accepted only with the board's own Origin and a per-run page token. It sends the idea plus track and criterion quotes to the ranker model (Sonnet, `claude-sonnet-5-5`, per the user's D16 amendment), verifies each cited requirement exists in that track's sources, and caches by input hash. On API failure Build shows tracks unranked with the reason. The idea sentence is added to what leaves the machine.
+History: D6 answer A (2026-10-28) named Opus as the ranker; the user's D16 answer set Sonnet for ranking.
+
+### R-A2: entity ids that survive re-extraction
+Finding: A2, INFORMATIONAL, 8/10, §Entities `id: string; // stable: kind + slug of canonical name + sponsor`, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: id = kind + slug of the model-chosen canonical name + sponsor.
+Runtime evidence: v1 offers use positional ids (`o${i + 1}`, pipeline/board.ts:193), and done state is keyed by id in localStorage (`hackrecon:done:<event>`); v1 is unaffected because it never re-extracts mid-event. Re-extraction behavior of v2: unknown (not built).
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A2 id scheme | kind + slug(model name) + sponsor | page entities: kind + canonical page URL + heading path of the quoted span; Slack-origin entities: kind + permalink of the first post; on re-extraction an entity whose anchor moved keeps its old id when its quote matches; any done/selected id with no entity left is listed in the drawer as "no longer on the page", never dropped silently | as written |
+| v1 Claim offer ids | positional `o<n>` | unchanged (Claim keeps v1 grouping, rebuilt only by `hr group`) | unchanged |
+| Other pending choices (A3–A6) | pending | pending | pending |
+Question D7:
+D7 — What should an entity's id be built from, so marks survive a re-run?
+Project/branch/task: hackrecon v2 design doc, branch v2, Entities.
+ELI10: Every track, rule and deadline gets an id, and your done checks and Build picks are saved against that id. The plan builds the id from the name the model chooses. If the model calls "Best Use of Apify" "Best Apify Actor" on the next run, that's a new id, and your check mark silently disappears. Option A builds the id from where the fact sits on the page (URL plus heading), keeps the old id when the same quote moves, and lists any orphaned marks instead of dropping them.
+Stakes if we pick wrong: Mid-hackathon re-syncs could quietly clear checklist items you already finished, or bring back Ship items you dismissed.
+Recommendation: A) Source-anchored ids, because the page position and quote are facts, while the model's wording isn't stable between runs.
+Completeness: A=9/10, B=5/10
+Pros / cons:
+A) Source-anchored ids (recommended)
+  ✅ Done marks and Build picks survive model rewording, because the id comes from the page position, not the name
+  ✅ A mark whose entity is gone shows as "no longer on the page" instead of vanishing
+  ❌ Needs a quote-match step on every re-run, plus tests for moved headings (human: ~0.5 day / CC: ~20 min)
+B) Name-based ids
+  ✅ Simple and readable ids, with nothing extra to build
+  ✅ Fine as long as each event is extracted only once
+  ❌ Any rewording by the model on a re-sync orphans marks silently, which breaks the live re-sync loop v2 exists for
+Net: half a day of matching code versus silent loss of user state on every re-sync.
+Header: Entity ids
+Options:
+A) Source-anchored ids (recommended)
+Page entity id = kind + canonical URL + heading path of its quote; Slack-origin id = kind + first post's permalink. A re-extracted entity whose anchor moved keeps its id when its quote matches. Done or selected ids with no entity left are listed as "no longer on the page", never dropped. v1 Claim ids unchanged. (human: ~0.5 day / CC: ~20 min)
+B) Name-based ids
+Keep id = kind + slug of the model's canonical name + sponsor. v1 Claim ids unchanged.
+
+State: approved
+Actual answer: A) Source-anchored ids (recommended) — user, D7, 2026-10-28
+Accepted scope: Page entity id = kind + canonical URL + heading path of its quote; Slack-origin id = kind + first post's permalink. A re-extracted entity whose anchor moved keeps its id when its quote matches, using tolerant matching (user amendment, D8 answer): quotes are normalized for whitespace, case and punctuation, and a moved or lightly edited quote is accepted above a similarity threshold. Below the threshold, or when two candidates match (ambiguous), the mark is listed as "no longer on the page" rather than guessed. A mark is never attached to the wrong entity. Done or selected ids with no entity left are listed, never dropped. v1 Claim ids unchanged. The threshold value is not yet set: it is calibrated in step 2 on real re-extraction pairs (see Test review).
+History: D7 answer A (2026-10-28) accepted "keeps its id when its quote matches"; amended by the user's D8 answer to tolerant matching with an ambiguity rule.
+
+### R-A3: who may override canon from Slack
+Finding: A3, INFORMATIONAL, 7/10, §Premises 2 + §Merge step 3 + E6, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal (Premise 2): organizers override any event entity; a sponsor-side poster overrides only their own sponsor's Track, Prize, Offer or Booth; hackers never. The brief says only "Slack updates override with both shown".
+Runtime evidence: `posterRole()` returns organizer | sponsor-side | other (pipeline/roles.ts:10,59); organizer ids come from the export-built config/organizers.json (roles.ts:34), which a new event won't have.
+Comparison grid:
+| Choice | Current | A | B | C |
+|---|---|---|---|---|
+| R-A3 override authority | Premise 2 (proposal) | organizer → any entity; sponsor-side → only its own sponsor's track, prize, offer, booth; anyone else → never (kept in history as `unauthorized`) | organizers only; sponsor-side posts never override | any Slack post overrides (brief literal) |
+| Display of every override | page and Slack values both shown | unchanged | unchanged | unchanged |
+| Unresolved role at a new event | "hacker" | "hacker" (cannot override) | "hacker" | n/a |
+| R-A4 hacker questions in Now | pending | pending | pending | pending |
+| Other pending choices (A5–A7) | pending | pending | pending | pending |
+Question D8:
+D8 — Whose Slack posts are allowed to override what the official pages say?
+Project/branch/task: hackrecon v2 design doc, branch v2, Merge rule.
+ELI10: Your brief says Slack updates override the page, with both values shown. But anyone can post in Slack, including a hacker guessing that "the deadline's probably 9:30". The plan only lets organizers change anything, and lets a sponsor's own people change only their sponsor's prize, offer or booth. Everyone else's posts are kept in the history but never become the shown value. Unknown posters at a new event count as "can't override".
+Stakes if we pick wrong: Too loose, and one wrong hacker post moves a deadline on your screen. Too strict (organizers only), and a sponsor rep's "we extended our challenge deadline" never shows.
+Recommendation: A) Organizers anything, sponsor-side only their own, because it lets the two roles that own these facts change them, while a hacker post can never move a value. (No count of sponsor-side changes at Cal Hacks has been measured yet.)
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) Organizers + own-sponsor (recommended)
+  ✅ Covers both kinds of change the plan expects: organizer schedule moves and a sponsor amending its own prize or offer
+  ✅ Unknown or hacker posters can't change a value; their posts stay visible in history as "unauthorized"
+  ❌ Needs sponsor matching between Slack channels and Devpost prize names (aliases in sponsors.json)
+B) Organizers only
+  ✅ The simplest rule, needing no sponsor matching at all
+  ✅ Lowest chance of a false override
+  ❌ A sponsor rep's own deadline extension or prize change would never show as the current value
+C) Any Slack post
+  ✅ The literal reading of the brief, with no role logic
+  ✅ Nothing a real organizer posts is missed because of a role miss
+  ❌ One hacker guess moves a deadline on screen, which breaks the override precision gate
+Net: the role rule trades a sponsor-matching table for never letting a guess move a value.
+Header: Authority
+Options:
+A) Organizers + own sponsor (recommended)
+Organizers override any entity; a sponsor-side poster overrides only their own sponsor's track, prize, offer or booth; anyone else never (kept in history as "unauthorized"). Unresolved roles at a new event count as "can't override". Both values are always shown.
+B) Organizers only
+Only organizer posts override; sponsor-side and everyone else are history only. Both values are always shown.
+C) Any Slack post
+Every Slack post that changes a field overrides it, whoever posted it. Both values are always shown.
+
+State: approved
+Actual answer: A — user, D8, 2026-10-28, verbatim: "Option A, with tolerant matching: normalize quotes (whitespace, case, punctuation) and accept a moved or lightly edited quote above a similarity threshold. Below the threshold or ambiguous (two candidates), list the mark as “no longer on the page” rather than guessing. Never attach a mark to the wrong entity." The tolerant-matching sentences concern quote matching on re-extraction and are applied to R-A2 (D7) as a user amendment.
+Accepted scope: Organizers override any entity; a sponsor-side poster overrides only their own sponsor's track, prize, offer or booth; anyone else never (kept in history as "unauthorized"). Unresolved roles at a new event count as "can't override". Both values are always shown.
+History: none
+
+### R-A4: hacker questions in the Now view
+Finding: A3 (second choice), INFORMATIONAL, 7/10, §Premises 2 "It can raise a question" + E6, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: a hacker's post "can raise a question … but can't change a value"; E6 asks whether it shows in Now as "unconfirmed". D8 approved: hackers never override.
+Runtime evidence: D24 (demo-scope.md:1917) hides author names and shows post text as evidence; no v1 surface shows hacker posts that aren't offers.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A4 hacker posts about a canon field | "raise a question" (undefined display) | kept in the entity's history as `unauthorized`/`question`, visible in its drawer only; never in the Now feed | shown in the Now feed as "Unconfirmed: a hacker asked …" with the redacted excerpt (D24), next to the entity |
+| R-A3 authority | approved D8 | unchanged | unchanged |
+| Other pending choices (A5–A7) | pending | pending | pending |
+Question D9:
+D9 — Should hackers' questions about a deadline or rule show up in the Now feed?
+Project/branch/task: hackrecon v2 design doc, branch v2, Now view.
+ELI10: Hackers often ask in Slack, "is the deadline 9 or 9:30?" D8 already settled that such posts can never change a value. The question here is only whether they appear in the live Now feed as "unconfirmed", or stay tucked in that deadline's history drawer. Shown, they can flag confusion early. But they're noisy, and they put other hackers' words on your screen.
+Stakes if we pick wrong: Shown, Now fills with guesses next to real changes. Hidden, an early sign that a rule is confusing is one click deeper.
+Recommendation: A) History drawer only, because Now should list changes you can act on, and the official answer arrives as an organizer post anyway.
+Note: options differ in kind, not coverage — no completeness score.
+Pros / cons:
+A) Drawer only (recommended)
+  ✅ Now shows only real changes from people allowed to make them, so it stays readable mid-hackathon
+  ✅ Hacker text appears only one click into an entity's history, with names hidden (D24)
+  ❌ An early signal that a rule is confusing is less visible
+B) Show in Now as unconfirmed
+  ✅ Surfaces confusion early, e.g. many people asking about the same deadline
+  ✅ Shows that a question is open before an organizer answers it
+  ❌ Puts other hackers' guesses in the main feed next to real changes, adding noise and more of their words on screen
+Net: a clean feed of authorized changes versus an early but noisy confusion signal.
+Header: Questions
+Options:
+A) Drawer only (recommended)
+Hacker posts about a canon field are kept in that entity's history (status "question" or "unauthorized") and appear only in its drawer, author names hidden. They never appear in the Now feed.
+B) Show in Now
+Hacker questions about a canon field appear in the Now feed as "Unconfirmed: a hacker asked …" with the redacted excerpt next to the entity, author names hidden. They never change a value.
+
+State: approved
+Actual answer: A plus an aggregate signal — user, D9, 2026-10-28, verbatim: "ption A, plus an aggregate signal: when ≥3 distinct hackers ask about the same canon field and no organizer has answered, show a small muted “3 asked” marker on that entity (no hacker text, no names). It clears when an authorized post answers. Questions never appear in the Now feed and never change a value."
+Accepted scope: Hacker posts about a canon field are kept in that entity's history (status "question" or "unauthorized") and appear only in its drawer, author names hidden; never in the Now feed; never change a value. Plus: when ≥ 3 distinct hackers have asked about the same canon field and no authorized post has answered it, the entity shows a small muted "N asked" marker (mono, muted, per DESIGN.md metadata rule) with no hacker text and no names. The marker clears when an authorized post (D8) answers that field.
+History: none
+
+### R-A5: when per-event paths arrive (E2)
+Finding: A5, INFORMATIONAL, 7/10, §Per-event config "*Open (E2)*" and §Build order step 0, reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: step 0 introduces `events/<slug>/` and `--event` before sources; the brief orders "generalize" last. D2 approved `pipeline/event.ts` as the owner of every path; D5 approved step −1 (capture first).
+Runtime evidence: 14 path constants + 8 `config/sponsors.json` defaults across 9 modules [measured: grep pipeline/*.ts, 2026-10-28].
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A5 timing of the per-event layout | step 0 (proposal) | step 0, right after step −1: create pipeline/event.ts, move every path behind it, add `--event` (default `events/current`), move Cal Hacks config with `git mv` and its gitignored data with a move; v1 board must render identically | at step 5 (generalize), as the brief orders; steps 1–4 add new paths under the current flat layout |
+| R-A5 regression proof | n/a | `bun test` green and `hr board --build-only` output identical to before the move apart from `basis.written_at` | same check, at step 5 |
+| Other pending choices (A6–A7) | pending | pending | pending |
+Question D10:
+D10 — Move to per-event folders first (step 0), or at the end as your build order says?
+Project/branch/task: hackrecon v2 design doc, branch v2, build order.
+ELI10: Today 9 files each hard-code where data lives (`data/`, `review/`, `config/`). Every v2 step adds more files of its own. Moving everything under `events/<slug>/` first means each new file is written per event from day one. Moving it last, as your build order says, means migrating v1's paths plus every new v2 path at the end.
+Stakes if we pick wrong: Doing it last turns a half-day move into a migration across more paths (v1's 22 plus every v2 addition [estimated]), right before the dry run that's supposed to prove it works.
+Recommendation: A) Step 0, because the move is smallest now, and D2 already made event.ts the single owner of paths.
+Completeness: A=9/10, B=6/10
+Pros / cons:
+A) Step 0, before sources (recommended)
+  ✅ Every new v2 file is per event from the start; the generalize step only adds a second event
+  ✅ The proof is cheap: tests green and the v1 board's JSON identical after the move (apart from its timestamp)
+  ❌ Puts half a day of plumbing before visible v2 features (human: ~0.5 day / CC: ~20 min)
+B) At generalize (brief order)
+  ✅ Follows your build order to the letter, with features appearing sooner
+  ✅ The layout can be designed knowing every path v2 ended up needing
+  ❌ The migration grows with every step, and a missed path surfaces only at the second-event dry run
+Net: half a day now versus a bigger migration at the end.
+Header: Paths
+Options:
+A) Step 0 (recommended)
+Right after step −1: create pipeline/event.ts, move every path behind it, add `--event` (default events/current), git mv Cal Hacks config, move its gitignored data. Proof: bun test green and `hr board --build-only` output identical apart from `basis.written_at`. (human: ~0.5 day / CC: ~20 min)
+B) At generalize
+Steps 1–4 add paths under today's flat layout; event.ts and the move happen at step 5 with the same proof.
+
+State: approved
+Actual answer: A plus gitignore safeguards — user, D10, 2026-10-28, verbatim: "Option A. Update .gitignore to cover the per-event layout (e.g. events/*/captures/, events/*/review/, events/*/data/, events/*/config/organizers.json, events/*/fixtures/) before moving any files, and add a test that fails if any of those paths is tracked by git. After the move, show me git status --short so I can confirm nothing sensitive is staged."
+Accepted scope: Step 0, right after step −1. Order: (1) update .gitignore to cover `events/*/captures/`, `events/*/review/`, `events/*/data/`, `events/*/config/organizers.json`, `events/*/fixtures/` before moving any file; (2) add a test that fails if any path matching those patterns is tracked by git (`git ls-files`); (3) create pipeline/event.ts, move every path behind it, add `--event` (default events/current), git mv the tracked Cal Hacks config (event.json, sponsors.json), move its gitignored data; (4) proof: bun test green and `hr board --build-only` output identical apart from `basis.written_at`; (5) show the user `git status --short` after the move so they confirm nothing sensitive is staged.
+History: none
+
+### R-A6: second fetch path for public pages (E1)
+Finding: A6, INFORMATIONAL, 6/10, §Sources "*Open (E1)*", reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: extension-only page capture ("Capture this page"); `hr fetch <url>` considered and not recommended.
+Runtime evidence: Devpost and calhacks.io serve their text as plain HTML, so a plain HTTP fetch would work for them [measured: curl 2026-10-28]; a login-gated live site (Hive) would not (D3 relies on the extension for it).
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A6 page capture paths | extension only (proposal) | extension only; `hr fetch` added to TODOS with the trigger "re-capturing canon by click is the bottleneck at a live event" | extension + `hr fetch <url>` for public pages, same snapshot schema and content hash, one request per URL per run, a descriptive User-Agent, honors robots.txt |
+| Other pending choices (A7) | pending | pending | pending |
+Question D11:
+D11 — Add a terminal command that fetches public pages, besides the extension button?
+Project/branch/task: hackrecon v2 design doc, branch v2, Sources.
+ELI10: Canon pages (Devpost, the event site) get snapshotted by clicking "Capture this page" in the extension. Devpost and calhacks.io serve plain HTML, so a terminal command could also fetch them during each sync without a click. But that's a second way to make the same snapshot, with its own rules for fetching politely, and login-gated pages still need the extension.
+Stakes if we pick wrong: Extension-only means you might forget to re-capture Devpost when it changes mid-event. Two paths means two snapshot producers that can drift apart.
+Recommendation: A) Extension only for v2, because one snapshot producer is simpler to test, and a live event will show whether the click is really the bottleneck.
+Completeness: A=8/10, B=9/10
+Pros / cons:
+A) Extension only (recommended)
+  ✅ One snapshot producer, one schema test, and the same "read what your browser shows" rule everywhere
+  ✅ Works for login-gated pages too, which a terminal fetch can't
+  ❌ Re-capturing canon needs a click per page, so a mid-event Devpost edit is caught only when you re-capture
+B) Extension + hr fetch
+  ✅ `hr sync` can refresh public canon pages with no click, catching Devpost edits automatically
+  ✅ Reuses the same snapshot schema and content hash, so merge doesn't change
+  ❌ A second producer with politeness rules (robots.txt, User-Agent, one request per URL per run) to build and test (human: ~1 day / CC: ~30 min)
+Net: one producer and a click, versus automatic public refresh with a second code path.
+Header: hr fetch
+Options:
+A) Extension only (recommended)
+Page snapshots come only from the extension's "Capture this page". `hr fetch` goes to TODOS with the trigger "re-capturing canon by click is the bottleneck at a live event".
+B) Extension + hr fetch
+Add `hr fetch <url>` for public pages, writing the same snapshot schema and content hash; one request per URL per run, a descriptive User-Agent, honors robots.txt. Login-gated pages stay extension-only. (human: ~1 day / CC: ~30 min)
+
+State: approved
+Actual answer: A) Extension only (recommended) — user, D11, 2026-10-28
+Accepted scope: Page snapshots come only from the extension's "Capture this page". `hr fetch` goes to TODOS with the trigger "re-capturing canon by click is the bottleneck at a live event".
+History: none
+
+### R-A7: redaction of public page text (E5)
+Finding: A7, INFORMATIONAL, 6/10, §Constraints "Public page text is sent unredacted … (decision E5)", reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: page text goes to the API unredacted; Slack text keeps v1 redaction.
+Runtime evidence: the v1 redactor builds its name list from Slack author names and skips sponsor words (pipeline/redact.ts:39-46). Devpost pages can name people (e.g. judges); the Cal Hacks page names only a mascot ("Judges … DDoSKi & his not-so judgy buddies") [measured: curl 2026-10-28]. How the redactor would treat page text is untested.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-A7 page text to the API | unredacted (proposal) | unredacted; quotes shown on the board are the page's own words; no Slack author names are added to page prompts | through the Slack redactor (names of Slack authors found on the page become `[person]`) |
+| Slack text to the API | redacted (v1) | unchanged | unchanged |
+| Other pending choices | none after this | none | none |
+Question D12:
+D12 — Should public page text (Devpost, the event site) be redacted before it goes to the model?
+Project/branch/task: hackrecon v2 design doc, branch v2, privacy constraint.
+ELI10: Slack text has people's names removed before it goes to the API, because hackers never agreed to that. Devpost and event pages are published by the organizer for everyone to read. Running them through the same redactor would turn any name that also appears in Slack into "[person]" inside rules and prize text. The quotes the board shows would then no longer match the page word for word.
+Stakes if we pick wrong: Redact, and quote checks against the page start failing or showing "[person]" in official rules. Don't redact, and public names on Devpost reach the API, the same way they reach anyone who opens the page.
+Recommendation: A) Unredacted, because the organizer published this text for anyone to read, and the quote checks need the page's exact words.
+Completeness: A=9/10, B=6/10
+Pros / cons:
+A) Unredacted (recommended)
+  ✅ Quotes stay word for word with the page, so the "quote exists in source" check is exact
+  ✅ Only text the organizer chose to publish goes out; Slack stays redacted as in v1
+  ❌ Names printed on public pages (e.g. judges, where listed) reach the API
+B) Through the Slack redactor
+  ✅ One uniform rule: every name the tool knows is redacted, wherever it appears
+  ✅ Names of people who also post in Slack never reach the API, from any source
+  ❌ Quote checks must map "[person]" back to the page, and official rule text can show "[person]" where a judge was named
+Net: exact quotes from public text versus one uniform redaction rule that bends official wording.
+Header: Page text
+Options:
+A) Unredacted (recommended)
+Page snapshots go to the API as published; board quotes are the page's own words. Slack text stays redacted as in v1, and no Slack author names are added to page prompts.
+B) Through the redactor
+Page text runs through the v1 Slack redactor before the API; names of Slack authors found on the page become "[person]", and quote checks map them back.
+
+State: approved
+Actual answer: A for public pages only — user, D12, 2026-10-28, verbatim: "Option A for public, unauthenticated pages only (anyone can open them without logging in). Pages captured from a logged-in session (e.g. Hive) are treated like Slack: redacted before the API, with quote checks against the redacted text. The snapshot records whether the page was public or authenticated, and that flag decides redaction — never the domain."
+Accepted scope: Every page snapshot records `access: "public" | "authenticated"`. Public (opens without logging in): sent to the API as published, quotes checked against the page's own words. Authenticated (captured from a logged-in session, e.g. Hive): redacted with the v1 redactor before the API, quotes checked against the redacted text. The flag alone decides redaction, never the domain. Necessary mechanism (no new policy): the user sets the flag in the capture popup at capture time; a snapshot with no flag is treated as authenticated (redacted).
+History: none
+
+### R-CQ1: merge order when a page edit and a Slack post disagree
+Finding: CQ1, CRITICAL, 8/10, §Merge steps 1–3 ("Start from page canon … latest snapshot … Apply Slack changes in `ts` order"), reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: latest page snapshot first, then every authorized Slack change applied on top in ts order; step 5 collapses a Slack change that a newer snapshot repeats.
+Runtime evidence: none (merge not built). Page edit times are unknown: a snapshot only proves the page said X at `captured_at`, so the edit happened between the previous snapshot and this one.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-CQ1 ordering | page first, all Slack on top | one timeline: each page change is placed in the window (previous snapshot, this snapshot]; authorized Slack changes by ts; the latest wins; a Slack post inside a page change's window is ambiguous, so both values show with "Page and Slack disagree; page changed between <t1> and <t2>" and no winner is picked | page always loses to any authorized Slack post (as written) |
+| Display of both values | always (D8) | unchanged | unchanged |
+| Other pending choices (Section 2+) | pending | pending | pending |
+Question D13:
+D13 — When a newer page edit disagrees with an older Slack post, which one wins?
+Project/branch/task: hackrecon v2 design doc, branch v2, merge rule.
+ELI10: The plan starts from the page, then lays every authorized Slack change on top. That's right when Slack is newer. But if Slack said 09:30 at 8 PM and the organizer edited Devpost to 10:00 at 9 PM, the board would still show 09:30. We never know exactly when a page was edited, only that it changed between two of our snapshots. So a Slack post inside that window is honestly ambiguous.
+Stakes if we pick wrong: The board shows a stale deadline as current, sourced to a real organizer post, which is the most trusted-looking kind of wrong.
+Recommendation: A) One timeline with an ambiguity flag, because it never picks a winner it can't justify, and both values are shown anyway (D8).
+Completeness: A=9/10, B=5/10
+Pros / cons:
+A) One timeline + ambiguity flag (recommended)
+  ✅ A newer page edit beats an older Slack post, and a newer Slack post beats an older page
+  ✅ When timing can't decide, it says so, with both values and the page's change window, instead of guessing
+  ❌ More merge cases to test: windows, ties, several snapshots (human: ~0.5 day / CC: ~20 min)
+B) Slack always wins (as written)
+  ✅ The simplest rule: page first, Slack on top
+  ✅ Matches the brief's wording "Slack updates override"
+  ❌ A later official page correction is hidden under an older Slack post, and the board shows it as current
+Net: a few more merge cases versus a silent stale value that looks authoritative.
+Header: Merge order
+Options:
+A) Timeline + ambiguity (recommended)
+Page changes sit in their (previous snapshot, this snapshot] window; authorized Slack changes by ts; latest wins. A Slack post inside a page change's window is ambiguous: show both values with "Page and Slack disagree; page changed between <t1> and <t2>", no winner. Both values always shown. (human: ~0.5 day / CC: ~20 min)
+B) Slack always wins
+Keep: latest snapshot first, then all authorized Slack changes on top in ts order. Both values always shown.
+
+State: approved
+Actual answer: A) Timeline + ambiguity (recommended) — user, D13, 2026-10-28
+Accepted scope: Page changes sit in their (previous snapshot, this snapshot] window; authorized Slack changes by ts; latest wins. A Slack post inside a page change's window is ambiguous: show both values with "Page and Slack disagree; page changed between <t1> and <t2>", no winner. Both values always shown. The first snapshot of a page is the baseline canon, not a change, so authorized Slack changes apply on top of it (the Cal Hacks 09:00 → 09:30 fixture is unaffected).
+History: none
+
+### R-T1: v1 regression contract across v2
+Finding: T1, CRITICAL (regression rule), 9/10, §Eval "Claim regression | 20 offers, 3 priced | … Same offers, values and excerpts, or a listed reason", reviewer plan-eng-review (Claude)
+Plan baseline: original proposal (not yet approved): Claim keeps the same offers, values and excerpts, "or a listed reason". D10 approved the step-0 proof (board output identical apart from basis.written_at). D2 approved lifting group.ts's retry loop.
+Runtime evidence: data/board.json today: 20 offers, 3 priced, 977 posts, 23 rep rows [measured]; group.test.ts 11 tests, board.test.ts 6 tests.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-T1 what must not change | "same offers … or a listed reason" | a golden snapshot of v1's data/board.json (offers, values, excerpts, frames, reps, event_deadlines) checked in as a test fixture with workspace text removed (ids, counts, times, hashes of excerpts only); `bun test` compares every build to it; allowed differences are listed in the test by field, each with the decision that allows it (e.g. thread replies adding offers after step 1) | the plan's wording: compare by hand at each step, any difference explained in the step's notes |
+| group.ts after the helper lift (D2) | n/a | group.test.ts unchanged and green | same |
+| Other pending choices (T2, T3, P1) | pending | pending | pending |
+Question D14:
+D14 — How do we prove v2 doesn't break v1's Claim board?
+Project/branch/task: hackrecon v2 design doc, branch v2, regression coverage.
+ELI10: v2 moves files (step 0), lifts the grouping retry loop into a shared helper (D2), and adds thread replies that can add new offers. Any of these could quietly change the 20 offers v1 shows. Option A records today's board as a fingerprint test: ids, counts, times and hashes of the excerpts, but none of the Slack text. Every build is checked against it, and each expected difference is written into the test with the decision that allows it. Option B is a by-hand comparison at each step.
+Stakes if we pick wrong: A by-hand check gets skipped on a busy day, and v1's working board silently loses an offer or a price.
+Recommendation: A) Fingerprint test with listed allowed differences, because it runs on every `bun test`, and the "or a listed reason" from the plan becomes a reviewed line in code.
+Completeness: A=10/10, B=5/10
+Pros / cons:
+A) Fingerprint test (recommended)
+  ✅ Catches any change to v1's offers, prices, excerpts, frames or reps on every test run
+  ✅ The fixture holds hashes and counts only, so no workspace text is checked into git
+  ❌ Each intended change (e.g. new offers from threads) must be added to the allow-list (human: ~2h / CC: ~15 min)
+B) By-hand comparison
+  ✅ No fixture to maintain
+  ✅ Flexible when many fields change at once
+  ❌ Relies on remembering to compare; silent regressions slip through between steps
+Net: a small allow-list to maintain versus trusting a manual check.
+Header: Regression
+Options:
+A) Fingerprint test (recommended)
+Check in a fingerprint of v1's board.json (ids, counts, times, excerpt hashes; no workspace text). `bun test` compares every build; allowed differences are listed per field with the decision that allows them. group.test.ts stays unchanged and green after the D2 helper lift. (human: ~2h / CC: ~15 min)
+B) By-hand comparison
+Compare the Claim board by hand at the end of each step and note any difference with its reason. group.test.ts stays unchanged and green after the D2 helper lift.
+
+State: approved
+Actual answer: A) Fingerprint test (recommended) — user, D14, 2026-10-28
+Accepted scope: Check in a fingerprint of v1's board.json (ids, counts, times, excerpt hashes; no workspace text). `bun test` compares every build; allowed differences are listed per field with the decision that allows them. group.test.ts stays unchanged and green after the D2 helper lift. Necessary mechanism: when the gitignored board data is absent (clean checkout), the comparison is skipped with a visible message, never passed silently.
+History: none
+
+### R-T2: who checks canon extraction (E3)
+Finding: T2, INFORMATIONAL, 7/10, §Eval "Opus judge … **and** a user hand check (E3)"; binding decision D21 (demo-scope.md: "LLM judge replaces human labels … No person labels"), reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: Opus judge plus a ~20-minute user hand check per event; brief: "entities + Opus-judged eval"; D21 (v1) removed human labeling.
+Runtime evidence: canon verify is deterministic (quote exists in source, numbers and dates inside the quote), so a wrong value can't pass silently; completeness (a missed track or rule) is what a judge checks. Cal Hacks Devpost: 5 judging criteria, prize list with $159,822 total [measured: curl 2026-10-28].
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-T2 canon eval | Opus judge + user hand check | Opus judge only (fresh context, sees the snapshot and the extracted list, asked "what's missing or wrong"), plus deterministic verify; report says "agreement with Opus" | Opus judge + a ~20-minute user hand check per event that must find 0 wrong values |
+| Gate | judge finds no missing track/rule; hand check 0 wrong | judge finds no missing track, prize, criterion or rule; verify 100% | same + hand check 0 wrong |
+| Other pending choices (T3, P1) | pending | pending | pending |
+Question D15:
+D15 — Is the Opus judge enough to check canon extraction, or do you also hand-check it?
+Project/branch/task: hackrecon v2 design doc, branch v2, entities eval.
+ELI10: When the model reads Devpost into tracks, prizes and rules, code already checks that every value comes with a quote that exists on the page, and that every number or date appears in its quote. So a made-up number can't get through. What's left is something missed, like a prize that never got extracted, or a real quote attached to the wrong field. Your brief says "Opus-judged eval", and in v1 you replaced human labeling with the Opus judge (D21). My plan also added a 20-minute hand check per event.
+Stakes if we pick wrong: Judge-only could miss an omission both models share. Adding the hand check reintroduces a human step you removed in v1.
+Recommendation: A) Opus judge only, because it matches your brief and D21, the deterministic checks already block made-up numbers, and the judge is asked about omissions and misplaced values.
+Completeness: A=8/10, B=9/10
+Pros / cons:
+A) Opus judge only (recommended)
+  ✅ Matches the brief ("Opus-judged eval") and D21: no person labels anything
+  ✅ Code already blocks made-up numbers and dates, so the judge focuses on omissions and misplaced quotes
+  ❌ An omission that both the extractor and the judge miss goes unnoticed
+B) Judge + hand check
+  ✅ A human look catches shared blind spots, like a prize the page lists in an unusual place
+  ✅ Canon sets are small (one page, dozens of entities), so the check is short
+  ❌ Adds about 20 minutes of your time per event, a human step you removed in v1
+Net: your v1 rule of no human labeling versus a short manual safety net for omissions.
+Header: Canon check
+Options:
+A) Opus judge only (recommended)
+Canon eval = deterministic verify (100% quotes found, numbers in quotes) + an Opus judge in a fresh context listing what's missing or misplaced. Gate: no missing track, prize, criterion or rule. Reported as agreement with Opus.
+B) Judge + hand check
+The same, plus a ~20-minute user hand check per event that must find 0 wrong values.
+
+State: approved
+Actual answer: A plus deterministic coverage checks — user, D15, 2026-10-28, verbatim: "Option A, plus deterministic coverage checks that don’t depend on any model: (1) sum of extracted prize amounts must reconcile with the page’s stated total ($159,822 for Cal Hacks; report the gap with the unmatched dollar figures from the page); (2) count of prize headings / prize blocks in the page HTML must equal the extracted prize count; (3) every $-amount and date on the page must be either attached to an entity or listed as “unattached” in the report. Any mismatch fails the gate"
+Accepted scope: Canon eval = deterministic verify (100% quotes found, numbers in quotes) + an Opus judge in a fresh context listing what's missing or misplaced, reported as agreement with Opus; gate: no missing track, prize, criterion or rule. Plus three model-free coverage checks, any mismatch fails the gate: (1) the sum of extracted prize amounts reconciles with the page's stated total ($159,822 for Cal Hacks), and the report shows the gap with the page's unmatched dollar figures; (2) the count of prize headings / prize blocks in the page snapshot equals the extracted prize count; (3) every $-amount and date on the page is attached to an entity or listed as "unattached" in the report. No user hand check.
+Note (reviewer, not a change): Devpost totals can count prizes differently from their text (per-member amounts, "up to $4000 total" caps, non-cash prizes), so check (1) can fail on a correct extraction; the report's unmatched figures are what the user reads to decide.
+History: none
+
+
+### R-T3: how idea fit is evaluated
+Finding: T3, INFORMATIONAL, 8/10, §Views Build (D4) + R-A1 (D6): a new model path with no eval in §Eval, reviewer plan-eng-review (Claude)
+Plan baseline: D4/D6 approved idea fit with a verified quote per track; no quality eval exists.
+Runtime evidence: the public Devpost project gallery for Cal Hacks 13.0 lists real submitted projects with descriptions [measured: curl cal-hacks-13-0.devpost.com/project-gallery, 2026-10-28]; their actual prize entries are not known from that page.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-T3 fit eval | none | ideas = one-sentence descriptions of 10 real projects from the public gallery [estimated size]; for each, an Opus judge in a fresh context (blind to the ranker) marks each track fits / doesn't / can't tell from the stated requirements; report top-3 agreement with Opus and every cited quote verified (100%); gate: 100% quotes verified, top-3 agreement reported, no threshold until a baseline exists | deterministic only: every cited requirement quote is verified (100%); no quality measure |
+| Other pending choices (P1) | pending | pending | pending |
+Question D16:
+D16 — How should idea-fit ranking be evaluated?
+Project/branch/task: hackrecon v2 design doc, branch v2, Build view eval (D4, D6).
+ELI10: Idea fit is a new model step, and nothing in the plan measures whether its ranking is any good. Code can check that each "matches: <requirement>" quote really exists, but not whether the ranking is sensible. Option A takes 10 real project descriptions from Cal Hacks' public Devpost gallery. A separate Opus judge, who never sees the ranking, marks which tracks each fits, and we report how often the top 3 agree. Option B only checks the quotes.
+Stakes if we pick wrong: Without a quality measure, a prompt change could make rankings worse, and nothing would show it.
+Recommendation: A) Gallery ideas + blind judge, because it reuses your Opus-judge pattern on public data and gives a number to compare prompt changes against.
+Completeness: A=9/10, B=6/10
+Pros / cons:
+A) Gallery ideas + blind judge (recommended)
+  ✅ Real project descriptions from a public page, so no invented test ideas and no Slack text
+  ✅ Gives a top-3 agreement number to compare prompt changes against, reported as agreement with Opus
+  ❌ About 10 judge calls per eval run, plus no pass threshold until a first baseline is measured (human: ~0.5 day / CC: ~20 min)
+B) Quote checks only
+  ✅ Free to run, deterministic, no model cost
+  ✅ Still guarantees every cited requirement is real
+  ❌ Can't tell a good ranking from a bad one; prompt regressions go unseen
+Net: a small paid eval that tracks quality versus free checks that only prove the quotes are real.
+Header: Fit eval
+Options:
+A) Gallery ideas + blind judge (recommended)
+Eval set: one-sentence descriptions of 10 real projects from the public Devpost gallery. A blind Opus judge marks each track fits / doesn't / can't tell. Report top-3 agreement with Opus; gate: 100% cited quotes verified; no agreement threshold until a baseline exists. (human: ~0.5 day / CC: ~20 min)
+B) Quote checks only
+Gate: 100% of cited requirement quotes verified in that track's sources. No ranking-quality measure.
+
+State: approved
+Actual answer: Other (user, D16, 2026-10-28), verbatim: "Option C: evaluate idea fit against real outcomes from the public Devpost gallery, not a model judge. Take ~50 projects (sample the winners plus a random set): input = the project’s one-line description; labels = tracks it won (strong) and tracks it was submitted to (weak, teams over-submit). Metrics: recall@3 on won tracks (did we rank the track it actually won in our top 3?) and precision against submitted tracks. Same quote-verification gate. Uses only public pages; use Sonnet for ranking so 50 runs costs cents. Report the baseline; set a threshold after the first run."
+Accepted scope: Eval set: about 50 projects from the public Devpost gallery (the winners plus a random sample). Input: each project's one-line description only (no creator names). Labels: tracks it won (strong) and tracks it was submitted to (weak). Metrics: recall@3 on won tracks, and precision against submitted tracks. Gate: 100% of cited requirement quotes verified (unchanged). The ranker uses Sonnet (`claude-sonnet-5-5`), which amends D6's model choice. Report the baseline; the threshold is set after the first run. Cost is measured on the first run (the user expects cents; not yet measured).
+Precondition (reviewer probe, 2026-10-28): a Cal Hacks project page shows "Submitted to: Cal Hacks 13.0" at the hackathon level only; per-prize submissions were not visible, and whether winners' prize names are public is unverified (`?winners=true` returned the same first project). Step 2 starts with a bounded probe of the gallery and of winner pages. If won-track or submitted-track labels aren't public, this decision returns to the user before the eval is built; no fallback is chosen here. Observation only: project pages list "Built With" tags (e.g. bitdeer, factory, intuit) that name sponsor tools.
+History: none
+
+### R-P1: thread capture budget and order (E4)
+Finding: P1, INFORMATIONAL, 8/10, §Sources "A per-run thread budget (default 60) … Order: threads with the most replies first", reviewer plan-eng-review (Claude)
+Plan baseline: original proposal: default budget 60 threads per sync, most replies first, unvisited threads carry over.
+Runtime evidence: [measured: export, locked 25] 494 replies in 209 threads; top 60 threads hold 286 replies (58%). Per-thread time ≈ 3 s [estimated: pane open + scroll + 1.5 s wait], so all 209 ≈ 10–11 min [estimated].
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-P1 live sync budget | 60, most replies first, carry over | unchanged: 60 per sync, most replies first, carry over; the popup shows "N of M threads captured" | every thread in the channel each sync, no budget |
+| R-P1 one-time fixture capture (D5) | same budget (4 runs) | uncapped: all 209 threads in one user-started run, with progress and Stop | uncapped (same as live) |
+| Other pending choices | none | none | none |
+Question D17:
+D17 — How many threads should one capture run open?
+Project/branch/task: hackrecon v2 design doc, branch v2, thread capture (D5).
+ELI10: The locked 25 channels have 494 replies spread over 209 threads. Most threads are tiny: half have 2 replies or fewer. The plan caps each sync at 60 threads, biggest first, which gets 58% of the replies in about 3 minutes, with the rest carried to the next sync. That's right for quick re-syncs mid-hackathon. But for the one-time Cal Hacks fixture capture (D5), it would take 4 runs before thread recall can even be measured.
+Stakes if we pick wrong: A cap on the fixture delays the recall gate by 3 extra runs while workspace access is at risk. No cap on live syncs makes each re-sync take about 10 minutes.
+Recommendation: A) Cap live syncs at 60, but run the one-time fixture capture uncapped, because the fixture is the at-risk data (D5) and live syncs need to stay quick.
+Completeness: A=9/10, B=7/10
+Pros / cons:
+A) 60 live, uncapped fixture (recommended)
+  ✅ The whole Cal Hacks thread fixture lands in one run of about 10–11 minutes [estimated], so recall can be measured right away
+  ✅ Live re-syncs stay around 3 minutes, biggest threads first, with carry-over and an "N of M threads" count
+  ❌ Two modes to build and test, a budgeted one and an uncapped one (human: ~1h / CC: ~10 min)
+B) Every thread, every time
+  ✅ One mode, always complete after each sync
+  ✅ No carry-over state to track between runs
+  ❌ Every live re-sync takes about 10 minutes for this channel set [estimated], and longer at bigger events
+Net: two run modes versus slow re-syncs or a delayed fixture.
+Header: Threads
+Options:
+A) 60 live, fixture uncapped (recommended)
+Live syncs: 60 threads per run, most replies first, unvisited carry over, popup shows "N of M threads captured". The one-time fixture capture (D5) is uncapped: all threads in one user-started run, with progress and Stop. (human: ~1h / CC: ~10 min)
+B) Every thread, every time
+No budget: every sync opens every thread with replies in the captured channels, with progress and Stop.
+
+State: approved
+Actual answer: A with smarter live selection — user, D17, 2026-10-28, verbatim: "Option A (fixture uncapped, live capped at 60), with smarter live selection: (1) skip threads whose visible reply count and “last reply” time haven’t changed since the last sync, since Slack shows both on the parent row, so unchanged threads cost nothing; (2) among changed threads, prioritize parents that are offers, tracks, deadlines or rep posts, then by new-reply count. The cap only applies after that filter."
+Accepted scope: The one-time fixture capture (D5) is uncapped: all threads in one user-started run, with progress and Stop. Live syncs: (1) skip any thread whose parent row's visible reply count and "last reply" time are unchanged since the last sync; (2) order the changed threads by parent kind first (offers, tracks, deadlines, rep posts, from the cached classification of the parent) and then by new-reply count; (3) apply the 60-thread cap after that filter; unvisited changed threads carry over; the popup shows "N of M changed threads captured". Necessary proof (no new policy): the parent-row reply-count and last-reply selectors go in selectors.ts backed by DOM fixtures (unverified today); if the last-reply time isn't in the DOM, the reply count alone decides "changed", and the run report says so.
+History: none
+
+### R-OV1: v2 scope: full brief or canon-first (outside voice)
+Finding: OV6 + strategic, HIGH, 7/10, §Build order step 5; §Problem; outside voice ("Ship the canon half as v2 and plan the live layer once a dated live event is named"), reviewer Claude Plan subagent (cross-model tension: same model family, fresh context)
+Plan baseline: the user's brief: five views, multi-source merge, thread capture, per-event config; build order sources → entities + eval → merge → views → generalize. D1–D17 approved within it.
+Runtime evidence: the Cal Hacks fixture exercises merge offline (Devpost 09:00 [measured 2026-10-28] vs organizer Slack 09:30). No next event is named in the repo or TODOS.md; TODOS.md still ties direction to an MLH reply.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-OV1 v2 scope | full brief | full brief unchanged; live-only behaviors (incremental capture, thread budget, Now's on-now/next, roles at a new event) labeled "unproven until a live run" in the report; step 5 gate = second event's pages pass the D15 coverage checks (not just "builds") | v2 = canon half (page snapshots, entities, coverage checks, Build, Ship, Claim, Meet from existing data, thread capture); merge, Now and incremental live capture move to v2.1, planned once a dated event is named |
+| Other pending choices (OV3/D19, OV4/D20) | pending | pending | pending (moot under B until v2.1) |
+Question D18:
+D18 — Build the whole brief now, or the page half first?
+Project/branch/task: hackrecon v2 design doc, branch v2, outside-voice tension on scope.
+ELI10: An independent reviewer says the page half of v2 (Devpost into tracks, rules and a checklist) can be fully built and tested today. The Slack live half (overrides, the Now feed, re-syncing during an event) can only really be proven at a live hackathon, and none is named yet. Your brief asks for both. The Cal Hacks data does test the merge offline: Devpost still says 9 AM, Slack said 9:30. What can't be tested offline is re-syncing during an event.
+Stakes if we pick wrong: Full scope may ship live features that first break at the next event. Page-first delays Now and overrides, which are half of what you asked for.
+Recommendation: A) Keep the full brief, label live-only behavior "unproven until a live run", and gate step 5 on real coverage checks, because the merge is testable offline on Cal Hacks and the brief explicitly asks for Now.
+Completeness: A=9/10, B=6/10
+Pros / cons:
+A) Full brief, labeled (recommended)
+  ✅ Matches your brief: all five views and the page + Slack merge ship in v2
+  ✅ The Cal Hacks fixture (page 09:00, Slack 09:30) tests merge and Now without a live event
+  ❌ Re-syncing mid-event, thread budget and new-event roles stay unproven until a real hackathon
+B) Page half first
+  ✅ Everything in v2 is fully testable today, against Cal Hacks and any upcoming Devpost page
+  ✅ Shorter: the merge, authority and Now work (steps 3 and part of 4) moves out
+  ❌ Now and Slack overrides, half the brief, wait for v2.1 and a named event
+Net: shipping the whole brief with labeled unknowns versus shipping only what can be proven today.
+Header: v2 scope
+Options:
+A) Full brief, labeled (recommended)
+Keep the full scope. The report labels incremental capture, the live thread budget, Now's on-now/next and roles at a new event "unproven until a live run". Step 5's gate becomes: the second event's pages pass the D15 coverage checks.
+B) Page half first
+v2 = page snapshots, entities, coverage checks, Build, Ship, Claim, Meet and thread capture. Merge, Now and live incremental capture move to v2.1, planned once a dated event is named.
+
+State: approved
+Actual answer: A with a build order — user, D18, 2026-10-28, verbatim: "Option A. Build order inside v2: page half first (snapshots, canon entities, coverage checks, Build, Ship), then the Slack live half (merge, Now, live capture). Add to the report: “Live-only behavior is unproven until a named event; next event: <TBD>, platform: <Slack/Discord>.” If the next event uses Discord, add a Discord capture path to TODOS as the v2.1 blocker"
+Accepted scope: Full brief stays in v2. Build order inside v2: page half first (snapshots, canon entities, coverage checks, Build, Ship), then the Slack live half (merge, Now, live capture). The report carries: "Live-only behavior is unproven until a named event; next event: <TBD>, platform: <Slack/Discord>." Step 7 (generalize) gate: the second event's pages pass the D15 coverage checks. If the next event uses Discord, a Discord capture path is added to TODOS.md as the v2.1 blocker (conditional; not added now, since the platform is unknown).
+Interpretation (reviewer, flagged to user): the one-time thread fixture capture stays at step 1, before the page half, because D5 put it first while workspace access lasts; "live capture" in the Slack half means incremental capture and D17's live thread selection. Meet moves to the Slack half because it reads reps from Slack.
+History: none
+
+### R-OV3: who counts as an organizer for overrides
+Finding: OV3, HIGH, 9/10, §Merge authority (D8); pipeline/roles.ts:59 `posterRole` (ORG_TAG on display name, ORG_TITLE on profile title, sponsor name in display name), reviewer Claude Plan subagent, verified by plan-eng-review
+Plan baseline: D8 approved: organizers may override any entity, sponsor-side only their own sponsor, others never. The detection of "organizer" was carried over from v1, where it only hinted the classifier.
+Runtime evidence: config/organizers.json has 55 ids [measured]. 52 carry Slack's workspace-admin flag from the export; 3 qualify by name tag or title alone (2 "cal hacks tag", 1 "title"). All 4 sourced schedule posts in event.json were posted in #0-announcements by ids in that list [measured].
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-OV3 who may override deadlines, times and rules | any poster matching name/title patterns, or listed ids | only (a) ids in organizers.json backed by a non-free-text signal (workspace admin/owner from the export, or ids the user lists), or (b) any post in configured `authority_channels` (e.g. #0-announcements); name/title-only matches are shown as "unverified poster", never applied | v1 heuristics unchanged (name tag, title, listed ids) |
+| Sponsor-side overrides of own sponsor fields | name contains sponsor | Slack's external-org badge, or ids the user lists per sponsor; name match alone shown as "unverified poster" | name contains sponsor (v1) |
+| At a new event (no export) | patterns | `authority_channels` from config plus user-listed ids; the run report lists every name-only match for the user to add | patterns |
+| Other pending choices (OV4/D20) | pending | pending | pending |
+Question D19:
+D19 — Who counts as an organizer when a Slack post overrides a page value?
+Project/branch/task: hackrecon v2 design doc, branch v2, merge authority (D8).
+ELI10: In v1, someone counted as an organizer if their Slack display name said "Cal Hacks" or their title said "director". Anyone can type that into their own profile. In v1 it only nudged the classifier. In v2 an organizer's post can change the deadline shown to you. Option A only trusts signals people can't set themselves: Slack admin status, ids you list, or posts in announcement-only channels. A name match then shows as "unverified poster" instead. At Cal Hacks this drops 3 of 55 organizer ids, and all 4 real deadline posts still count.
+Stakes if we pick wrong: Under B, a hacker who renames themselves "Alex [CAL HACKS]" can move your submission deadline on the board.
+Recommendation: A) Trust only signals people can't set themselves, because a wrong deadline is the most expensive mistake the board can make and the Cal Hacks fixture still passes.
+Completeness: A=9/10, B=5/10
+Pros / cons:
+A) Unspoofable signals only (recommended)
+  ✅ A self-renamed hacker can't move a deadline; name matches still appear, labeled "unverified poster"
+  ✅ Cal Hacks fixture unaffected: all 4 deadline posts are in #0-announcements by admin ids [measured]
+  ❌ At a new event without an export, you list authority channels and ids in config, and real organizers missing from both show as unverified until added (human: ~1h / CC: ~10 min)
+B) Keep v1 heuristics
+  ✅ Zero setup at a new event: name tags and titles work out of the box
+  ✅ Catches organizers who aren't admins and post outside announcement channels
+  ❌ Anyone can set their own display name or title and override a deadline
+Net: a little config at each event versus letting a profile edit change the deadline you see.
+Header: Authority
+Options:
+A) Unspoofable only (recommended)
+Overrides of deadlines, times and rules come only from ids backed by admin/owner status or listed by you, or from posts in configured authority_channels. Sponsor-side needs the external-org badge or a listed id. Name/title-only matches show as "unverified poster" and are listed in the run report. (human: ~1h / CC: ~10 min)
+B) Keep v1 heuristics
+Name tag, profile title and listed ids all grant override authority, as in v1.
+
+State: approved
+Actual answer: A with auto-detected authority channels — user, D19, 2026-10-28, verbatim: "Option A. At a new event, detect authority channels automatically where possible: channels where posting is restricted (Slack shows that only certain members can post) become authority_channels by default, and the user confirms the list once. Posts there can override canon; name-tag-only matches show as “unverified poster” as specified."
+Accepted scope: Overrides of deadlines, times and rules come only from ids backed by admin/owner status or listed by the user, or from posts in authority_channels. Sponsor-side needs the external-org badge or a listed id. Name/title-only matches show as "unverified poster" and are listed in the run report. At a new event, channels where Slack restricts posting become authority_channels by default, and the user confirms the list once.
+Necessary proof (no new policy): the restricted-posting notice and the external-org badge are read by selectors in selectors.ts backed by DOM fixtures (unverified today); if the notice isn't in the DOM, no channel is proposed and the report says so, so the user lists them.
+History: none
+
+### R-OV4: re-scanning older parents for late thread replies
+Finding: OV4, HIGH, 9/10, §Sources "resumes from its newest stored ts and stops when it reaches it (caught_up)" vs D17 "skip threads whose parent row shows the same reply count and last reply time", reviewer Claude Plan subagent
+Plan baseline: incremental capture (original proposal) + D17 (approved): the skip rule reads parent rows that incremental capture never scrolls back to.
+Runtime evidence: [measured: export, locked 25] 494 replies arrive after their parent by: median 1.1 h, p90 11.4 h, p95 20.5 h, p99 35.0 h, max 58.0 h; 15 replies came more than 24 h later, 2 more than 48 h later. 28 replies are by admin/owner ids.
+Comparison grid:
+| Choice | Current | A | B |
+|---|---|---|---|
+| R-OV4 parent rows re-read each live sync | none older than the newest stored ts | after `caught_up`, keep scrolling back over parents posted in the last 48 h (configurable `thread_lookback_hours`), read their reply count and last-reply time, then apply D17's skip/priority/cap | no re-scan; the run report says "replies to posts older than the last sync are not captured" |
+| Coverage at measured shape | late replies missed | 492 of 494 replies (99.6%) arrive within 48 h | replies after the next sync are missed |
+| Other pending choices | none | none | none |
+Question D20:
+D20 — Should each live sync scroll back to catch new replies on older posts?
+Project/branch/task: hackrecon v2 design doc, branch v2, live capture (D17).
+ELI10: Live syncs only read new posts, stopping where the last sync stopped. But the "skip unchanged threads" rule from D17 needs to see older posts' reply counts, which those syncs never scroll back to. So an organizer answering in yesterday's thread would be missed. At Cal Hacks, half of replies came within about an hour, but 15 came more than a day later and 2 more than two days later. Option A scrolls back over the last 48 hours of posts each sync, which covers 492 of 494 Cal Hacks replies.
+Stakes if we pick wrong: Without the re-scan, the typical late clarification ("yes, 9:30 applies to all tracks") never reaches the board during the event.
+Recommendation: A) Scroll back 48 hours each sync, because it covers 99.6% of measured replies and makes D17's skip rule actually work.
+Completeness: A=9/10, B=5/10
+Pros / cons:
+A) 48-hour lookback (recommended)
+  ✅ Catches late answers in older threads: 492 of 494 Cal Hacks replies arrived within 48 hours [measured]
+  ✅ D17's skip rule works as you specified, since parent rows are re-read every sync
+  ❌ Each sync scrolls further per channel, slower than "seconds per channel", time not yet measured (human: ~0.5 day / CC: ~15 min)
+B) No re-scan, stated
+  ✅ Fastest live syncs: only new posts are read
+  ✅ Simplest: no lookback scroll, no extra parent bookkeeping
+  ❌ Replies to anything older than the last sync are never captured live, and D17's skip rule has little to act on
+Net: slower syncs that catch late answers versus fast syncs that miss them.
+Header: Lookback
+Options:
+A) 48-hour lookback (recommended)
+After catching up, each live sync scrolls back over parents posted in the last 48 h (config `thread_lookback_hours`), reads reply count and last-reply time, then applies D17's skip, priority and cap. (human: ~0.5 day / CC: ~15 min)
+B) No re-scan, stated
+Live syncs read new posts only; the run report says replies to older posts aren't captured.
+
+State: approved
+Actual answer: A plus permalink checks — user, D20, 2026-10-28, verbatim: "Option A, plus: for entity parents older than the lookback window (offers, tracks, deadlines, rep posts), open their permalink directly each sync to read reply count and last-reply time, and apply D17’s skip rule. Scroll covers the recent 48h; permalinks cover the important old ones."
+Accepted scope: After catching up, each live sync scrolls back over parents posted in the last 48 h (config `thread_lookback_hours`) and reads reply count and last-reply time. Parents older than the window whose posts are entity sources (offers, tracks, deadlines, rep posts) are opened by permalink each sync to read the same two values. D17's skip rule, kind-first priority and 60-thread cap then apply to both sets.
+Necessary mechanism (no new policy): permalink opens are paced like thread opens (OV14) and stop on any Slack error or rate-limit banner; the run report gives how many permalinks were checked and the sync's total time (not yet measured; the number of entity parents is counted at step 5).
+History: none
+
+### R-OV-M: outside-voice mechanism fixes applied before approval
+Finding: OV2, OV5, OV7, OV9, OV10, OV11, OV13, OV14 (outside voice), reviewer Claude Plan subagent; applied to the plan body by plan-eng-review as mechanisms of approved behavior, pending the user's confirmation here
+Plan baseline: the plan body before the outside voice; each fix reverts if not confirmed.
+Runtime evidence: board.ts:193 positional offer ids [verified]; Devpost prize titles in h5/h6 [measured]; `Rep.opener` has no generator [verified].
+Comparison grid:
+| Group | Fixes | If unticked |
+|---|---|---|
+| 1 Ids and types | OV2 `Change {entity_id, field, to, kind}` + `posted_at`, merge computes `from`/`status`; OV5 outline h1–h6, offer id from first post (`o-<channel>-<ts>`), done marks migrated once | revert; listed unresolved |
+| 2 Capture safety | OV7 save thread-pane DOM samples at step −1, "unmeasured" fallback; OV14 pace ~3 s per thread, stop on Slack error/rate-limit banner | revert; listed unresolved |
+| 3 Cost and noise | OV10 classifier sees entity kinds only, naming in the link pass; OV13 hash normalized outline, only changed fields are canon changes | revert; listed unresolved |
+| 4 Honest outputs | OV9 n beside every rate, n < 20 listed individually; OV11 opener owned by live.ts, dropped if any number/name/date isn't in the rep's post | revert; listed unresolved |
+Question D21 (multi-select): Which outside-voice fixes should stay in the plan?
+State: approved
+Actual answer: all four groups — user, D21, 2026-10-28: "1) Ids and types, 2) Capture safety, 3) Cost and noise, 4) Honest outputs"
+Accepted scope: OV2, OV5, OV7, OV9, OV10, OV11, OV13, OV14 as written in the plan body and the Outside Voice table.
+History: none
+
+Approval readiness: PASS — checked R-F1 (D3), R-F2 (D4), R-F3 (D5), R-A1 (D6, amended by D16), R-A2 (D7), R-A3 (D8), R-A4 (D9), R-A5 (D10), R-A6 (D11), R-A7 (D12), R-CQ1 (D13), R-T1 (D14), R-T2 (D15), R-T3 (D16), R-P1 (D17), R-OV1 (D18), R-OV3 (D19), R-OV4 (D20), R-OV-M (D21); scope/structure D1, D2 (Scope Challenge). Every accepted remedy cites the user's actual answer. Conditional: D16's eval returns to the user if Devpost outcome labels aren't public (step 3 probe).
+
+## NOT in scope
+- `hr init` auto-drafting (D1): deferred to TODOS.md; generalization is proven by hand first.
+- `hr fetch` CLI page fetch (D11): deferred to TODOS.md; trigger is click-capture becoming the bottleneck at a live event.
+- Pairwise "can these tracks stack?" grid (D4): Devpost states no general stacking rule; Build shows idea fit and per-prize entry steps instead.
+- Approach B live extension (side panel, IndexedDB, `chrome.alarms`): stays in TODOS.md; v2 builds only incremental capture and the thread lookback.
+- Discord capture (D18): added to TODOS.md only if the next event uses Discord.
+- Hand-checking canon (D15): replaced by Opus judge + model-free coverage checks.
+
+## What already exists
+- `pipeline/group.ts` `checkGroups` + the retry loop (group.ts:171, 229–280): lifted into the shared verify-and-retry helper (D2); group.test.ts stays unchanged and green (D14).
+- `pipeline/roles.ts` `posterRole`: kept as a classifier hint; override authority moves to D19's unspoofable signals.
+- `pipeline/redact.ts`: reused for authenticated page text (D12) and Meet openers.
+- `pipeline/accumulate.ts` ts-keyed dedupe and `hr compare` keyed recall: reused for thread capture and recall (step 1).
+- `pipeline/board.ts` + `board/index.html`: Claim stays; offer ids move from positional to source-anchored (OV5, D21).
+- v1 `Rep.opener` field (schema.ts:83): had no generator; live.ts now owns it (OV11).
+- config/organizers.json (55 ids, 52 admin/owner-backed) [measured]: the D19 organizer source at Cal Hacks.
+
+## Failure modes
+| Path | Realistic failure | Test / handling | User sees |
+|---|---|---|---|
+| Thread capture | Slack thread-pane selectors drift | DOM fixtures + recall vs export (step 1) | recall drop in `hr compare` |
+| Page snapshot | Canon text in iframe/PDF | reported "no text captured" | named in run report |
+| canon.ts | prize missed or quote on the wrong field | D15 judge + coverage checks fail the gate | gate failure with unmatched figures |
+| Re-extraction | reworded track loses its id | tolerant match; ambiguous → "no longer on the page" (D7) | mark listed, never misattached |
+| live.ts link | wrong entity linked | link eval, n printed (OV9) | eval report |
+| merge.ts | Slack inside a page change window | "Page and Slack disagree", no winner (D13) | both values |
+| Authority | renamed hacker posts a deadline | D19: "unverified poster", never applied | labeled in history |
+| POST /fit | foreign origin spends API key | Origin + token → 403 (D6) | n/a |
+| /fit API down | model error | tracks unranked + reason (D6) | clear reason |
+| Live sync | Slack rate-limit banner mid-run | stop + report where (OV14) | "stopped at …" |
+| Restricted-posting detection | notice not in DOM | no channels proposed, report says so (D19) | prompt to list them |
+| Step 0 move | sensitive file staged | tracked-path test + `git status --short` shown (D10) | test failure |
+Critical gaps (no test, no handling, silent): 0.
+
+## Worktree parallelization strategy
+| Step | Modules touched | Depends on |
+|---|---|---|
+| 0 layout | pipeline/ (event.ts, all path users), .gitignore, tests | −1 |
+| 1 thread fixture | extension/ | 0 |
+| 2 page sources | extension/ (snapshot action) | 0 |
+| 3 canon + eval | pipeline/ (canon.ts, schema.ts, helper), evals | 2 |
+| 4 Build + Ship | board/, pipeline/fit.ts, board server | 3 |
+| 5 live sources + link | extension/, pipeline/live.ts | 1, 3 |
+| 6 merge + Now + Meet | pipeline/merge.ts, board/ | 4, 5 |
+| 7 generalize | events/ config only | 6 |
+Lane A: 1 → 5 (extension/). Lane B: 2 → 3 → 4 (extension/ snapshot then pipeline/, board/).
+Execution order: step 0 alone. Then launch A step 1 and B step 2; both touch extension/ in different files (thread pane vs page snapshot), so coordinate `selectors.ts`. Merge, then B continues 3 → 4 while A does 5 once 3's schema lands. Then 6, then 7.
+Conflict flags: extension/src/selectors.ts (steps 1, 2, 5); pipeline/schema.ts (3, 5); board/ (4, 6).
+
+## Implementation Tasks
+Synthesized from this review's findings. Each task derives from a specific finding above. Effort ratios: scaffolding/tests ~50x, features ~30x, architecture ~5x.
+
+- [ ] **T1 (P1, human: ~1h / CC: ~5min)** — capture — Capture the 29 stretch channels and save thread-pane DOM samples (step −1)
+  - Surfaced by: Scope Challenge F3 (D5); OV7 (D21)
+  - Files: none (extension run), runs record
+  - Verify: `bun run hr compare` per channel; `bun run hr record-run`
+- [ ] **T2 (P1, human: ~4h / CC: ~15min)** — pipeline/event.ts — .gitignore first, tracked-path test, per-event layout, `--event` (step 0)
+  - Surfaced by: Architecture R-A5 (D10)
+  - Files: .gitignore, pipeline/event.ts, pipeline/*.ts path users, pipeline/event.test.ts
+  - Verify: `bun test`; user reviews `git status --short`
+- [ ] **T3 (P1, human: ~2h / CC: ~15min)** — tests — v1 board fingerprint test with per-field allow-list
+  - Surfaced by: Test review T1 (D14)
+  - Files: pipeline/board.fingerprint.test.ts, fixture (hashes only)
+  - Verify: `bun test`; skip message when data absent
+- [ ] **T4 (P1, human: ~1.5d / CC: ~1h)** — extension — Thread capture, uncapped fixture run, paced, stop on error (step 1)
+  - Surfaced by: F3 (D5), P1 (D17), OV14 (D21)
+  - Files: extension/src/, pipeline/compare.ts
+  - Verify: thread recall ≥ 0.9 vs export's 494 replies
+- [ ] **T5 (P1, human: ~1d / CC: ~30min)** — extension — Page snapshot with access flag, h1–h6 outline, normalized hash (step 2)
+  - Surfaced by: R-F1 (D3), R-A7 (D12), OV5/OV13 (D21)
+  - Files: extension/src/, pipeline/schema.ts
+  - Verify: Devpost snapshot captured; iframe/PDF reported
+- [ ] **T6 (P1, human: ~3d / CC: ~1.5h)** — pipeline/canon.ts — Extraction + verify, source-anchored ids with tolerant match, coverage checks, Opus judge (step 3)
+  - Surfaced by: R-A2 (D7), T2 (D15), OV5 (D21)
+  - Files: pipeline/canon.ts, pipeline/schema.ts, shared helper from group.ts
+  - Verify: D15 gates; tolerant-match threshold calibrated on re-extraction pairs
+- [ ] **T7 (P2, human: ~0.5d / CC: ~20min)** — evals — Probe Devpost outcome labels, then fit eval (~50 projects)
+  - Surfaced by: T3 (D16)
+  - Files: evals/fit
+  - Verify: labels probe result; baseline recall@3 and precision with n
+- [ ] **T8 (P1, human: ~2d / CC: ~1h)** — board — Build (idea fit, POST /fit guarded, Sonnet) and Ship (step 4)
+  - Surfaced by: R-F2 (D4), R-A1 (D6, D16)
+  - Files: pipeline/fit.ts, pipeline/board.ts, board/views.js
+  - Verify: 403 on bad Origin/token; fit quotes 100% verified; 1440 and 390
+- [ ] **T9 (P1, human: ~2d / CC: ~1h)** — pipeline/live.ts — Incremental capture, 48 h lookback + permalink checks, kind-first thread selection, kind classifier, link pass, openers (step 5)
+  - Surfaced by: P1 (D17), OV4 (D20), OV10/OV11 (D21)
+  - Files: extension/src/, pipeline/live.ts
+  - Verify: link eval with n; sync time reported
+- [ ] **T10 (P1, human: ~3d / CC: ~1.5h)** — pipeline/merge.ts — Merge timeline, D19 authority, "N asked", Now and Meet (step 6)
+  - Surfaced by: R-A3 (D8), R-A4 (D9), R-CQ1 (D13), OV2/OV3 (D19, D21)
+  - Files: pipeline/merge.ts, pipeline/roles.ts, board/views.js
+  - Verify: unit tests per merge rule; Cal Hacks shows page 09:00 / Slack 09:30
+- [ ] **T11 (P2, human: ~1d / CC: ~30min)** — events — Second event by hand; D15 coverage checks on its pages (step 7)
+  - Surfaced by: D1, OV6 (D18)
+  - Files: events/<slug>/config/
+  - Verify: coverage checks pass with no code changes
+
+## Unresolved decisions
+None in this review. Conditional: D16 returns to the user if Devpost won/submitted-track labels aren't public (probe at step 3). Facts to fill: next event and platform (D18).
+
+## Completion summary
+- Step 0: Scope Challenge — scope reduced per recommendation (`hr init` deferred, D1; smaller module arrangement, D2)
+- Reality rows: 7/7 applicable rows emitted (`PLAN_REALITY`), 1 unverified premise (Hive schedule page)
+- Architecture Review: 7 issues found (R-A1–R-A7)
+- Code Quality Review: 1 issue found (CQ1)
+- Test Review: diagram produced, 39 gaps identified (3 findings: T1–T3)
+- Performance Review: 1 issue found (P1)
+- NOT in scope: written
+- What already exists: written
+- TODOS.md updates: 2 items proposed to user (`hr init` D1, `hr fetch` D11), both added; 3 existing items updated to point at v2 steps
+- Failure modes: 0 critical gaps flagged
+- Unresolved decisions: 0 in this review
+- Outside voice: Claude Plan subagent (native fallback; Codex not installed), completed in 156 s, 22 findings; resolved via D18–D21 and dispositions. Note: D18–D20 used two-option briefs rather than the skill's four-option outside-voice menu.
+- Parallelization: 2 lanes, 2 parallel / 6 sequential
+- Lake Score: 2/16 = answers picking a 10/10 option / answers scored for Completeness
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Outside Review | Claude Plan subagent (native fallback, Codex not installed), in `/plan-eng-review` | Independent 2nd opinion | 1 | completed (native; not outside coverage) | 22 findings (2 critical, 5 high, 7 medium, 7 low, 1 strategic); resolved via D18–D21 |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN (all mapped to approved tasks) | 48 issues, 0 critical gaps |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
+
+- **OUTSIDE COVERAGE:** codex-plan-review phase: Codex not installed; native Claude Plan subagent completed in 156 s with 22 findings (in-host, outside_status unavailable). No external-provider coverage.
+- **VERDICT:** No review CLEAR yet. Eng review complete with 21 decisions (D1–D21) approved and every finding mapped to T1–T11; status is ISSUES OPEN because findings are counted even when resolved. Views are UI scope: /plan-design-review recommended before step 4.
+
+NO UNRESOLVED DECISIONS
