@@ -181,6 +181,8 @@ const openSrc = new Set();
 
 const fmt = (t, o) => new Date(t * 1000).toLocaleString("en-US", { timeZone: D.timezone, ...o });
 const dayTime = (t) => fmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
+// A deadline more than 2 days from the scrubber's time gets its date: "Fri, Oct 30, 3:09 PM".
+const limitTime = (t, now) => (Math.abs(t - now) > 2 * 86400 ? fmt(t, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : dayTime(t));
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
@@ -204,7 +206,7 @@ function action(o) {
 function card(o, now, prev) {
   const posts = o.posts.filter((p) => p.ts <= now);
   let when = "";
-  if (o.limit !== null) when = o.limit <= now ? `<span class="when">Closed ${dayTime(o.limit)}</span>` : `<span class="when closes">Closes ${dayTime(o.limit)}</span>`;
+  if (o.limit !== null) when = o.limit <= now ? `<span class="when">Closed ${limitTime(o.limit, now)}</span>` : `<span class="when closes">Closes ${limitTime(o.limit, now)}</span>`;
   else if (o.first > prev) when = `<span class="when new">New</span>`;
   else if (o.limit_unclear) when = `<span class="when">Deadline unclear</span>`;
   const amt = o.usd !== null ? `<div class="amt"><b>$${o.usd}</b> per person</div>` : o.amount_text ? `<div class="amt">“${esc(o.amount_text)}”</div>` : "";
