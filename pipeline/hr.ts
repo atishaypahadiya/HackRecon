@@ -40,10 +40,13 @@ import {
   withFlagged,
   writeSheet,
   type PoolMeta,
+  type Sponsors,
 } from "./pool.ts";
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
+import { BOARD_DATA_PATH, BOARD_PAGE, boardData } from "./board.ts";
+import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, type GroupResult } from "./group.ts";
 import {
   applyJudge,
   JUDGE_CACHE_PATH,
@@ -94,6 +97,13 @@ const USAGE = `usage:
       precision/recall, amount and deadline match, both miss checks, with counts and both prompt hashes.
       With Opus labels every number is agreement with Opus, not accuracy, and the report says so.
       Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
+  bun run hr group [--dry-run] [--force]
+      The Opus grouping pass: claude-opus-5-5 reads every post the judge labeled is_credit = y (same redacted
+      input as classify and prelabel, blind to the classifier) and writes the distinct offers with their source
+      posts to ${"$"}{GROUP_PATH}. One streamed request; skipped while the input is unchanged unless --force.
+  bun run hr board [--build-only] [--port N]
+      Builds ${"$"}{BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
+      127.0.0.1. Needs a current ${"$"}{GROUP_PATH}.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -117,6 +127,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "label") return label(rest);
   if (cmd === "prelabel") return prelabel(rest);
   if (cmd === "preview") return receiptPreview(rest);
+  if (cmd === "group") return group(rest);
+  if (cmd === "board") return board(rest);
   console.error(USAGE);
   return cmd ? 2 : 0;
 }
@@ -442,6 +454,126 @@ function gate(args: string[]): number {
   return Object.values(report.pass).every(Boolean) && report.complete ? 0 : 1;
 }
 
+/** The grouping request: every sheet row the judge labeled a credit, as the shared redacted input. */
+function groupInput(sponsors: Sponsors) {
+  const system = groupSystemPrompt(readRules(), readEvent());
+  const hash = groupHash(system);
+  const rows = readLabels().filter((r) => r.is_credit === "y" && labelProblems(r).length === 0);
+  const messages = readMessages();
+  const captured = new Set(messages.map((m) => m.id));
+  const uncaptured = rows.filter((r) => !captured.has(r.message_id)).map(messageFromRow);
+  const byId = new Map(redactedInputs(messages, sponsors, hash, uncaptured).map((i) => [i.message.id, i]));
+  const inputs = rows.map((r) => byId.get(r.message_id)!);
+  const request = groupRequest(inputs);
+  const links = new Set(inputs.flatMap((i) => i.message.links));
+  return { system, hash, request, ids: inputs.map((i) => i.message.id), links, input_hash: inputHash(system, request), uncaptured: uncaptured.length };
+}
+
+async function group(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, sponsors: { type: "string", default: "config/sponsors.json" } },
+  });
+  const g = groupInput(readSponsors(values.sponsors!));
+  if (!g.ids.length) {
+    console.error(`no rows labeled is_credit = y in ${LABELS_PATH}: run \`bun run hr prelabel\` first`);
+    return 2;
+  }
+  const prev = readJsonFile<GroupResult | null>(GROUP_PATH, null);
+  console.log(`${g.ids.length} credit posts (${g.uncaptured} not in the capture); model ${GROUP_MODEL}, effort ${GROUP_EFFORT}, prompt ${g.hash}, input ${g.input_hash}; request ${g.request.length} chars`);
+  if (values["dry-run"]) {
+    console.log(`\n--- system prompt (${g.system.length} chars) ---\n${g.system}\n\n--- request (first 3000 chars) ---\n${g.request.slice(0, 3000)}\n\ndry run: no API call, nothing written`);
+    return 0;
+  }
+  if (prev?.input_hash === g.input_hash && !values.force) {
+    console.log(`${GROUP_PATH} is current (${prev.offers.length} offers); --force to rerun`);
+    return 0;
+  }
+  let client: Anthropic;
+  try {
+    client = new Anthropic({ maxRetries: 2 });
+  } catch (e) {
+    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
+    return 2;
+  }
+  const r = await groupOffers(client, g.system, g.request, g.ids, g.links);
+  const cost = Number(costUsd(r.usage, GROUP_MODEL).toFixed(4));
+  if ("error" in r) {
+    console.error(`grouping failed after ${r.calls} call(s): ${r.error}. Nothing written. ${formatUsage(r.calls, r.usage, GROUP_MODEL)}`);
+    return 1;
+  }
+  const out: GroupResult = {
+    model: GROUP_MODEL,
+    effort: GROUP_EFFORT,
+    prompt_hash: g.hash,
+    input_hash: g.input_hash,
+    posts: g.ids.length,
+    offers: r.offers,
+    not_offers: r.not_offers,
+    written_at: new Date().toISOString(),
+    usage: r.usage,
+    cost_usd: cost,
+  };
+  writeJsonFile(GROUP_PATH, out);
+  console.log(`wrote ${GROUP_PATH}: ${r.offers.length} offers from ${g.ids.length} posts, ${r.not_offers.length} not offers`);
+  for (const n of r.not_offers) console.log(`  not an offer ${n.post}: ${n.reason}`);
+  console.log(`${formatUsage(r.calls, r.usage, GROUP_MODEL)}. Then: bun run hr preview`);
+  return 0;
+}
+
+async function board(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, sponsors: { type: "string", default: "config/sponsors.json" } },
+  });
+  const sponsors = readSponsors(values.sponsors!);
+  const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
+  if (!grouped || grouped.input_hash !== groupInput(sponsors).input_hash) {
+    console.error(`${GROUP_PATH} is ${grouped ? "stale" : "missing"}: run \`bun run hr group\` first (the board shows only Opus-grouped offers)`);
+    return 2;
+  }
+  const event = readEvent();
+  const last = readRuns().at(-1);
+  const organizerIds = loadOrganizerIds();
+  const all = Object.values(sponsors);
+  const data = boardData({
+    event: event.event,
+    timezone: event.timezone,
+    run_id: last?.run_id ?? "",
+    channels: last?.channels ?? [],
+    messages: readMessages(),
+    sponsors,
+    offers: grouped.offers,
+    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+    basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
+    permalinks: new Map(readLabels().map((r) => [r.message_id, r.permalink])),
+  });
+  writeJsonFile(BOARD_DATA_PATH, data);
+  console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
+  if (values["build-only"]) return 0;
+  const headers = { "Cache-Control": "no-store" };
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: Number(values.port),
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+      if (path === "/")
+        return new Response(readFileSync(BOARD_PAGE, "utf8"), {
+          headers: {
+            ...headers,
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'",
+          },
+        });
+      if (path === "/board.json") return new Response(readFileSync(BOARD_DATA_PATH, "utf8"), { headers: { ...headers, "Content-Type": "application/json" } });
+      return new Response("not found", { status: 404 });
+    },
+  });
+  console.log(`board: http://127.0.0.1:${server.port}/  (local only; Ctrl-C to stop)`);
+  return await new Promise<number>(() => {});
+}
+
 function receiptPreview(args: string[]): number {
   const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: "config/sponsors.json" } } });
   const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
@@ -454,7 +586,11 @@ function receiptPreview(args: string[]): number {
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
   const all = Object.values(sponsors);
+  const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
+  const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
+  if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
   const p = preview({
+    ...(fresh ? { opus: grouped.offers } : {}),
     items: readJsonFile<Item[]>(ITEMS_PATH, []),
     labels: readLabels(),
     messages,
@@ -464,7 +600,8 @@ function receiptPreview(args: string[]): number {
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
   const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";
-  console.log(formatPreview(p, `classifier prompt ${run.prompt_hash}${stale}, ${run.classified.length} messages classified, run ${last?.run_id ?? "none"}`));
+  const basis = fresh ? `Opus grouping ${grouped.input_hash} (${grouped.posts} credit posts)` : `classifier prompt ${run.prompt_hash}${stale}, ${run.classified.length} messages classified`;
+  console.log(formatPreview(p, `${basis}, run ${last?.run_id ?? "none"}`));
   return 0;
 }
 

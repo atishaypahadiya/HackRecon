@@ -170,10 +170,22 @@ describe.skipIf(!existsSync(DEFAULT_EXPORT_DIR))("compareChannel (real export, s
     c.channel_id = cid;
     const r = compareChannel(c, exp, CUTOFF);
     const real = top.filter((m) => rowClass(m) === "real").length;
-    expect(r.missed.map((m) => m.ts)).toEqual(top.slice(0, 2).map((m) => m.ts));
+    expect(r.missed.map((m) => m.ts)).toEqual(top.slice(0, 2).filter((m) => rowClass(m) !== "bot").map((m) => m.ts));
     expect(r.matched_real).toBe(real - top.slice(0, 2).filter((m) => rowClass(m) === "real").length);
     expect(r.broadcast_captured).toBe(r.export_broadcasts);
     expect(r.author.rate).toBe(1);
     expect(r.extras).toEqual([]);
+  });
+});
+
+describe("rowClass", () => {
+  test("an app post without a subtype or user profile is a bot post, as the web client shows it", () => {
+    const m = (o: Partial<ExportMessage>): ExportMessage => ({ ts: "1.1", ...o });
+    expect(rowClass(m({ user: "U1" }))).toBe("real");
+    expect(rowClass(m({ user: "U1", bot_id: "B1" }))).toBe("bot");
+    expect(rowClass(m({ user: "U1", bot_id: "B1", user_profile: { display_name: "x" } }))).toBe("real"); // a person posting through an app
+    expect(rowClass(m({ subtype: "bot_message" }))).toBe("bot");
+    expect(rowClass(m({ subtype: "thread_broadcast", thread_ts: "1.0" }))).toBe("broadcast");
+    expect(rowClass(m({ subtype: "channel_join" }))).toBe("system");
   });
 });
