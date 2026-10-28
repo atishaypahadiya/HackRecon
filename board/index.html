@@ -5,318 +5,772 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>HackRecon</title>
 <style>
-  /* Tokens: pipeline/label.html, as-is. */
+  /* Tokens and rules: DESIGN.md ("Daylight glass"). */
+  @font-face { font-family: Manrope; src: url(/fonts/manrope.woff2) format("woff2"); font-weight: 200 800; font-display: swap; }
+  @font-face { font-family: "Atkinson Hyperlegible Mono"; src: url(/fonts/atkinson-hyperlegible-mono.woff2) format("woff2"); font-weight: 200 800; font-display: swap; }
   :root {
-    --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
-    --accent: #2f5bd3; --credit: #1f7a4d; --dated: #9a5b00; --excl: #a3312b; --chip: #efefea;
-    --bar: rgba(247, 247, 245, 0.82);
-    --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-    color-scheme: light dark;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #161615; --panel: #1f1f1d; --ink: #ecece6; --muted: #9c9c94; --line: #33332f;
-      --accent: #8aa8ff; --credit: #5cc591; --dated: #e0a64a; --excl: #f07a72; --chip: #2a2a27;
-      --bar: rgba(22, 22, 21, 0.82);
-    }
+    --ground: #F4F1EA; --surface: rgba(255,255,255,0.90); --text: #15171C; --muted: #585C66;
+    --line: rgba(21,23,28,0.08); --dim: rgba(21,23,28,0.12); --ghost: rgba(21,23,28,0.05);
+    --success: #16794A; --success-mark: #22A35A; --warning: #9A5600; --warning-mark: #F5A524;
+    --info: #2457C5; --error: #B4322C;
+    --field-sun: #FFC94D; --field-peach: #FF9E6E; --field-sky: #9FC2FF;
+    --r-chip: 10px; --r-tile: 16px; --gap: 12px; --pad: 20px;
+    --ease: cubic-bezier(.2,.8,.2,1);
+    --mono: "Atkinson Hyperlegible Mono", ui-monospace, Menlo, monospace;
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; scrollbar-color: var(--line) transparent; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-    -webkit-font-smoothing: antialiased; accent-color: var(--ink);
-  }
-  ::selection { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
-  a { color: var(--accent); text-underline-offset: 3px; }
-  a:visited { color: color-mix(in srgb, var(--accent) 70%, var(--ink)); }
-  button { font: inherit; color: inherit; }
-  .num { font-variant-numeric: tabular-nums; }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--ground); color: var(--text); font: 500 15px/1.5 Manrope, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "tnum"; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-  /* Top bar */
-  header {
-    position: sticky; top: 0; z-index: 2; background: var(--bar);
-    -webkit-backdrop-filter: saturate(1.6) blur(20px); backdrop-filter: saturate(1.6) blur(20px);
-    border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  }
-  header .wrap { display: flex; align-items: center; gap: 16px; height: 52px; }
-  .mark { font-weight: 650; letter-spacing: -0.01em; }
-  .seg { display: flex; background: var(--chip); border-radius: 9px; padding: 2px; }
-  .seg button { border: 0; background: none; padding: 4px 14px; border-radius: 7px; font-size: 14px; color: var(--muted); cursor: pointer; min-height: 32px; }
-  .seg button[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-  .pill { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
-  @media (max-width: 440px) { .pill .long { display: none; } header .wrap { gap: 12px; } }
+  /* The one translucent layer: the field, blurred, behind everything. It never carries text. */
+  .field { position: fixed; inset: -20%; z-index: 0; pointer-events: none; filter: blur(120px); opacity: .35;
+    background: radial-gradient(40% 45% at 72% 14%, var(--field-sun), transparent 70%), radial-gradient(35% 40% at 92% 58%, var(--field-peach), transparent 70%), radial-gradient(45% 50% at 6% 88%, var(--field-sky), transparent 70%); }
+  @media (prefers-reduced-transparency: reduce) { .field { display: none; } :root { --surface: #fff; } }
 
-  /* Stats line */
-  .stats { padding: 28px 0 4px; }
-  .stats p { margin: 0; font-size: 22px; line-height: 1.3; letter-spacing: -0.015em; font-weight: 500; }
-  .stats b { font-weight: 650; }
-  .stats small { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); letter-spacing: 0; }
+  header, main { position: relative; z-index: 1; max-width: 1320px; margin: 0 auto; padding: 0 24px; }
+  header { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding-top: 24px; padding-bottom: 20px; }
+  .brand { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+  .ev { color: var(--muted); }
+  .basis { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .names { font-size: 12px; font-weight: 650; color: var(--muted); padding: 4px 10px; border: 1px solid var(--line); border-radius: 9999px; background: var(--surface); }
 
-  /* Sections and cards */
-  main { padding-bottom: 148px; }
-  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 32px 0 10px; display: flex; gap: 8px; align-items: baseline; }
-  h2 .n { font-weight: 500; }
-  .stack { display: grid; gap: 12px; }
-  .card { min-width: 0; overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
-  .card .top { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
-  .card .sponsor { font-weight: 600; color: var(--ink); }
-  .card .when { margin-left: auto; white-space: nowrap; }
-  .card .when.closes { color: var(--dated); font-weight: 600; }
-  .card .when.new { color: var(--credit); font-weight: 600; }
-  .card .when.new::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: 1px; }
-  .card h3 { margin: 6px 0 0; font-size: 19px; line-height: 1.3; font-weight: 650; letter-spacing: -0.012em; }
-  .card .amt { margin-top: 2px; font-size: 15px; color: var(--muted); }
-  .card .amt b { color: var(--credit); font-weight: 650; }
-  .act { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
-  .btn {
-    display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 16px; border-radius: 10px;
-    border: 0; background: var(--ink); color: var(--bg); font-size: 15px; font-weight: 600; text-decoration: none; cursor: pointer;
-    transition: transform 120ms var(--ease), opacity 120ms;
-  }
-  .btn:visited { color: var(--bg); }
-  .btn:active { transform: scale(0.97); }
-  .btn code { font: 600 15px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.04em; }
-  .btn .sub { font-weight: 500; opacity: 0.7; font-size: 13px; }
-  .how { font-size: 14px; color: var(--muted); }
-  .how.solo { color: var(--ink); font-size: 15px; font-weight: 500; }
-  .quote { margin: 14px 0 0; padding: 0; font-size: 14px; line-height: 1.5; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .quote.open { -webkit-line-clamp: unset; }
-  .src { margin-top: 8px; font-size: 13px; color: var(--muted); }
-  .src button { border: 0; background: none; padding: 0; color: var(--muted); cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
-  .src ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
-  .missed .card { background: transparent; }
-  .missed .card h3, .missed .card .sponsor { color: var(--muted); }
-  .missed .btn { display: none; }
-  details > summary { list-style: none; cursor: pointer; }
-  details > summary::-webkit-details-marker { display: none; }
-  details > summary h2::after { content: "Show"; margin-left: auto; font-weight: 500; color: var(--accent); }
-  details[open] > summary h2::after { content: "Hide"; }
+  /* 12-column bento. Desktop: Hero 7x2 | Value, Closes; Activity 12; Stream 8 | Reps 4. */
+  main { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); padding-bottom: 48px; }
+  .hero { grid-column: 1 / span 7; grid-row: 1 / span 2; }
+  .value { grid-column: 8 / span 5; grid-row: 1; }
+  .closes { grid-column: 8 / span 5; grid-row: 2; }
+  .act { grid-column: 1 / -1; grid-row: 3; }
+  .stream { grid-column: 1 / span 8; grid-row: 4; }
+  .reps { grid-column: 9 / span 4; grid-row: 4; align-self: start; position: sticky; top: 12px; }
 
-  .empty { text-align: center; padding: 72px 12px 24px; }
-  .empty p { margin: 0; }
-  .empty .big { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; }
-  .empty .sub { color: var(--muted); margin-top: 6px; }
-  .empty .btn { margin-top: 20px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-tile); padding: var(--pad); min-width: 0; transition: border-color 200ms var(--ease); }
+  .tile[data-drawer] { cursor: pointer; }
+  .tile[data-drawer]:hover { border-color: rgba(21,23,28,.22); }
+  .th { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -6px 0 10px; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .th h2 { margin: 0; font: inherit; }
+  .th button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin: -6px 0; font-weight: 650; color: var(--muted); }
+  .th button::after { content: "›"; font-size: 17px; line-height: 1; transition: transform 200ms var(--ease); }
+  .tile:hover .th button::after { transform: translateX(2px); }
+  .th .ctx { font-weight: 500; text-align: right; }
+  .dotkey { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success-mark); margin: 0 6px 1px 2px; vertical-align: middle; }
+
+  .big { font-size: clamp(44px, 6vw, 72px); font-weight: 700; letter-spacing: -.035em; line-height: 1; }
+  .numeral { font-size: 40px; font-weight: 700; letter-spacing: -.03em; line-height: 1.05; }
+  .numeral small { font-size: 20px; color: var(--muted); letter-spacing: -.01em; }
+  .cap { color: var(--muted); font-size: 13px; }
+  .lead { font-size: 20px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; margin: 10px 0 20px; }
+  .lead .mine { color: var(--muted); }
+  .lead .jump { display: flex; margin-top: 14px; font-size: 15px; }
+
+  /* Hero: one dot per real post, in time order; offer posts lit. */
+  .hero { display: flex; flex-direction: column; }
+  .matrix { display: block; width: 100%; height: auto; margin-top: auto; border-radius: 4px; }
+  .matrix rect { fill: var(--dim); transition: fill 200ms var(--ease); }
+  .matrix rect.fut { fill: var(--ghost); }
+  .matrix rect.lit { fill: var(--success-mark); cursor: pointer; }
+  .matrix rect.lit.done { opacity: .42; }
+  .matrix rect.hot { fill: var(--text); opacity: 1; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-top: 12px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
+  .tip { position: fixed; z-index: 5; pointer-events: none; background: var(--text); color: #fff; font-size: 13px; line-height: 1.35; padding: 8px 12px; border-radius: 10px; max-width: 240px; opacity: 0; transform: translateY(4px); transition: opacity 120ms, transform 120ms var(--ease); }
+  .tip.on { opacity: 1; transform: none; }
+  .tip small { display: block; opacity: .75; font-size: 12px; }
+
+  /* Value */
+  .stackbar { display: flex; gap: 3px; height: 12px; margin: 16px 0 8px; }
+  .stackbar span { border-radius: 9999px; min-width: 6px; transition: flex-grow 320ms var(--ease); }
+  .stackbar .p { background: var(--text); }
+  .stackbar .u { background: repeating-linear-gradient(135deg, rgba(88,92,102,.42) 0 2px, rgba(88,92,102,.10) 2px 6px); }
+  .keys { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+  .keys { font-family: var(--mono); font-weight: 400; }
+  .priced { list-style: none; margin: 12px 0 0; padding: 0; }
+  .priced li { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .priced li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .priced li > span:last-child { font: 400 14px/1.5 var(--mono); }
+  .priced .s { color: var(--muted); }
+
+  /* Closes soon: amber claim windows ending in a pin; organizer deadlines as ink ticks. */
+  .tl { display: block; width: 100%; height: 56px; margin-top: 10px; overflow: visible; }
+  .tl .axis { stroke: var(--dim); stroke-width: 2; stroke-linecap: round; }
+  .tl .win { stroke: var(--warning-mark); stroke-width: 6; stroke-linecap: round; opacity: .35; }
+  .tl .pin { fill: var(--warning-mark); }
+  .tl .past { fill: var(--dim); stroke: var(--dim); }
+  .tl .evt { fill: var(--text); }
+  .tl .now { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
+  .cap b { font-weight: inherit; }
+  .tlkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .tlkey i { display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .tlx { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .evline { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .evline b { color: var(--text); }
+
+  /* Activity + scrubber */
+  .act { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .bars { display: block; width: 100%; height: 112px; overflow: visible; }
+  .bars .ghost { fill: var(--ghost); }
+  .bars .bar { fill: rgba(21,23,28,.78); transform-box: fill-box; transform-origin: bottom; transition: transform 320ms var(--ease); }
+  .bars .mk { fill: var(--success-mark); transition: opacity 200ms; }
+  .bars .hit { fill: transparent; }
+  .bars .hit:hover + .bar, .bars .bar:hover { fill: var(--text); }
+  .axis-x { display: grid; font-size: 12px; color: var(--muted); }
+  .axis-x span { text-align: center; white-space: nowrap; overflow: visible; line-height: 1.35; }
+  .axis-x { font-family: var(--mono); font-weight: 400; }
+  .axis-x b { display: block; font-weight: 400; color: var(--text); }
+  .track { position: relative; height: 44px; margin: -8px 0; }
+  .track input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+  .track input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--dim); }
+  .track input::-moz-range-track { height: 4px; border-radius: 2px; background: var(--dim); }
+  .track input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3), 0 0 0 .5px rgba(0,0,0,.1); }
+  .track input::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  .controls { display: flex; align-items: center; gap: 12px; }
+  .play { width: 44px; height: 44px; flex: none; border-radius: 50%; background: var(--text); color: #fff; display: grid; place-items: center; }
+  .play svg { width: 14px; height: 14px; fill: currentColor; }
+  .step { width: 44px; height: 44px; flex: none; border-radius: 10px; border: 1px solid var(--line); background: #fff; font-size: 18px; }
+  .when { min-width: 0; margin-right: auto; }
+  .when b { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .when span { font-size: 12px; color: var(--muted); }
+
+  /* Offer stream: value, sponsor, one action. */
+  .rows { display: grid; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; min-height: 64px; border-top: 1px solid var(--line); transition: opacity 200ms var(--ease); }
+  .row:first-child { border-top: 0; }
+  .main { text-align: left; min-width: 0; padding: 10px 0; }
+  .val { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
+  .meta { display: block; font-size: 13px; color: var(--muted); }
+  /* Metadata (counts, dates, status, axis ticks): mono, regular weight, muted. Never colored, never bold. */
+  .basis, #hero-ctx, #stream-ctx, .when span, .tlx, #val-cap, #cl-cap, #cl-ev, #rp-cap, .replist .none, .replist .more-r, .tip small, .dh .cap, .kv .r, .kv .s, .item ul, .note,
+  .m, .closes-t, .new, .closed { font: 400 12px/1.5 var(--mono); letter-spacing: 0; color: var(--muted); }
+  .row.done { opacity: .42; }
+  .code, .claim, .how { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; min-width: 96px; padding: 0 12px; border-radius: var(--r-chip); white-space: nowrap; font-size: 14px; font-weight: 650; text-decoration: none; transition: transform 120ms var(--ease); position: relative; }
+  .code::before, .claim::before, .how::before { content: ""; position: absolute; inset: -4px 0; } /* 44px hit area */
+  .code { background: var(--text); color: #fff; }
+  .claim { border: 1px solid var(--dim); background: #fff; color: var(--text); }
+  .claim:hover, .how:hover { border-color: rgba(21,23,28,.4); }
+  .code { font: 600 14px/1 var(--mono); letter-spacing: .03em; }
+  .how { border: 1px solid var(--dim); background: #fff; color: var(--text); }
+  .code:active, .claim:active, .how:active { transform: scale(.97); }
+  .more { width: 100%; min-height: 44px; margin-top: 4px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 650; text-align: left; }
+  .empty { padding: 20px 0 8px; }
+  .empty p { margin: 0 0 14px; color: var(--muted); }
+  .jump { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: var(--r-chip); background: var(--text); color: #fff; font-weight: 650; }
 
   /* Reps */
-  .rep { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); }
-  .rep:first-of-type { border-top: 0; }
-  .rep .s { font-weight: 600; }
-  .rep .c { font-size: 13px; color: var(--muted); }
-  .rep .r { grid-column: 1 / -1; font-size: 14px; color: var(--muted); }
-  .rep .r b { color: var(--ink); font-weight: 600; }
+  .reps-b { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 16px; align-items: center; }
+  .ring { width: 96px; height: 96px; display: block; }
+  .ring .trk { fill: none; stroke: var(--dim); stroke-width: 8; }
+  .ring .arc { fill: none; stroke: var(--text); stroke-width: 8; stroke-linecap: round; transition: stroke-dasharray 480ms var(--ease); }
+  .ring .zero { stroke-linecap: butt; }
+  .replist { list-style: none; margin: 16px 0 0; padding: 0; }
+  .replist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .replist li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replist .none { color: var(--muted); font-size: 13px; }
+  .pips { display: inline-flex; gap: 3px; }
+  .pips i { width: 8px; height: 8px; border-radius: 50%; background: var(--text); }
+  .replist .more-r { color: var(--muted); font-size: 13px; }
 
-  footer { margin-top: 40px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  /* Drawer: right sheet; bottom sheet on phone. */
+  dialog { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(440px, 100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; padding: 0; border: 0; border-radius: var(--r-tile) 0 0 var(--r-tile); background: #fff; color: var(--text); overflow: hidden; }
+  dialog[open] { display: flex; flex-direction: column; animation: slide 320ms var(--ease); }
+  dialog::backdrop { background: rgba(21,23,28,.30); }
+  @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
+  .dh { display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 24px; border-bottom: 1px solid var(--line); }
+  .dh h2 { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.015em; flex: 1; min-width: 0; }
+  #dr-title:focus { outline: none; }
+  .dh .cap { display: block; font-weight: 500; letter-spacing: 0; margin-top: 2px; }
+  .x { width: 44px; height: 44px; flex: none; border-radius: 10px; font-size: 24px; line-height: 1; color: var(--muted); }
+  .x:hover { background: var(--ghost); color: var(--text); }
+  .db { overflow: auto; padding: 4px 24px 40px; overscroll-behavior: contain; }
+  .db h3 { font-size: 12px; font-weight: 650; letter-spacing: .04em; color: var(--muted); margin: 24px 0 0; text-transform: uppercase; }
+  .item { padding: 16px 0; border-top: 1px solid var(--line); }
+  .db h3 + .item, .db > .item:first-child { border-top: 0; }
+  .item .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 0; }
+  .item .acts a:not(.claim) { color: var(--text); font-size: 14px; font-weight: 650; text-underline-offset: 3px; }
+  .item q { display: block; margin: 12px 0 0; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 14px; quotes: none; }
+  .item .how-t { margin-top: 10px; font-size: 14px; }
+  .item ul { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; display: grid; }
+  .item ul a { color: var(--text); text-underline-offset: 3px; display: inline-flex; align-items: center; min-height: 44px; }
+  .toggle { font-size: 14px; font-weight: 650; color: var(--muted); min-height: 44px; text-decoration: underline; text-underline-offset: 3px; }
+  .kv { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .db h3 + .kv { border-top: 0; }
+  .kv .r { text-align: right; }
+  .kv .s { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
+  .kv .s a, .item .acts a:not(.claim) { color: var(--text); text-underline-offset: 3px; position: relative; }
+  .kv .s a::before, .item .acts a:not(.claim)::before { content: ""; position: absolute; inset: -12px 0; }
+  .note { font-size: 13px; color: var(--muted); margin: 16px 0 0; }
 
-  /* Scrubber */
-  .scrub {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 3; background: var(--bar);
-    -webkit-backdrop-filter: saturate(1.6) blur(20px); backdrop-filter: saturate(1.6) blur(20px);
-    border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  /* Phone dock: the replay stays reachable while reading offers. */
+  .dock { display: none; }
+
+  @media (max-width: 1099px) {
+    .hero { grid-column: 1 / -1; grid-row: 1; }
+    .value { grid-column: 1 / span 6; grid-row: 2; }
+    .closes { grid-column: 7 / span 6; grid-row: 2; }
+    .act { grid-row: 3; }
+    .stream { grid-column: 1 / -1; grid-row: 4; }
+    .reps { grid-column: 1 / -1; grid-row: 5; position: static; }
   }
-  .scrub .wrap { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "play when step" "track track track"; gap: 8px 14px; align-items: center; }
-  .play { grid-area: play; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--ink); color: var(--bg); cursor: pointer; display: grid; place-items: center; }
-  .play svg { width: 16px; height: 16px; fill: currentColor; }
-  .whenbox { grid-area: when; min-width: 0; }
-  .whenbox .d { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
-  .whenbox .t { font-size: 13px; color: var(--muted); }
-  .step { grid-area: step; display: flex; gap: 4px; }
-  .step button { width: 44px; height: 44px; border: 0; border-radius: 10px; background: var(--chip); cursor: pointer; font-size: 18px; }
-  .track { grid-area: track; position: relative; height: 28px; }
-  .track input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
-  .track input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
-  .track input::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
-  .track input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: var(--panel); border: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(0,0,0,0.1); }
-  .track input::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--panel); border: 0; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
-  .ticks { position: absolute; left: 10px; right: 10px; top: 50%; height: 0; pointer-events: none; }
-  .ticks i { position: absolute; top: -9px; width: 2px; height: 6px; margin-left: -1px; border-radius: 1px; background: var(--credit); opacity: 0.85; }
-  .fill { position: absolute; left: 10px; top: 12px; height: 4px; border-radius: 2px; background: var(--ink); pointer-events: none; }
-
-  @media (min-width: 760px) {
-    .stats p { font-size: 26px; }
-    .scrub .wrap { grid-template-columns: auto 180px 1fr auto; grid-template-areas: "play when track step"; }
+  @media (max-width: 599px) {
+    :root { --pad: 16px; }
+    header, main { padding-left: 16px; padding-right: 16px; }
+    header { padding-top: 16px; padding-bottom: 14px; }
+    .basis { width: 100%; margin: 0; }
+    main { grid-template-columns: minmax(0, 1fr); padding-bottom: calc(136px + env(safe-area-inset-bottom)); }
+    .hero, .value, .closes, .act, .stream, .reps { grid-column: 1; }
+    .hero { grid-row: 1; } .stream { grid-row: 2; } .closes { grid-row: 3; } .value { grid-row: 4; } .reps { grid-row: 5; } .act { grid-row: 6; }
+    .lead { font-size: 18px; margin-bottom: 16px; }
+    .act .controls { display: none; }
+    .wide { display: none; }
+    dialog { inset: auto 0 0 0; width: 100vw; height: 88dvh; border-radius: var(--r-tile) var(--r-tile) 0 0; }
+    @keyframes slide { from { transform: translateY(24px); opacity: 0; } }
+    .db { padding: 4px 16px 40px; } .dh { padding-left: 16px; }
+    .dock .track { flex: 0 0 100%; margin: -10px 4px -4px; }
+    .dock { display: flex; flex-wrap: wrap; position: fixed; z-index: 3; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); align-items: center; gap: 10px; padding: 8px; border-radius: var(--r-tile); background: rgba(255,255,255,.97); border: 1px solid var(--line); box-shadow: 0 12px 32px -12px rgba(21,23,28,.35); }
+    .dock .when { flex: 1 1 0; }
+    .dock .when b { font-size: 15px; }
+    .dock .when span { display: block; }
   }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
+<div class="field" aria-hidden="true"></div>
 <header>
-  <div class="wrap">
-    <span class="mark">HackRecon</span>
-    <div class="seg" role="tablist" aria-label="View">
-      <button role="tab" aria-selected="true" aria-controls="offers" id="tab-offers">Offers</button>
-      <button role="tab" aria-selected="false" aria-controls="reps" id="tab-reps">Reps</button>
-    </div>
-    <span class="pill"><span class="long">Demo mode · </span>Names hidden</span>
-  </div>
+  <h1 class="brand">HackRecon</h1>
+  <span class="ev" id="ev"></span>
+  <span class="names">Names hidden</span>
+  <span class="basis" id="basis"></span>
 </header>
 
-<main class="wrap">
-  <section class="stats" aria-live="polite"><p id="stats"></p><small id="basis"></small></section>
-  <div id="offers" role="tabpanel" aria-labelledby="tab-offers"></div>
-  <div id="reps" role="tabpanel" aria-labelledby="tab-reps" hidden></div>
-  <footer id="foot"></footer>
+<main>
+  <section class="tile hero" data-drawer="offers" aria-labelledby="h-hero">
+    <div class="th"><h2><button id="h-hero" data-drawer="offers">Offers found</button></h2><span class="ctx" id="hero-ctx"></span></div>
+    <div class="big" id="hero-n"></div>
+    <p class="lead" id="hero-lead"></p>
+    <svg class="matrix" id="matrix" role="img" tabindex="0"></svg>
+    <div class="legend"><span><i style="background:var(--success-mark)"></i>a post with an offer</span><span><i style="background:var(--dim)"></i>every other post</span><span><i style="background:var(--ghost);box-shadow:inset 0 0 0 1.5px rgba(21,23,28,.22)"></i>not posted yet</span></div>
+  </section>
+
+  <section class="tile stream" aria-labelledby="h-stream">
+    <div class="th"><h2><button id="h-stream" data-drawer="offers">Offers</button></h2><span class="ctx" id="stream-ctx"></span></div>
+    <div class="rows" id="rows"></div>
+  </section>
+
+  <section class="tile closes" data-drawer="deadlines" aria-labelledby="h-closes">
+    <div class="th"><h2><button id="h-closes" data-drawer="deadlines">Closes soon</button></h2><span class="ctx">deadlines and claim windows</span></div>
+    <div class="numeral" id="cl-n"></div>
+    <div class="cap" id="cl-cap"></div>
+    <svg class="tl" id="tl" role="img"></svg>
+    <div class="tlx" aria-hidden="true"><span id="tl-a"></span><span id="tl-b"></span></div>
+    <div class="tlkey" aria-hidden="true"><span><i style="width:16px;height:6px;border-radius:3px;background:var(--warning-mark);opacity:.5"></i>claim window</span><span><i style="width:3px;height:12px;border-radius:2px;background:var(--warning-mark)"></i>offer closes</span><span><i style="width:6px;height:8px;border-radius:1px;background:var(--text)"></i>event deadline</span><span><i style="width:2px;height:12px;background:var(--text)"></i>now</span></div>
+    <div class="evline" id="cl-ev"></div>
+  </section>
+
+  <section class="tile value" data-drawer="value" aria-labelledby="h-value">
+    <div class="th"><h2><button id="h-value" data-drawer="value">Stated value</button></h2><span class="ctx">per person</span></div>
+    <div class="numeral" id="val-n"></div>
+    <div class="cap" id="val-cap"></div>
+    <div class="stackbar" aria-hidden="true"><span class="p" id="val-p"></span><span class="u" id="val-u"></span></div>
+    <div class="keys"><span id="val-kp"></span><span id="val-ku"></span></div>
+    <ul class="priced" id="val-list"></ul>
+  </section>
+
+  <section class="tile reps" data-drawer="reps" aria-labelledby="h-reps">
+    <div class="th"><h2><button id="h-reps" data-drawer="reps">Reps</button></h2><span class="ctx">sponsor contacts</span></div>
+    <div class="reps-b">
+      <svg class="ring" viewBox="0 0 96 96" aria-hidden="true"><circle class="trk" cx="48" cy="48" r="38"/><circle class="arc" id="ring" cx="48" cy="48" r="38" transform="rotate(-90 48 48)"/></svg>
+      <div><div class="numeral" id="rp-n"></div><div class="cap" id="rp-cap"></div></div>
+    </div>
+    <ul class="replist" id="rp-list"></ul>
+  </section>
+
+  <section class="tile act" aria-labelledby="h-act">
+    <div class="th"><h2><button id="h-act" data-drawer="activity">Activity</button></h2><span class="ctx"><span class="wide">posts per day, </span>√ scale · <i class="dotkey" aria-hidden="true"></i>new offer<span class="wide"> that day</span></span></div>
+    <svg class="bars" id="bars" role="img"></svg>
+    <div class="axis-x" id="axis-x" aria-hidden="true"></div>
+    <div class="track"><input type="range" id="range" min="0" step="any" aria-label="Replay time"></div>
+    <div class="controls">
+      <button class="play" id="play" aria-label="Play the week"></button>
+      <div class="when" id="when" aria-live="polite"><b id="day"></b><span id="time"></span></div>
+      <button class="step" id="prev" aria-label="Earlier">‹</button><button class="step" id="next" aria-label="Later">›</button>
+    </div>
+  </section>
 </main>
 
-<div class="scrub" id="scrub" aria-label="Replay">
-  <div class="wrap">
-    <button class="play" id="play" aria-label="Play the week"></button>
-    <div class="whenbox" aria-live="polite"><div class="d num" id="day"></div><div class="t num" id="time"></div></div>
-    <div class="track"><div class="fill" id="fill"></div><div class="ticks" id="ticks"></div><input type="range" id="range" min="0" value="0" aria-label="Replay time"></div>
-    <div class="step"><button id="prev" aria-label="Earlier">‹</button><button id="next" aria-label="Later">›</button></div>
-  </div>
+<div class="dock" role="group" aria-label="Replay">
+  <div class="track"><input type="range" id="range2" min="0" step="any" aria-label="Replay time"></div>
+  <button class="play" id="play2" aria-label="Play the week"></button>
+  <div class="when"><b id="day2"></b><span id="time2"></span></div>
+  <button class="step" id="prev2" aria-label="Earlier">‹</button><button class="step" id="next2" aria-label="Later">›</button>
 </div>
+
+<dialog id="drawer" aria-labelledby="dr-title">
+  <div class="dh"><h2 id="dr-title" tabindex="-1"></h2><button class="x" id="dr-x" aria-label="Close">×</button></div>
+  <div class="db" id="dr-body"></div>
+</dialog>
+<div class="tip" id="tip" aria-hidden="true"></div>
+<div class="sr" aria-live="polite" id="say"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const ICON = { play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9.5-5.5z"/></svg>', pause: '<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"/></svg>' };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-let D, F, i = 0, timer = null, tab = "offers";
-const openSrc = new Set();
+const ICON = { play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9.5-5.5z"/></svg>', pause: '<svg viewBox="0 0 16 16"><path d="M3.5 2h3v12h-3zM9.5 2h3v12h-3z"/></svg>' };
+const plural = (n, w, ws = w + "s") => `${n} ${n === 1 ? w : ws}`;
+// Done state is per viewer, in this browser only (DESIGN.md). Storage can be blocked: the board still works.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+let D, F, i = 0, timer = null, drawer = null, showMissed = false, DONE_KEY = "";
+let done = new Set();
+const days = [], dayOf = new Map(), offerByTs = new Map(), postIndex = new Map();
+let cols = 0;
 
 const fmt = (t, o) => new Date(t * 1000).toLocaleString("en-US", { timeZone: D.timezone, ...o });
 const dayTime = (t) => fmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
-// A deadline more than 2 days from the scrubber's time gets its date: "Fri, Oct 30, 3:09 PM".
 const limitTime = (t, now) => (Math.abs(t - now) > 2 * 86400 ? fmt(t, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : dayTime(t));
+const dayKey = (t) => new Date(t * 1000).toLocaleDateString("en-CA", { timeZone: D.timezone });
+const dayLabel = (k, o = { weekday: "short", month: "short", day: "numeric" }) => new Date(k + "T12:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", ...o });
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
-const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+function dayPos(t) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: D.timezone, hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(new Date(t * 1000)).map((x) => [x.type, x.value]));
+  return (dayOf.get(dayKey(t)) ?? 0) + (Number(p.hour) * 60 + Number(p.minute)) / 1440;
+}
 
-function sections(now, prev) {
+/* ---------- the state at a frame: every tile reads from this ---------- */
+function at(now, prev) {
   const vis = D.offers.filter((o) => o.first <= now);
-  const missed = vis.filter((o) => o.limit !== null && o.limit <= now).sort((a, b) => b.limit - a.limit);
+  const missed = vis.filter((o) => o.limit !== null && o.limit <= now);
   const live = vis.filter((o) => !missed.includes(o));
-  const closing = live.filter((o) => o.limit !== null).sort((a, b) => a.limit - b.limit);
-  const fresh = live.filter((o) => o.limit === null && o.first > prev).sort((a, b) => b.first - a.first);
   const latest = (o) => Math.max(...o.posts.filter((p) => p.ts <= now).map((p) => p.ts));
-  const open = live.filter((o) => o.limit === null && o.first <= prev).sort((a, b) => latest(b) - latest(a));
-  return { vis, missed, closing, fresh, open };
+  const rank = (o) => (o.limit !== null ? 0 : o.first > prev ? 1 : 2);
+  live.sort((a, b) => (done.has(a.id) - done.has(b.id)) || rank(a) - rank(b) || (rank(a) === 0 ? a.limit - b.limit : latest(b) - latest(a)));
+  missed.sort((a, b) => b.limit - a.limit);
+  const sponsors = new Set(vis.map((o) => o.sponsor));
+  let posts = 0;
+  for (const t of D.posts) if (t <= now) posts++;
+  return { vis, live, missed, sponsors, posts, left: live.filter((o) => !done.has(o.id)) };
 }
 
+/* ---------- count-up (the replay is the one authored moment) ---------- */
+// Counts up from the number on screen (not the last target), so scrubbing mid-count never jumps.
+const target = new Map(), onScreen = new Map();
+function count(el, to, f = String) {
+  const from = onScreen.get(el) ?? to;
+  target.set(el, to);
+  const show = (n) => { onScreen.set(el, n); el.textContent = f(n); };
+  if (reduce || from === to) { show(to); return; }
+  const t0 = performance.now();
+  const step = (t) => {
+    if (target.get(el) !== to) return;
+    const k = Math.min(1, (t - t0) / 480), e = 1 - Math.pow(1 - k, 3);
+    show(Math.round(from + (to - from) * e));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+/* ---------- hero: dot matrix ---------- */
+// The cell grows with the tile (10px on a phone, 16px on a wide hero) so 977 dots fill it; a quarter is gap.
+function buildMatrix() {
+  const svg = $("matrix");
+  const w = svg.getBoundingClientRect().width;
+  const U = Math.max(10, Math.min(16, Math.floor(w / 43))), GAP = Math.round(U / 4), DOT = U - GAP;
+  const c = Math.max(20, Math.floor((w + GAP) / U));
+  if (c === cols) return false;
+  cols = c;
+  const rows = Math.ceil(D.posts.length / cols);
+  svg.setAttribute("viewBox", `0 0 ${cols * U - GAP} ${rows * U - GAP}`);
+  svg.innerHTML = D.posts.map((t, k) => `<rect x="${(k % cols) * U}" y="${Math.floor(k / cols) * U}" width="${DOT}" height="${DOT}" rx="2" data-k="${k}"/>`).join("");
+  return true;
+}
+function paintMatrix(now) {
+  const rects = $("matrix").children;
+  let n = 0, lit = 0;
+  for (let k = 0; k < rects.length; k++) {
+    const t = D.posts[k], o = offerByTs.get(t);
+    if (t <= now) { n++; if (o) lit++; }
+    rects[k].setAttribute("class", t > now ? "fut" : o ? (done.has(o.id) ? "lit done" : "lit") : "");
+  }
+  $("matrix").setAttribute("aria-label", `${plural(n, "post")} so far, one square each; ${lit} of them about an offer`);
+}
+function dotAt(target) {
+  const r = target.closest?.("rect");
+  if (!r || !r.classList.contains("lit")) return null;
+  return offerByTs.get(D.posts[Number(r.dataset.k)]);
+}
+
+/* ---------- activity: posts per day, offer markers ---------- */
+function paintBars(now) {
+  const per = days.map(() => 0), all = days.map(() => 0), fresh = days.map(() => []);
+  for (const t of D.posts) { const d = dayOf.get(dayKey(t)); all[d]++; if (t <= now) per[d]++; }
+  for (const o of D.offers) if (o.first <= now) fresh[dayOf.get(dayKey(o.first))].push(o);
+  const svg = $("bars"), PW = Math.round(svg.getBoundingClientRect().width);
+  const max = Math.max(...all), W = PW / days.length, H = 96, bw = Math.min(48, W * .68);
+  // Drawn in pixels (rebuilt when the width changes) so the day markers stay round and the corners stay 2px.
+  if (svg.dataset.w !== String(PW)) {
+    svg.dataset.w = PW;
+    svg.setAttribute("viewBox", `0 0 ${PW} ${H + 16}`);
+    // Square-root scale: one day has 490 posts, most have under 40; linear bars would flatten the week.
+    const h = (n) => (n ? Math.max(2, Math.sqrt(n / max) * H) : 0);
+    svg.innerHTML = days.map((d, k) => `<rect class="ghost" x="${k * W + (W - bw) / 2}" y="${H - h(all[k])}" width="${bw}" height="${h(all[k])}" rx="2"/>` +
+      `<rect class="bar" data-d="${k}" x="${k * W + (W - bw) / 2}" y="${H - h(all[k])}" width="${bw}" height="${h(all[k])}" rx="2"><title></title></rect>` +
+      `<rect class="hit" data-d="${k}" x="${k * W}" y="0" width="${W}" height="${H}"><title></title></rect>` +
+      `<circle class="mk" data-d="${k}" cx="${k * W + W / 2}" cy="${H + 9}" r="3"/>`).join("");
+    $("axis-x").style.gridTemplateColumns = `repeat(${days.length}, minmax(0, 1fr))`;
+  }
+  // Bars use a square-root scale (one day has 490 posts, most under 40), so every day prints its exact count.
+  // Under ~44px a day, counts and dates collide: show every third date only; counts stay in each bar's title and the drawer.
+  const roomy = svg.getBoundingClientRect().width / days.length >= 44;
+  $("axis-x").innerHTML = days.map((d, k) => `<span>${roomy ? `<b>${per[k]}</b>${dayLabel(d, { month: "short", day: "numeric" })}` : k % 3 === 0 ? dayLabel(d, { month: "short", day: "numeric" }) : ""}</span>`).join("");
+  for (const b of svg.querySelectorAll(".bar, .hit")) {
+    const k = Number(b.dataset.d);
+    if (b.classList.contains("bar")) b.style.transform = `scaleY(${all[k] ? per[k] / all[k] : 0})`;
+    b.firstElementChild.textContent = `${dayLabel(days[k])}: ${plural(per[k], "post")}${fresh[k].length ? `, ${plural(fresh[k].length, "new offer")}` : ""}`;
+  }
+  for (const m of svg.querySelectorAll(".mk")) m.style.opacity = fresh[Number(m.dataset.d)].length ? 1 : 0;
+  const total = per.reduce((a, b) => a + b, 0), top = per.indexOf(Math.max(...per));
+  svg.setAttribute("aria-label", total ? `${plural(total, "post")} so far; busiest day ${dayLabel(days[top], { weekday: "long", month: "short", day: "numeric" })} with ${per[top]}` : "No posts yet");
+}
+
+/* ---------- offer stream ---------- */
 function action(o) {
-  if (o.promo_code) return `<button class="btn" data-copy="${esc(o.promo_code)}"><code>${esc(o.promo_code)}</code><span class="sub">Copy code</span></button>${o.claim_url ? `<a class="how" href="${esc(o.claim_url)}" target="_blank" rel="noopener">${esc(o.claim_how || "Use it at " + host(o.claim_url))}</a>` : o.claim_how ? `<span class="how">${esc(o.claim_how)}</span>` : ""}`;
-  if (o.claim_url) return `<a class="btn" href="${esc(o.claim_url)}" target="_blank" rel="noopener">Claim<span class="sub">${esc(host(o.claim_url))}</span></a>${o.claim_how ? `<span class="how">${esc(o.claim_how)}</span>` : ""}`;
-  return o.claim_how ? `<span class="how solo">${esc(o.claim_how)}</span>` : "";
+  if (o.promo_code) return `<button class="code" data-copy="${o.id}" aria-label="Copy code ${esc(o.promo_code)} for ${esc(o.sponsor)}">${esc(o.promo_code)}</button>`;
+  if (o.claim_url) return `<a class="claim" href="${esc(o.claim_url)}" target="_blank" rel="noopener" data-claim="${o.id}">Claim ↗<span class="sr"> ${esc(o.sponsor)} on ${esc(host(o.claim_url))}</span></a>`;
+  return `<button class="how" data-open="${o.id}">${esc(o.claim_short || "How to claim")}</button>`;
 }
-
-function card(o, now, prev) {
-  const posts = o.posts.filter((p) => p.ts <= now);
-  let when = "";
-  if (o.limit !== null) when = o.limit <= now ? `<span class="when">Closed ${limitTime(o.limit, now)}</span>` : `<span class="when closes">Closes ${limitTime(o.limit, now)}</span>`;
-  else if (o.first > prev) when = `<span class="when new">New</span>`;
-  else if (o.limit_unclear) when = `<span class="when">Deadline unclear</span>`;
-  const amt = o.usd !== null ? `<div class="amt"><b>$${o.usd}</b> per person</div>` : o.amount_text ? `<div class="amt">“${esc(o.amount_text)}”</div>` : "";
-  const chans = [...new Set(posts.map((p) => "#" + p.channel))].join(", ");
-  const open = openSrc.has(o.id);
-  return `<article class="card" data-id="${o.id}">
-    <div class="top"><span class="sponsor">${esc(o.sponsor)}</span>${when}</div>
-    <h3>${esc(o.title)}</h3>${amt}
-    <div class="act">${action(o)}</div>
-    <p class="quote${open ? " open" : ""}">${esc(o.excerpt)}</p>
-    <div class="src"><button data-src="${o.id}" aria-expanded="${open}">${plural(posts.length, "post")} in ${esc(chans)}</button>
-      ${open ? `<ul>${posts.map((p) => `<li><a href="${esc(p.permalink)}" target="_blank" rel="noopener">${dayTime(p.ts)} in #${esc(p.channel)}</a></li>`).join("")}</ul>` : ""}</div>
-  </article>`;
+function whenTag(o, now, prev) {
+  if (o.limit !== null) return o.limit <= now ? `<span class="closed">Closed ${limitTime(o.limit, now)}</span>` : `<span class="closes-t">Closes ${limitTime(o.limit, now)}</span>`;
+  if (o.first > prev) return `<span class="new">New</span>`;
+  return o.limit_unclear ? `<span class="m">Deadline unclear</span>` : "";
 }
-
-function renderOffers(now, prev) {
-  const s = sections(now, prev);
-  const box = $("offers");
+function row(o, now, prev) {
+  const tag = whenTag(o, now, prev);
+  return `<div class="row${done.has(o.id) ? " done" : ""}" data-id="${o.id}">
+    <button class="main" data-open="${o.id}"><span class="val">${esc(o.value_short)}</span><span class="meta">${esc(o.sponsor)}${tag ? `<span class="m"> · </span>${tag}` : ""}${done.has(o.id) ? `<span class="m"> · Done</span>` : ""}</span></button>
+    ${action(o)}</div>`;
+}
+function firstOfferFrame() {
+  const first = Math.min(...D.offers.map((o) => o.first));
+  return F.findIndex((f) => f >= first);
+}
+function paintStream(s, now, prev) {
+  const box = $("rows");
+  const before = new Map([...box.querySelectorAll(".row")].map((el) => [el.dataset.id, el.getBoundingClientRect().top]));
+  $("stream-ctx").textContent = s.vis.length ? `${s.left.length} of ${s.vis.length} open${s.left.length !== s.live.length ? ` · ${s.live.length - s.left.length} done` : ""} · urgent first` : "";
   if (!s.vis.length) {
-    const firstOffer = Math.min(...D.offers.map((o) => o.first));
-    const j = F.findIndex((f) => f >= firstOffer);
-    const read = D.posts.filter((p) => p <= now).length;
-    box.innerHTML = `<div class="empty"><p class="big">Nothing to grab yet.</p><p class="sub">${plural(read, "post")} so far, none of them an offer.</p>
-      <button class="btn" data-jump="${j}">Jump to the first offer · ${fmt(F[j], { weekday: "short", month: "short", day: "numeric" })}</button></div>`;
+    const j = firstOfferFrame();
+    box.innerHTML = `<div class="empty"><p>No offers yet. ${plural(s.posts, "post")} so far, none of them an offer.</p><button class="jump" data-jump="${j}">Jump to the first offer, ${fmt(F[j], { weekday: "short", month: "short", day: "numeric" })}</button></div>`;
     return;
   }
-  const sec = (title, list, extra = "") => list.length ? `<h2>${title}<span class="n num">${list.length}</span></h2><div class="stack">${list.map((o) => card(o, now, prev)).join("")}</div>${extra}` : "";
-  box.innerHTML =
-    sec("Closes soon", s.closing) +
-    sec(i ? `New since ${dayTime(prev)}` : "New", s.fresh) +
-    sec("Open, no deadline stated", s.open) +
-    (s.missed.length ? `<details class="missed"><summary><h2>Missed<span class="n num">${s.missed.length}</span></h2></summary><div class="stack">${s.missed.map((o) => card(o, now, prev)).join("")}</div></details>` : "");
-}
-
-function renderReps() {
-  $("reps").innerHTML = `<h2>Sponsor channels<span class="n num">${D.reps.length}</span></h2>` + D.reps.map((r) => `<div class="rep">
-    <span class="s">${esc(r.sponsor)}</span><span class="c num">${plural(r.offers, "offer")}</span>
-    <span class="r">${r.candidates ? `<b>${plural(r.candidates, "rep candidate")}</b> · not confirmed yet` : "No rep found in captured posts"} · ${plural(r.posts, "post")} in #${esc(r.channel)}</span></div>`).join("");
-}
-
-function render(next, animate = true) {
-  i = Math.max(0, Math.min(F.length - 1, next));
-  const now = F[i], prev = i ? F[i - 1] : -Infinity;
-  const before = new Map([...document.querySelectorAll(".card")].map((el) => [el.dataset.id, el.getBoundingClientRect()]));
-  $("range").value = i;
-  $("fill").style.width = `calc((100% - 20px) * ${F.length > 1 ? i / (F.length - 1) : 0})`;
-  $("day").textContent = fmt(now, { weekday: "long", month: "short", day: "numeric" });
-  $("time").textContent = i === F.length - 1 ? `${fmt(now, { hour: "numeric", minute: "2-digit" })} · the morning after` : fmt(now, { hour: "numeric", minute: "2-digit" });
-  const vis = D.offers.filter((o) => o.first <= now);
-  const sp = new Set(vis.map((o) => o.sponsor).filter((s) => s !== D.event)).size;
-  const read = D.posts.filter((p) => p <= now).length;
-  $("stats").innerHTML = `<b class="num">${vis.length}</b> ${vis.length === 1 ? "offer" : "offers"} from <b class="num">${sp}</b> ${sp === 1 ? "sponsor" : "sponsors"}, found in <b class="num">${read}</b> posts`;
-  renderOffers(now, prev);
-  if (animate && !reduce) {
-    for (const el of document.querySelectorAll(".card")) {
-      const b = before.get(el.dataset.id), a = el.getBoundingClientRect();
-      if (b) {
-        const dy = b.top - a.top;
-        if (Math.abs(dy) > 1) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
-      } else el.animate([{ opacity: 0, transform: "translateY(10px) scale(0.98)" }, { opacity: 1, transform: "none" }], { duration: 360, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" });
-    }
+  box.innerHTML = s.live.map((o) => row(o, now, prev)).join("") +
+    (s.missed.length ? `<button class="more" id="missed-t" aria-expanded="${showMissed}">${showMissed ? "Hide" : "Show"} ${plural(s.missed.length, "missed offer")}</button>${showMissed ? s.missed.map((o) => row(o, now, prev)).join("") : ""}` : "");
+  if (reduce) return;
+  for (const el of box.querySelectorAll(".row")) {
+    const b = before.get(el.dataset.id), a = el.getBoundingClientRect().top;
+    if (b === undefined) el.animate([{ opacity: 0, transform: "translateY(8px)" }, { opacity: el.classList.contains("done") ? .42 : 1, transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
+    else if (Math.abs(b - a) > 1) el.animate([{ transform: `translateY(${b - a}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
   }
 }
 
+/* ---------- value ---------- */
+function paintValue(s) {
+  const priced = s.vis.filter((o) => o.usd !== null).sort((a, b) => b.usd - a.usd);
+  const unpriced = s.vis.length - priced.length;
+  count($("val-n"), priced.reduce((n, o) => n + o.usd, 0), (n) => `$${n.toLocaleString("en-US")}`);
+  $("val-cap").textContent = !s.vis.length ? "No offers yet" : priced.length ? "as stated in the posts; nothing estimated" : `None of ${plural(s.vis.length, "offer")} states a per-person amount yet`;
+  $("val-p").style.flexGrow = priced.length; $("val-u").style.flexGrow = unpriced;
+  $("val-p").hidden = !priced.length; $("val-u").hidden = !unpriced;
+  $("val-kp").textContent = `${priced.length} of ${s.vis.length} priced`;
+  $("val-ku").textContent = `${unpriced} of ${s.vis.length} not stated`;
+  $("val-list").innerHTML = priced.map((o) => `<li><span>${esc(o.sponsor)} <span class="s">· ${esc(o.value_short)}</span></span><span>$${o.usd}</span></li>`).join("");
+}
+
+/* ---------- closes soon ---------- */
+function paintDeadlines(s, now) {
+  const open = s.live.filter((o) => o.limit !== null), unclear = s.live.filter((o) => o.limit_unclear).length;
+  count($("cl-n"), open.length);
+  $("cl-cap").innerHTML = (open.length ? `of ${plural(s.vis.filter((o) => o.limit !== null).length, "dated offer")} still open<br>next: ${esc(open[0].sponsor)}, ${limitTime(open[0].limit, now)}` : "No open offer deadlines") +
+    ([s.missed.length && `${s.missed.length} missed`, unclear && `${unclear} with no clear deadline`].filter(Boolean).map((x, k) => (k ? " · " : "<br>") + x).join(""));
+  const lims = s.vis.filter((o) => o.limit !== null);
+  const evs = D.event_deadlines.filter((e) => e.posted <= now);
+  const t0 = F[0], t1 = Math.max(F.at(-1), ...D.offers.filter((o) => o.limit).map((o) => o.limit), ...D.event_deadlines.map((e) => e.until ?? e.at)) + 86400;
+  const PW = Math.round($("tl").getBoundingClientRect().width) || 300;
+  const x = (t) => 4 + ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * (PW - 8);
+  const svg = $("tl");
+  svg.setAttribute("viewBox", `0 0 ${PW} 56`);
+  svg.innerHTML = `<line class="axis" x1="4" x2="${PW - 4}" y1="30" y2="30"/>` +
+    lims.map((o, k) => {
+      const y = 14 + (k % 2) * 6, past = o.limit <= now ? " past" : "";
+      return `<line class="win${past}" x1="${x(o.first)}" x2="${x(o.limit)}" y1="${y}" y2="${y}"/><rect class="pin${past}" x="${x(o.limit) - 2}" y="${y - 5}" width="4" height="25" rx="2"><title>${esc(o.sponsor)}: ${esc(o.value_short)}, open ${fmt(o.first, { month: "short", day: "numeric" })} to ${limitTime(o.limit, now)}</title></rect>`;
+    }).join("") +
+    evs.map((e) => `<rect class="evt${(e.until ?? e.at) <= now ? " past" : ""}" x="${x(e.at) - 2}" y="34" width="${Math.max(4, x(e.until ?? e.at) - x(e.at))}" height="8" rx="2"><title>${esc(e.what)}, ${limitTime(e.at, now)}</title></rect>`).join("") +
+    `<line class="now" x1="${x(now)}" x2="${x(now)}" y1="4" y2="48"/>`;
+  svg.setAttribute("aria-label", `Timeline from ${fmt(t0, { month: "short", day: "numeric" })} to ${fmt(t1, { month: "short", day: "numeric" })}: ${plural(lims.length, "offer deadline")}, ${plural(evs.length, "event deadline")}`);
+  $("tl-a").textContent = fmt(t0, { month: "short", day: "numeric" });
+  $("tl-b").textContent = fmt(t1, { month: "short", day: "numeric" });
+  const upcoming = evs.filter((e) => (e.until ?? e.at) > now);
+  $("cl-ev").innerHTML = evs.length
+    ? `${plural(evs.length, "event deadline")} from the organizers${upcoming.length ? `, next: ${esc(upcoming[0].what)}, ${limitTime(upcoming[0].at, now)}` : ", all past"}`
+    : "No event deadlines announced yet";
+}
+
+/* ---------- reps ---------- */
+function paintReps(now) {
+  const total = new Set(D.reps.map((r) => r.sponsor)).size;
+  const found = new Set(D.reps.filter((r) => r.candidate_first.some((t) => t <= now)).map((r) => r.sponsor)).size;
+  const cands = D.reps.reduce((n, r) => n + r.candidate_first.filter((t) => t <= now).length, 0);
+  const c = 2 * Math.PI * 38;
+  $("ring").style.strokeDasharray = `${total ? (found / total) * c : 0} ${c}`;
+  $("ring").classList.toggle("zero", !found);
+  $("rp-n").textContent = found;
+  $("rp-cap").textContent = `of ${total} sponsors have a rep found · ${plural(cands, "candidate")}, none confirmed`;
+  // One row per sponsor, candidates as pips. The full list fits beside the stream on desktop; narrower, top 6.
+  const by = new Map();
+  for (const r of D.reps) by.set(r.sponsor, (by.get(r.sponsor) ?? 0) + r.candidate_first.filter((t) => t <= now).length);
+  const rows = [...by].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const cap = innerWidth >= 1100 ? rows.length : 6;
+  $("rp-list").innerHTML = rows.slice(0, cap).map(([sp, n]) => `<li><span>${esc(sp)}</span>${n ? `<span class="pips" role="img" aria-label="${plural(n, "candidate")}">${"<i></i>".repeat(Math.min(n, 8))}</span>` : `<span class="none">none yet</span>`}</li>`).join("") +
+    (rows.length > cap ? `<li class="more-r"><span>${rows.length - cap} more sponsors in the full list</span></li>` : "");
+}
+
+/* ---------- drawer ---------- */
+const postLinks = (o, now) => `<ul>${o.posts.filter((p) => p.ts <= now).map((p) => `<li><a href="${esc(p.permalink)}" target="_blank" rel="noopener">${fmt(p.ts, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} in #${esc(p.channel)} ↗</a></li>`).join("")}</ul>`;
+function detail(o, now, prev) {
+  const d = done.has(o.id), tag = whenTag(o, now, prev);
+  const value = `<span class="m">${o.usd !== null ? `$${o.usd} per person, as stated` : "value not stated"}</span>`;
+  return `<div class="item" data-id="${o.id}">
+    <span class="val">${esc(o.title)}</span>
+    <span class="meta">${esc(o.sponsor)}<span class="m"> · </span>${value}${tag ? `<span class="m"> · </span>${tag}` : ""}</span>
+    <div class="acts">${action(o)}${o.promo_code && o.claim_url ? `<a href="${esc(o.claim_url)}" target="_blank" rel="noopener" data-claim="${o.id}">${esc(host(o.claim_url))} ↗</a>` : ""}<button class="toggle" data-done="${o.id}" aria-pressed="${d}">${d ? "Mark not done" : "Mark done"}</button></div>
+    ${o.claim_how ? `<div class="how-t">${esc(o.claim_how)}</div>` : ""}
+    ${o.excerpt ? `<q>${esc(o.excerpt)}</q>` : ""}
+    ${postLinks(o, now)}
+  </div>`;
+}
+function drawerContent(kind, now, prev) {
+  const s = at(now, prev);
+  if (kind.startsWith("o:")) {
+    const o = D.offers.find((x) => x.id === kind.slice(2));
+    return [o.value_short, `${o.sponsor} · ${plural(o.posts.filter((p) => p.ts <= now).length, "source post")}`, detail(o, now, prev)];
+  }
+  if (kind === "offers") {
+    const sec = (t, l) => (l.length ? `<h3>${t} · ${l.length}</h3>` + l.map((o) => detail(o, now, prev)).join("") : "");
+    return ["All offers", `${plural(s.vis.length, "offer")} from ${plural(s.sponsors.size, "sponsor")}, found in ${plural(s.posts, "post")}`,
+      s.vis.length ? sec("Open", s.left) + sec("Done", s.live.filter((o) => done.has(o.id))) + sec("Missed", s.missed) + `<p class="note">Grouped from the posts by ${esc(D.basis.model)}; not checked by hand. Every offer links to its posts.</p>` : `<p class="note">No offers yet.</p>`];
+  }
+  if (kind === "value") {
+    const priced = s.vis.filter((o) => o.usd !== null).sort((a, b) => b.usd - a.usd), un = s.vis.filter((o) => o.usd === null);
+    const kv = (o, r) => `<div class="kv"><span>${esc(o.sponsor)} · ${esc(o.title)}</span><span class="r">${r}</span><span class="s">${o.amount_text ? `“${esc(o.amount_text)}”` : "No amount in the posts"} · <a href="${esc(o.posts[0].permalink)}" target="_blank" rel="noopener">source ↗</a></span></div>`;
+    return ["Stated value", "Only an amount a post states per person is counted. Nothing is estimated.",
+      `<h3>Priced · ${priced.length}</h3>${priced.map((o) => kv(o, `$${o.usd}`)).join("") || `<p class="note">None yet.</p>`}<h3>Value not stated · ${un.length}</h3>${un.map((o) => kv(o, "—")).join("") || `<p class="note">None.</p>`}`];
+  }
+  if (kind === "deadlines") {
+    const lims = s.vis.filter((o) => o.limit !== null || o.limit_unclear).sort((a, b) => (a.limit ?? Infinity) - (b.limit ?? Infinity));
+    const evs = D.event_deadlines.filter((e) => e.posted <= now);
+    return ["Deadlines", "Offer deadlines and claim windows, then the organizers' own deadlines.",
+      `<h3>Offers · ${lims.length}</h3>${lims.map((o) => `<div class="kv"><span>${esc(o.sponsor)} · ${esc(o.value_short)}</span><span class="r">${o.limit === null ? "Unclear" : (o.limit <= now ? "Closed " : "Closes ") + limitTime(o.limit, now)}</span><span class="s">Open since ${fmt(o.first, { weekday: "short", month: "short", day: "numeric" })} · <a href="${esc(o.posts[0].permalink)}" target="_blank" rel="noopener">source ↗</a></span></div>`).join("") || `<p class="note">None yet.</p>`}
+       <h3>Event · ${evs.length}</h3>${evs.map((e) => `<div class="kv"><span>${esc(e.what)}</span><span class="r">${limitTime(e.at, now)}${e.until ? `–${fmt(e.until, { hour: "numeric", minute: "2-digit" })}` : ""}</span><span class="s"><a href="${esc(e.source)}" target="_blank" rel="noopener">announcement ↗</a></span></div>`).join("") || `<p class="note">None announced yet.</p>`}`];
+  }
+  if (kind === "reps") {
+    const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length })).sort((a, b) => b.c - a.c || b.offers - a.offers || b.posts - a.posts);
+    return ["Reps", "Sponsor-side posters in each sponsor channel. Names are hidden here; confirm a candidate yourself before you message anyone.",
+      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel</span></div>`).join("")];
+  }
+  if (kind === "activity") {
+    const rows = days.map((d) => {
+      const ps = D.posts.filter((t) => t <= now && dayKey(t) === d).length, os = D.offers.filter((o) => o.first <= now && dayKey(o.first) === d);
+      return ps || os.length ? `<div class="kv"><span>${dayLabel(d)}</span><span class="r">${plural(ps, "post")}</span>${os.length ? `<span class="s">New: ${os.map((o) => `<a href="${esc(o.posts[0].permalink)}" target="_blank" rel="noopener">${esc(o.sponsor)}, ${esc(o.value_short)} ↗</a>`).join(" · ")}</span>` : ""}</div>` : "";
+    }).reverse().join("");
+    return ["Activity", `${plural(s.posts, "real top-level post")} across ${D.channels} channels, by day`, rows || `<p class="note">No posts yet.</p>`];
+  }
+}
+function paintDrawer(now, prev) {
+  if (!drawer) return;
+  const [t, cap, body] = drawerContent(drawer, now, prev);
+  $("dr-title").innerHTML = `${esc(t)}<span class="cap">${esc(cap)}</span>`;
+  $("dr-body").innerHTML = body;
+}
+function openDrawer(kind) {
+  drawer = kind;
+  setPlaying(false);
+  paintDrawer(F[i], i ? F[i - 1] : -Infinity);
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+  $("dr-body").scrollTop = 0;
+}
+$("drawer").addEventListener("close", () => { drawer = null; });
+$("dr-x").onclick = () => $("drawer").close();
+$("drawer").addEventListener("click", (e) => { if (e.target === $("drawer")) $("drawer").close(); });
+
+/* ---------- one frame ---------- */
+const FOCUS_KEYS = ["data-copy", "data-claim", "data-done", "data-open", "data-jump"];
+function render(next) {
+  const a = document.activeElement, key = a && FOCUS_KEYS.find((k) => a.hasAttribute?.(k));
+  const where = key && (a.closest("dialog") ? "#drawer" : "main"), sel = key && `${where} [${key}="${a.getAttribute(key)}"]`;
+  draw(next);
+  if (sel && !document.contains(a)) document.querySelector(sel)?.focus();
+}
+function draw(next) {
+  i = Math.max(0, Math.min(F.length - 1, next));
+  const now = F[i], prev = i ? F[i - 1] : -Infinity;
+  const s = at(now, prev);
+  for (const [d, t] of [["day", "time"], ["day2", "time2"]]) {
+    $(d).textContent = fmt(now, { weekday: "long", month: "short", day: "numeric" });
+    $(t).textContent = `${fmt(now, { hour: "numeric", minute: "2-digit" })} · ${i === F.length - 1 ? "the morning after" : `frame ${i + 1} of ${F.length}`}`;
+  }
+  for (const id of ["range", "range2"]) {
+    $(id).value = dayPos(now);
+    $(id).setAttribute("aria-valuetext", fmt(now, { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+  }
+  count($("hero-n"), s.vis.length, (n) => `${n} ${n === 1 ? "offer" : "offers"}`);
+  $("hero-ctx").textContent = `${D.channels} channels`;
+  const nDone = s.live.length - s.left.length;
+  $("hero-lead").innerHTML = s.vis.length
+    ? `from ${plural(s.sponsors.size, "sponsor")}, found in ${plural(s.posts, "post")}.${nDone ? ` <span class="mine">${s.left.length} of ${s.live.length} still open for you.</span>` : ""}`
+    : `None yet. ${plural(s.posts, "post")} so far, none of them an offer. <button class="jump" data-jump="${firstOfferFrame()}">Jump to the first offer</button>`;
+  paintMatrix(now);
+  paintValue(s);
+  paintDeadlines(s, now);
+  paintBars(now);
+  paintStream(s, now, prev);
+  paintReps(now);
+  paintDrawer(now, prev);
+}
 function setPlaying(on) {
   clearInterval(timer); timer = null;
-  $("play").innerHTML = on ? ICON.pause : ICON.play;
-  $("play").setAttribute("aria-label", on ? "Pause" : "Play the week");
+  for (const b of [$("play"), $("play2")]) { b.innerHTML = on ? ICON.pause : ICON.play; b.setAttribute("aria-label", on ? "Pause" : "Play the week"); }
+  $("when").setAttribute("aria-live", on ? "off" : "polite");
   if (!on) return;
   if (i >= F.length - 1) render(0);
   timer = setInterval(() => (i >= F.length - 1 ? setPlaying(false) : render(i + 1)), 900);
 }
-
-function setTab(t) {
-  tab = t;
-  for (const [b, p] of [["tab-offers", "offers"], ["tab-reps", "reps"]]) { $(b).setAttribute("aria-selected", p === t); $(p).hidden = p !== t; }
+function setDone(id, on) {
+  on ? done.add(id) : done.delete(id);
+  store.set(DONE_KEY, JSON.stringify([...done]));
+  render(i);
 }
 
+/* ---------- input ---------- */
 document.addEventListener("click", async (e) => {
-  const c = e.target.closest("[data-copy]"), s = e.target.closest("[data-src]"), j = e.target.closest("[data-jump]");
-  if (c) {
-    try { await navigator.clipboard.writeText(c.dataset.copy); const sub = c.querySelector(".sub"); sub.textContent = "Copied"; setTimeout(() => (sub.textContent = "Copy code"), 1400); } catch {}
-  } else if (s) { openSrc.has(s.dataset.src) ? openSrc.delete(s.dataset.src) : openSrc.add(s.dataset.src); render(i, false); }
-  else if (j) render(Number(j.dataset.jump));
+  const t = e.target;
+  const copy = t.closest("[data-copy]"), claim = t.closest("[data-claim]"), dn = t.closest("[data-done]"), op = t.closest("[data-open]"), jump = t.closest("[data-jump]"), dr = t.closest("button[data-drawer]");
+  if (copy) {
+    const o = D.offers.find((x) => x.id === copy.dataset.copy);
+    if (!(await copyText(o.promo_code))) { $("say").textContent = "Couldn't copy. Open the offer and select the code."; return; }
+    $("say").textContent = `Copied ${o.promo_code}. Marked done.`;
+    if (!done.has(o.id)) setDone(o.id, true);
+    for (const el of document.querySelectorAll(`[data-copy="${o.id}"]`)) { el.textContent = "Copied"; setTimeout(() => (el.textContent = o.promo_code), 1400); }
+    return;
+  }
+  if (claim) { const id = claim.dataset.claim; if (!done.has(id)) setTimeout(() => setDone(id, true), 0); return; }
+  if (dn) { setDone(dn.dataset.done, !done.has(dn.dataset.done)); return; }
+  if (op) { openDrawer("o:" + op.dataset.open); return; }
+  if (jump) { setPlaying(false); render(Number(jump.dataset.jump)); return; }
+  if (t.id === "missed-t") { showMissed = !showMissed; render(i); return; }
+  if (dr) { openDrawer(dr.dataset.drawer); return; }
+  const lit = dotAt(t);
+  if (lit) { openDrawer("o:" + lit.id); return; }
+  const tile = t.closest(".tile[data-drawer]");
+  if (tile && !t.closest("button, a, input")) openDrawer(tile.dataset.drawer);
 });
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  // Fallback when the Clipboard API is denied: a selected off-screen textarea and the copy command.
+  const ta = Object.assign(document.createElement("textarea"), { value: text, readOnly: true });
+  ta.style.cssText = "position:fixed;left:-9999px;top:0";
+  (document.querySelector("dialog[open]") ?? document.body).append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  ta.remove();
+  return ok;
+}
+let litAt = -1;
+function litKeys() { const out = []; for (let k = 0; k < D.posts.length; k++) if (D.posts[k] <= F[i] && offerByTs.has(D.posts[k])) out.push(k); return out; }
+function showDot(k) {
+  const rect = $("matrix").children[k], o = offerByTs.get(D.posts[k]), b = rect.getBoundingClientRect();
+  clearHot();
+  for (const p of o.posts) if (p.ts <= F[i] && postIndex.has(p.ts)) $("matrix").children[postIndex.get(p.ts)].classList.add("hot");
+  $("tip").innerHTML = `${esc(o.sponsor)} · ${esc(o.value_short)}<small>${fmt(D.posts[k], { weekday: "short", month: "short", day: "numeric" })} · Enter to open</small>`;
+  $("tip").style.left = Math.min(innerWidth - 252, b.right + 8) + "px";
+  $("tip").style.top = b.bottom + 8 + "px";
+  $("tip").classList.add("on");
+  $("say").textContent = `${o.sponsor}, ${o.value_short}. Posted ${fmt(D.posts[k], { weekday: "long", month: "short", day: "numeric" })}.`;
+}
+$("matrix").addEventListener("keydown", (e) => {
+  const ks = litKeys();
+  if (!ks.length) return;
+  const at = ks.indexOf(litAt);
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") litAt = ks[Math.min(ks.length - 1, at + 1)];
+  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") litAt = ks[Math.max(0, at - 1)];
+  else if (e.key === "Enter" && at >= 0) { openDrawer("o:" + offerByTs.get(D.posts[litAt]).id); e.preventDefault(); return; }
+  else return;
+  e.preventDefault();
+  showDot(litAt);
+});
+$("matrix").addEventListener("focus", () => { if (!$("matrix").matches(":focus-visible")) return; const ks = litKeys(); if (ks.length) { if (!ks.includes(litAt)) litAt = ks[0]; showDot(litAt); } });
+$("matrix").addEventListener("blur", () => { $("tip").classList.remove("on"); clearHot(); });
+function clearHot() { for (const r of $("matrix").querySelectorAll(".hot")) r.classList.remove("hot"); }
+$("matrix").addEventListener("pointermove", (e) => {
+  const o = dotAt(e.target), tip = $("tip");
+  clearHot();
+  if (!o) { tip.classList.remove("on"); return; }
+  for (const p of o.posts) if (p.ts <= F[i] && postIndex.has(p.ts)) $("matrix").children[postIndex.get(p.ts)].classList.add("hot");
+  tip.innerHTML = `${esc(o.sponsor)} · ${esc(o.value_short)}<small>${plural(o.posts.filter((p) => p.ts <= F[i]).length, "post")} · click to open</small>`;
+  tip.style.left = Math.min(innerWidth - 252, e.clientX + 12) + "px";
+  tip.style.top = e.clientY + 16 + "px";
+  tip.classList.add("on");
+});
+$("matrix").addEventListener("pointerleave", () => { $("tip").classList.remove("on"); clearHot(); });
+for (const id of ["range", "range2"]) $(id).addEventListener("input", (e) => {
+  setPlaying(false);
+  const v = Number(e.target.value);
+  let best = 0;
+  F.forEach((f, k) => { if (Math.abs(dayPos(f) - v) < Math.abs(dayPos(F[best]) - v)) best = k; });
+  render(best);
+});
+for (const id of ["range", "range2"]) $(id).addEventListener("keydown", (e) => {
+  const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key];
+  if (step) { setPlaying(false); render(i + step); e.preventDefault(); }
+  if (e.key === "Home") { setPlaying(false); render(0); e.preventDefault(); }
+  if (e.key === "End") { setPlaying(false); render(F.length - 1); e.preventDefault(); }
+});
+for (const [p, a, b] of [["play", "prev", "next"], ["play2", "prev2", "next2"]]) {
+  $(p).onclick = () => setPlaying(!timer);
+  $(a).onclick = () => { setPlaying(false); render(i - 1); };
+  $(b).onclick = () => { setPlaying(false); render(i + 1); };
+}
 document.addEventListener("keydown", (e) => {
-  if (e.target.matches("input:not([type=range]), textarea") || e.metaKey || e.ctrlKey) return;
-  if (e.target.id === "range" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
-  if (e.key === "ArrowLeft") render(i - 1), e.preventDefault();
-  else if (e.key === "ArrowRight") render(i + 1), e.preventDefault();
-  else if (e.key === " " && !e.target.matches("button, a")) setPlaying(!timer), e.preventDefault();
+  if ($("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
+  if (e.key === "ArrowLeft") { setPlaying(false); render(i - 1); e.preventDefault(); }
+  else if (e.key === "ArrowRight") { setPlaying(false); render(i + 1); e.preventDefault(); }
+  else if (e.key === " " && !e.target.matches("button, a")) { setPlaying(!timer); e.preventDefault(); }
 });
-$("range").addEventListener("input", (e) => (setPlaying(false), render(Number(e.target.value))));
-$("prev").onclick = () => (setPlaying(false), render(i - 1));
-$("next").onclick = () => (setPlaying(false), render(i + 1));
-$("play").onclick = () => setPlaying(!timer);
-$("tab-offers").onclick = () => setTab("offers");
-$("tab-reps").onclick = () => setTab("reps");
+addEventListener("scroll", () => { if ($("tip").classList.contains("on")) { $("tip").classList.remove("on"); clearHot(); } }, { passive: true });
+let rz;
+addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { buildMatrix(); render(i); }, 120); });
 
+/* ---------- load ---------- */
 fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
   D = data; F = D.frames;
-  $("range").max = F.length - 1;
-  $("ticks").innerHTML = D.offers.map((o) => { const k = F.findIndex((f) => f >= o.first); return `<i style="left:${(k / (F.length - 1)) * 100}%"></i>`; }).join("");
-  const stated = D.offers.filter((o) => o.usd !== null);
-  $("basis").textContent = `${D.event} · ${D.channels} channels · offers grouped by ${D.basis.model}, not checked by hand`;
-  $("foot").innerHTML = `Every offer links to the Slack posts it came from. ${plural(stated.length, "offer")} ${stated.length === 1 ? "states" : "state"} a per-person amount ($${stated.reduce((n, o) => n + o.usd, 0)} in total); the other ${D.offers.length - stated.length} don't, and no amount is estimated. Top-level posts only: thread replies aren't captured. Posts counts real top-level posts, no app or bot posts.`;
-  renderReps();
+  DONE_KEY = `hackrecon:done:${D.event}`;
+  try { done = new Set(JSON.parse(store.get(DONE_KEY) || "[]").filter((id) => D.offers.some((o) => o.id === id))); } catch { done = new Set(); }
+  D.posts.forEach((t, k) => postIndex.set(t, k));
+  for (const o of D.offers) for (const p of o.posts) if (!offerByTs.has(p.ts)) offerByTs.set(p.ts, o);
+  for (let t = D.posts[0]; dayKey(t) <= dayKey(Math.max(D.posts.at(-1), F.at(-1))); t += 86400) if (!dayOf.has(dayKey(t))) { dayOf.set(dayKey(t), days.length); days.push(dayKey(t)); }
+  $("range").max = $("range2").max = days.length;
+  $("ev").textContent = D.event;
+  $("basis").textContent = `Grouped by ${D.basis.model} · not hand-checked`;
+  buildMatrix();
   setPlaying(false);
-  render(F.length - 1, false);
-}).catch(() => { $("offers").innerHTML = `<div class="empty"><p class="big">Couldn't load the board data.</p><p class="sub">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></div>`; });
+  render(F.length - 1);
+}).catch(() => { document.querySelector("main").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">Couldn't load the board data.</p><p class="cap">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></section>`; });
 </script>
 </body>
 </html>

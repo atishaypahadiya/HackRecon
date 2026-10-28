@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boardData, excerpt, morningOf, plainText, replayFrames, type BoardOffer } from "./board.ts";
+import { boardData, eventDeadlines, excerpt, morningOf, permalinkTs, plainText, replayFrames, type BoardOffer } from "./board.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
 import type { Message } from "./schema.ts";
@@ -7,7 +7,7 @@ import type { Message } from "./schema.ts";
 const TZ = "America/Los_Angeles";
 const at = (iso: string) => Date.parse(iso) / 1000;
 const bo = (o: Partial<BoardOffer>): BoardOffer => ({
-  id: "o1", sponsor: "Acme", title: "t", amount_text: "", usd: null, limit: null, limit_unclear: false, claim_url: "", promo_code: "", claim_how: "", first: 0, excerpt: "", posts: [], ...o,
+  id: "o1", sponsor: "Acme", title: "t", value_short: "", claim_short: "", amount_text: "", usd: null, limit: null, limit_unclear: false, claim_url: "", promo_code: "", claim_how: "", first: 0, excerpt: "", posts: [], ...o,
 });
 
 describe("replay frames", () => {
@@ -42,12 +42,27 @@ describe("excerpts", () => {
   });
 });
 
+describe("event deadlines", () => {
+  test("superseded entries drop out; each shows from its announcement post's time", () => {
+    expect(permalinkTs("https://x.slack.com/archives/C1/p1792943981782739")).toBe(1792943981.782739);
+    const s = [
+      { what: "Submissions due", at: "2026-10-25T09:00:00-07:00", source: "https://x/archives/C1/p1792918203114859", superseded_by: "extended" },
+      { what: "Extended deadline", at: "2026-10-25T09:30:00-07:00", source: "https://x/archives/C1/p1792943981782739" },
+      { what: "Judging", at: "2026-10-25T10:30:00-07:00", until: "2026-10-25T12:30:00-07:00", source: "https://x/archives/C1/p1792918203114859" },
+    ];
+    expect(eventDeadlines(s)).toEqual([
+      { what: "Extended deadline", at: at("2026-10-25T09:30:00-07:00"), until: null, posted: 1792943981.782739, source: s[1]!.source },
+      { what: "Judging", at: at("2026-10-25T10:30:00-07:00"), until: at("2026-10-25T12:30:00-07:00"), posted: 1792918203.114859, source: s[2]!.source },
+    ]);
+  });
+});
+
 describe("boardData", () => {
   const sponsors = { "spons-a": { sponsor: "Acme", kind: "sponsor", aliases: [] }, "0-ann": { sponsor: "event", kind: "event", aliases: [] } } as unknown as Sponsors;
   const msg = (ts: string, o: Partial<Message> = {}): Message => ({
     id: `C1:${ts}`, channel_id: "C1", channel_name: "spons-a", ts, author_name: "Grant Timmerman", text: "Grant Timmerman here: code ABC", links: [], permalink: `p/${ts}`, captured_at: "", run_id: "r", ...o,
   });
-  const offer: Offer = { sponsor: "Acme", title: "API credits", amount_text: "", amount_usd_per_person: "", amount_basis: "unknown", limit_iso: "", limit_status: "unresolved", claim_url: "", promo_code: "ABC", claim_how: "", posts: ["C1:1792800000.0"], reason: "" };
+  const offer: Offer = { sponsor: "Acme", title: "API credits", amount_text: "", amount_usd_per_person: "", amount_basis: "unknown", limit_iso: "", limit_status: "unresolved", claim_url: "", promo_code: "ABC", claim_how: "", value_short: "API credits", claim_short: "", posts: ["C1:1792800000.0"], reason: "" };
   const d = boardData({
     event: "Cal Hacks 13.0", timezone: TZ, run_id: "r", channels: ["spons-a", "0-ann"],
     messages: [msg("1792800000.0"), msg("1792800100.0", { author_kind: "bot" }), msg("1792800200.0", { subtype: "thread_broadcast" })],
@@ -57,6 +72,7 @@ describe("boardData", () => {
     expect(d.posts).toHaveLength(1);
     expect(d.offers[0]).toMatchObject({ usd: null, limit: null, limit_unclear: true, first: 1792800000 });
     expect(d.offers[0]!.excerpt).not.toContain("Grant");
-    expect(d.reps).toEqual([{ sponsor: "Acme", channel: "spons-a", posts: 1, offers: 1, candidates: 1 }]);
+    expect(d.reps).toEqual([{ sponsor: "Acme", channel: "spons-a", posts: 1, offers: 1, candidates: 1, candidate_first: [1792800000] }]);
+    expect(d.event_deadlines).toEqual([]);
   });
 });

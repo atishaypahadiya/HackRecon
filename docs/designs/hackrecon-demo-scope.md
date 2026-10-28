@@ -1941,6 +1941,21 @@ Accepted scope (built: `board/index.html`, `pipeline/board.ts`, `hr board`):
 Supersedes: D22's secondary row (K, R, $X + M now live in the footer and the cards) and the mockup's two-column layout.
 History: none
 
+### D26: bento dashboard after Flux; DESIGN.md "Daylight glass" (user direction, 2026-10-28)
+Finding: the offer-card board (D25) worked, but the user wanted the board as a bento dashboard with Flux (Orbix Studio, `docs/design-refs/flux-3.png`) as the north star, and a design system written down first.
+Question: none.
+
+State: approved
+Actual answer: user (2026-10-28): "Redesign the board as a bento dashboard; the north star is the Flux reference in docs/design-refs/. First run /design-consultation … Then build: Hero tile … Value tile … Activity tile … Reps tile … Closes-soon tile … Offer stream tile (largest) … Every tile opens a side drawer … Data first: add value_short / claim_short to the grouping pass (from the post's own words only), fix "Fo OG", and re-verify the Microsoft offer. Hand-roll the charts as SVG … Then run /design-review at 1440px and 390px and fix what it flags". DESIGN.md approved with risks R1 (board gets quieter), R2 (977-dot hero), R4 (Atkinson Mono codes); R3 declined.
+Accepted scope (built: `DESIGN.md`, `board/index.html`, `board/fonts/`, `pipeline/board.ts`, `pipeline/group.ts`, `hr board`):
+- Data: the grouping pass adds `value_short` (1–4 words) and `claim_short` (≤3 words); `checkGroups` rejects any word not in the offer's own posts. "Fo OG" is the post's wording; the title rule now adds the posts' own word for what it is ("Fo OG tier access"). Microsoft re-verified: a real but generic Azure for Students pointer, unpriced. Board data adds `event_deadlines` (config/event.json schedule, superseded entries dropped, shown from the announcement post's time) and per-channel `candidate_first` times so the reps ring recounts at each frame.
+- Tiles (12-col grid per DESIGN.md): Hero (count, "from S sponsors, found in P posts", one dot per real post in time order, offer posts lit; hover or arrow keys preview, click or Enter opens), Value (stated per-person total, priced/unpriced bar with hatching), Closes soon (amber claim windows ending in a pin, ink event-deadline ticks, a key, the event-deadline count), Activity (posts per day on a square-root scale with each day's exact count printed under it, green dot on days an offer first appeared; the scrubber lives here and every tile recomputes at its frame), Offer stream (value_short, sponsor, one action: mono code chip that copies, "Claim ↗", or the claim_short), Reps (ring of sponsors with ≥1 candidate / all sponsors, candidates count, per-sponsor pips).
+- Every tile opens a drawer (right sheet, bottom sheet on phone) with offers, deadlines, reps, excerpts and Slack links. Done state is per viewer in browser storage; copy or claim marks done; "Mark not done" in the drawer.
+- Phone: DOM order is the phone order (Hero, Stream, Closes, Value, Reps, Activity); the replay docks at the bottom with its own scrubber.
+- Fonts self-hosted (`font-src 'self'`, `/fonts/*` serves only the two woff2 files).
+Supersedes: D25's card stack and fixed scrubber bar (the one-action rule, urgency order, frames and empty state carry over).
+History: none
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
