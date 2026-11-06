@@ -266,7 +266,7 @@ Like v1, every number is agreement with Opus, said so on every report, plus a ha
 | Canon entities from pages | [estimated] ~20–40 tracks/prizes, 5 criteria [measured: Devpost page, 2026-10-28], ~10–20 rules, schedule items: none on calhacks.io (F1) | Opus extract + code verify | Opus judge (fresh context: "given this page, list what's missing or misplaced") plus model-free coverage checks (D15) | Verify: 100% of quotes found, numbers in quotes. Judge: no missing track, prize, criterion or rule. Coverage (D15): prize sum reconciles with the page total ($159,822 at Cal Hacks) with unmatched figures listed; prize-block count = extracted prize count; every $-amount and date on the page attached or listed "unattached". Any mismatch fails |
 | Slack → kind candidates | 977 top-level + replies captured | Haiku | Opus prelabel (v1 `hr prelabel`, extended to kinds) | Recall ≥ 0.9 on `change` and `booth`; as v1's gate for `credit` |
 | Slack → changes (link) | Every candidate | Opus link | Opus judge on a stratified sample + every applied change to a deadline or time | **Applied-change precision ≥ 0.95** on deadlines and times (a false override shows a wrong deadline). Recall ≥ 0.8. Every miss is listed with its permalink |
-| Idea fit (D16) | ~50 public gallery projects (winners + random) [precondition: labels public, probe at step 2 start] | Sonnet ranker | Devpost outcomes: won tracks (strong), submitted tracks (weak) | 100% cited quotes verified; report recall@3 on won tracks and precision vs submitted; threshold set after the first run |
+| Idea fit (D16, D23) | 81 Cal Hacks 13.0 projects that won a sponsor track; 94 (project, sponsor track) pairs over 40 prizes [measured 2026-11-06] | Sonnet ranker | Devpost won sponsor tracks; event-level prizes (12 wins: "Cal Hacks …" + [MLH] Commit Fellowship) excluded and listed separately; submitted tracks aren't public | 100% cited quotes verified. Primary: recall@3 over (project, won sponsor track) pairs. Secondary: per-project any-hit. n beside every rate. Threshold set after the first run |
 | Thread capture | 494 export replies in the locked 25 | Extension | Export (ground truth) | Keyed recall ≥ 0.9 |
 | Claim regression (D14) | 20 offers, 3 priced [measured: data/board.json] | v1 pipeline | Checked-in fingerprint of v1's board.json (ids, counts, times, excerpt hashes; no workspace text) | `bun test` matches on every build; allowed differences listed per field with the decision that allows them |
 
@@ -281,7 +281,7 @@ The judge never sees the producer's reasoning, only the source and the output (v
 | 1 Thread fixture (D5) | Thread capture, run uncapped on the locked 25 before anything else (D17); `hr compare` for threads | Thread recall ≥ 0.9 vs export (or "unmeasured" if access is lost, OV7); selectors backed by fixtures | 1–1.5 d [estimated] |
 | **Page half (D18)** | | | |
 | 2 Page sources | Page snapshot action with access flag (D12), outline h1–h6, normalized hash; Devpost snapshot for Cal Hacks, Hive if it still opens (D3) | Snapshots captured; iframe/PDF reported | 1 d [estimated] |
-| 3 Canon entities + eval | Entity schema, page extraction + verify, coverage checks (D15), Opus judge, source-anchored ids (D7), offer ids (OV5); D16 label probe, then the fit eval if labels are public | D15 gates; D16 baseline reported (or D16 returned to the user) | 2–3 d [estimated] |
+| 3 Canon entities + eval | Entity schema, page extraction + verify, coverage checks (D15), Opus judge, source-anchored ids (D7), offer ids (OV5); fit eval on the 94 sponsor-track pairs (D23) | D15 gates; D23 baseline reported | 2–3 d [estimated] |
 | 4 Build + Ship | Build (idea fit, POST /fit, D4/D6) and Ship from `entities.json`. /plan-design-review before, /design-review after | Both views at 1440 and 390; fit quotes 100% verified | 1.5–2 d [estimated] |
 | **Slack live half (D18)** | | | |
 | 5 Live sources + link | Incremental capture, live thread selection (D17, D20), kind classifier, link pass | Link eval with n printed (OV9) | 1.5–2 d [estimated] |
@@ -1178,7 +1178,52 @@ Actual answer: all four groups — user, D21, 2026-10-28: "1) Ids and types, 2) 
 Accepted scope: OV2, OV5, OV7, OV9, OV10, OV11, OV13, OV14 as written in the plan body and the Outside Voice table.
 History: none
 
-Approval readiness: PASS — checked R-F1 (D3), R-F2 (D4), R-F3 (D5), R-A1 (D6, amended by D16), R-A2 (D7), R-A3 (D8), R-A4 (D9), R-A5 (D10), R-A6 (D11), R-A7 (D12), R-CQ1 (D13), R-T1 (D14), R-T2 (D15), R-T3 (D16), R-P1 (D17), R-OV1 (D18), R-OV3 (D19), R-OV4 (D20), R-OV-M (D21); scope/structure D1, D2 (Scope Challenge). Every accepted remedy cites the user's actual answer. Conditional: D16's eval returns to the user if Devpost outcome labels aren't public (step 3 probe).
+Approval readiness: PASS — checked R-F1 (D3), R-F2 (D4), R-F3 (D5), R-A1 (D6, amended by D16), R-A2 (D7), R-A3 (D8), R-A4 (D9), R-A5 (D10), R-A6 (D11), R-A7 (D12), R-CQ1 (D13), R-T1 (D14), R-T2 (D15), R-T3 (D16), R-P1 (D17), R-OV1 (D18), R-OV3 (D19), R-OV4 (D20), R-OV-M (D21); scope/structure D1, D2 (Scope Challenge). Every accepted remedy cites the user's actual answer. D16 precondition resolved by D23 (R-T3b).
+
+### R-T3b: idea-fit eval labels after the D16 probe
+Finding: D16 precondition result, HIGH, 9/10, R-T3 "If won-track or submitted-track labels aren't public, this decision returns to the user", reviewer plan-eng-review (Claude), probe run at the user's request 2026-10-28
+Plan baseline: D16 approved: ~50 Cal Hacks projects; labels won tracks (strong) + submitted tracks (weak); recall@3 on won, precision vs submitted; Sonnet ranker; threshold after first run.
+Runtime evidence [measured, curl 2026-10-28]: 5 Cal Hacks 13.0 project pages show "Submitted to: Cal Hacks 13.0" only, no winner badge; the 13.0 page says "Winners announced soon". Cal Hacks 11.0 winning page (angelshot) shows "Winner · Vapi: Show us your Voice AI"; 4 non-winning 11.0 pages show "Submitted to: Cal Hacks 11.0" only. 11.0 gallery: 62 projects with a winner badge (pages 1–3). Submitted-track labels are not public at either event.
+Comparison grid:
+| Choice | Current (D16) | A | B |
+|---|---|---|---|
+| Labels | won (strong) + submitted (weak) | won tracks only | won tracks only |
+| Event | Cal Hacks 13.0 | Cal Hacks 11.0 now (62 winners; its own Devpost page snapshotted as canon), rerun on 13.0 when its winners post | Cal Hacks 13.0 only, built after its winners are announced (date unknown) |
+| Metrics | recall@3 won; precision vs submitted | recall@3 on won tracks, n printed; precision dropped (no public label) | same as A |
+| Unchanged | Sonnet ranker, 100% quote gate, threshold after first run, description-only input | unchanged | unchanged |
+Question D23:
+D23 — Devpost doesn't publish which prizes a project entered. How should idea fit be scored?
+Project/branch/task: hackrecon v2 design doc, branch v2, idea-fit eval (D16 precondition).
+ELI10: Your D16 eval needed two labels per project: tracks it won and tracks it entered. Devpost publicly shows only what a project won, and only after winners are announced. It never shows entries. Cal Hacks 13.0 winners aren't posted yet. Cal Hacks 11.0 has 62 public winners with prize names. So the precision-against-entries metric can't be computed from public pages, but recall@3 on won tracks can.
+Stakes if we pick wrong: Waiting for 13.0 blocks the eval for an unknown time. Using 11.0 tunes the ranker on last year's tracks.
+Recommendation: A) Score won tracks on Cal Hacks 11.0 now and rerun on 13.0 when its winners post, because 62 public labels exist today and the extra Devpost page also exercises step 7's generalization.
+Completeness: A=8/10, B=7/10
+Pros / cons:
+A) 11.0 now, 13.0 later (recommended)
+  ✅ 62 public winner labels are available today, so the baseline lands in step 3 as planned
+  ✅ Extracting 11.0's Devpost page is a second real canon page, a free generalization test
+  ❌ Precision is dropped, and 11.0's tracks differ from 13.0's, so the first number isn't this year's (human: ~0.5 day / CC: ~20 min)
+B) Wait for 13.0 winners
+  ✅ The labels match the tracks the board actually shows this year
+  ✅ No extra page to snapshot or extract
+  ❌ The eval can't run until Devpost posts 13.0 winners, an unknown date; precision is dropped too
+Net: a baseline today on last year's tracks versus this year's tracks on an unknown date.
+Header: Fit labels
+Options:
+A) 11.0 now, 13.0 later (recommended)
+Labels: won tracks only. Eval set: Cal Hacks 11.0's 62 winning projects, its Devpost page snapshotted as canon. Metric: recall@3 on won tracks with n; precision dropped. Rerun on 13.0 when its winners post. (human: ~0.5 day / CC: ~20 min)
+B) Wait for 13.0 winners
+Labels: won tracks only, Cal Hacks 13.0, built after Devpost posts its winners. Metric: recall@3 on won tracks with n; precision dropped.
+
+State: approved
+Actual answer: B) Wait for 13.0 winners — user, D23, 2026-10-28
+Accepted scope: Labels are won tracks only, from Cal Hacks 13.0 project pages; the submitted-track precision metric is dropped (not public). Metric: recall@3 on won tracks with n printed. Ranker (Sonnet), 100% quote gate, description-only input and threshold-after-first-run are unchanged from D16.
+Precondition met (re-probe 2026-11-04, measured): the 13.0 gallery now shows 90 winning projects (pages 1–4: 24, 24, 24, 18); a winning page lists each prize won, e.g. anima-labs: "Winner · [Creao AI] Best AI-First Disruptor", "Winner · [MLH] Commit Fellowship". Projects can win several prizes, so recall@3 counts a hit if any won track is in the top 3, and the report also gives per-track hits. The eval set is all 90 winners (D16 said ~50 including a random set; non-winners carry no public label, so they're left out).
+User refinement (2026-11-06), verbatim: "D16 refinements: (1) label only sponsor-track prizes as fit targets; exclude event-level prizes (MLH Commit Fellowship, grand prize/overall/most-creative and similar) and list them separately in the report; (2) primary metric = recall@3 over (project, won sponsor track) pairs, with per-project “any hit” as secondary; n beside every rate."
+Refined scope: fit targets are sponsor-track prizes only. Event-level prizes are excluded from scoring and listed separately in the report. Primary metric: recall@3 over (project, won sponsor track) pairs. Secondary: per-project "any hit" (at least one won sponsor track in the top 3). n beside every rate.
+Classification rule (necessary mechanism): a prize is event-level if it carries no sponsor tag (the "Cal Hacks …" prizes) or is listed in event.json `event_level_prizes` (seeded with "[MLH] Commit Fellowship"); every other bracket-tagged prize is a sponsor track. The rule matches the tag, not the name, so "[Figma] Most Creative" stays a sponsor track. MLH's "[MLH] Best Use of <tool>" prizes have a stated tool requirement, so they count as sponsor tracks; the report lists them so the user can move them to `event_level_prizes`.
+Measured on the 90 winners (2026-11-06): 106 wins, 52 distinct prizes. Sponsor tracks: 94 (project, track) pairs over 40 distinct prizes, from 81 projects (6 of the pairs are [MLH] Best Use of <tool>). Event-level: 12 wins over 12 prizes (11 "Cal Hacks …" plus [MLH] Commit Fellowship). 9 projects won only event-level prizes, so they leave the eval set.
+History: D16 (2026-10-28) set won + submitted labels; the probe showed submitted labels aren't public.
 
 ## NOT in scope
 - `hr init` auto-drafting (D1): deferred to TODOS.md; generalization is proven by hand first.
@@ -1256,10 +1301,10 @@ Synthesized from this review's findings. Each task derives from a specific findi
   - Surfaced by: R-A2 (D7), T2 (D15), OV5 (D21)
   - Files: pipeline/canon.ts, pipeline/schema.ts, shared helper from group.ts
   - Verify: D15 gates; tolerant-match threshold calibrated on re-extraction pairs
-- [ ] **T7 (P2, human: ~0.5d / CC: ~20min)** — evals — Probe Devpost outcome labels, then fit eval (~50 projects)
-  - Surfaced by: T3 (D16)
+- [ ] **T7 (P2, human: ~0.5d / CC: ~20min)** — evals — Fit eval on 94 (project, won sponsor track) pairs; event-level prizes listed separately
+  - Surfaced by: T3 (D16), R-T3b (D23)
   - Files: evals/fit
-  - Verify: labels probe result; baseline recall@3 and precision with n
+  - Verify: baseline pair recall@3 (n=94) and per-project any-hit (n=81); event-level list printed; 100% quotes verified
 - [ ] **T8 (P1, human: ~2d / CC: ~1h)** — board — Build (idea fit, POST /fit guarded, Sonnet) and Ship (step 4)
   - Surfaced by: R-F2 (D4), R-A1 (D6, D16)
   - Files: pipeline/fit.ts, pipeline/board.ts, board/views.js
@@ -1278,7 +1323,7 @@ Synthesized from this review's findings. Each task derives from a specific findi
   - Verify: coverage checks pass with no code changes
 
 ## Unresolved decisions
-None in this review. Conditional: D16 returns to the user if Devpost won/submitted-track labels aren't public (probe at step 3). Facts to fill: next event and platform (D18).
+None in this review. D16's label precondition was resolved by D23 (won tracks only, 90 public 13.0 winners). Facts to fill: next event and platform (D18).
 
 ## Completion summary
 - Step 0: Scope Challenge — scope reduced per recommendation (`hr init` deferred, D1; smaller module arrangement, D2)
@@ -1291,7 +1336,7 @@ None in this review. Conditional: D16 returns to the user if Devpost won/submitt
 - What already exists: written
 - TODOS.md updates: 2 items proposed to user (`hr init` D1, `hr fetch` D11), both added; 3 existing items updated to point at v2 steps
 - Failure modes: 0 critical gaps flagged
-- Unresolved decisions: 0 in this review
+- Unresolved decisions: 0 in this review (D16 precondition resolved by D23)
 - Outside voice: Claude Plan subagent (native fallback; Codex not installed), completed in 156 s, 22 findings; resolved via D18–D21 and dispositions. Note: D18–D20 used two-option briefs rather than the skill's four-option outside-voice menu.
 - Parallelization: 2 lanes, 2 parallel / 6 sequential
 - Lake Score: 2/16 = answers picking a 10/10 option / answers scored for Completeness
@@ -1307,6 +1352,6 @@ None in this review. Conditional: D16 returns to the user if Devpost won/submitt
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **OUTSIDE COVERAGE:** codex-plan-review phase: Codex not installed; native Claude Plan subagent completed in 156 s with 22 findings (in-host, outside_status unavailable). No external-provider coverage.
-- **VERDICT:** No review CLEAR yet. Eng review complete with 21 decisions (D1–D21) approved and every finding mapped to T1–T11; status is ISSUES OPEN because findings are counted even when resolved. Views are UI scope: /plan-design-review recommended before step 4.
+- **VERDICT:** No review CLEAR yet. Eng review complete with 23 decisions (D1–D23) approved and every finding mapped to T1–T11; status is ISSUES OPEN because findings are counted even when resolved. Views are UI scope: /plan-design-review recommended before step 4.
 
 NO UNRESOLVED DECISIONS
