@@ -1484,10 +1484,26 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
 - **P2 / P7, Tracks section and dogfood.** `pipeline/plan.ts` builds Plan's Tracks section with the same ranker, quote check and cache as fit-eval, so the gate's numbers describe what Plan shows. `hr plan --from fixtures/dogfood/hindsight.json` on real canon:
   - **Results:** likely fits for [Anthropic] Claude for Public Benefit, [Apify] Best Use of Apify and [Factory] Best Use of the Factory Droid SDK; also possible: [Figma] Best Design and [Apify] Best Actor. All 4 tracks Hindsight targeted appear. They were targeted, not won (no track prizes), so this isn't a win label.
   - **Time to the section:** 4,955 ms uncached (n = 1, Sonnet, $0.02), 1 ms cached. Under the 8 s target on one sample; more samples come with the board endpoint.
-  - **Open, for the user (both are prompt changes, so a fresh extraction or ranking and a fit-gate run):**
-    - (a) 4 of 5 quotes are just the track's name. They're verified but carry no evidence, because canon holds a description for only 9 of 52 tracks and requirements for 5.
-    - (b) Two reasons step past the facts. "likely to scrape course catalogs" guesses how Apify is used, and "so they can enter this track directly" reads close to an eligibility claim.
-    - (c) Entry steps aren't a canon kind yet, so D3's checkboxes have nothing to show. Only 1 requirement ("Register your domain name with GoDaddy Registry") looks like one.
+  - **The three open items, done as the user specified (2026-11-06), in one change. It FAILS the fit gate. Not committed; awaiting the user.**
+    - **What changed:**
+      - Canon extracts each prize block's full text, sentence by sentence, as repeating requirement and description fields, a criterion per judging sentence, and a new `entry_step` kind (opt_in, supplemental_form, description_mention, submission_field, each with its verbatim sentence). Plan shows entry steps as each track's checkboxes; Ship's checklist reads the same list, keyed by entity id.
+      - The ranker may quote only a track's requirement or criterion lines. `checkFit` fails a quote that is the track's name or holds only its words.
+      - The reason rule is "combine only stated facts with the quoted line, as a condition". A lint rejects "can/could/may enter", "qualif*", "eligib*" and "guarantee*". Both failures go back to the model.
+    - **Re-extraction (`hr canon --force`, $1.77):**
+      - Result: 52 tracks, 79 prizes, 10 criteria, 12 + 4 rules, 4 entry steps.
+      - Gates: prize_total PASS. prize_blocks FAIL: [Mana] Best Use of Mana states 1 place and got 0 prizes.
+      - Completeness, model-free: all 83 text lines inside prize blocks are carried by some quote, so nothing on the page was dropped.
+      - The page is the limit. Only 7 of 52 tracks have any requirement or criterion sentence. The rest carry only "$X in cash", "N winners" and an award line, e.g. Anthropic: "$5000 in Claude credits and 1 year of Claude Max 20x + Office Hours".
+      - The 4 entry steps: Vultr sign-up, GoDaddy registration, Apify's "Best Actor award for building an actor", and Bright Data's "In your project description, indicate which track … you are submitting for".
+    - **Fit eval on that canon (n = 94 pairs):**
+      - recall@3: A 9/94, B 11/94.
+      - recall@5: A 9/94, B 11/94.
+      - Gate on run B: recall@3 55/94 → 11/94 (lost 47, gained 3, exact McNemar p = 3.7e-11). recall@5 68/94 → 11/94 (lost 60, gained 3, p = 9.0e-15). **FAIL: 11.7% < 67%.**
+      - Cause: the ranker can choose only among the 7 quotable tracks.
+    - **State:**
+      - The product code is in the working tree, uncommitted. data/canon.json holds the new extraction.
+      - Reverting needs no API call: run 3's extraction is still in data/canon_extractions.json under the old prompt hash.
+      - Decision for the user: where requirement sentences come from (Slack sponsor posts in step 1, sponsor pages the prize blocks link), or how tracks with none appear in Plan.
 
 ## Design Review (plan-design-review, 2026-11-06): Plan + Ship
 
