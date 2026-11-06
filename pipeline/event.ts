@@ -53,6 +53,7 @@ export const CANON_JUDGE_PATH = "review/canon_judge.json";
 export const CANON_JUDGE_FIXTURES_PATH = "review/canon_judge.fixtures.json";
 /** Idea-fit rankings by input hash (shared by `hr fit-eval` and, later, POST /fit). */
 export const FIT_CACHE_PATH = "data/fit_cache.json";
+export const GAPS_CACHE_PATH = "data/gaps_cache.json";
 /** The fit eval set: public winners, descriptions and Built With lists (gitignored like all fixtures). */
 export const FIT_EVAL_SET_PATH = "fixtures/fit/eval13.json";
 export const FIT_EVAL_PATH = "review/fit_eval.json";

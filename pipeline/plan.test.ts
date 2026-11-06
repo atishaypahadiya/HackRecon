@@ -109,6 +109,8 @@ describe("Plan tracks", () => {
     expect(parsePlanBody({ idea: "x", stack: [] })).toEqual({ idea: "x", stack: null });
     expect(parsePlanBody({ idea: " " })).toEqual({ error: "describe your project first" });
     expect(parsePlanBody({ idea: "x", stack: "Apify" })).toEqual({ error: "stack must be a list" });
+    expect(parsePlanBody({ idea: "x", repo: " https://github.com/o/r " })).toEqual({ idea: "x", stack: null, repo: "https://github.com/o/r" });
+    for (const repo of ["http://github.com/o/r", "https://evil.test/o/r", "https://github.com/o/r/tree/main", "file:///etc/passwd"]) expect("error" in parsePlanBody({ idea: "x", repo })).toBe(true);
     expect("error" in parsePlanBody({ idea: "x".repeat(PLAN_LIMITS.idea + 1) })).toBe(true);
     expect("error" in parsePlanBody({ idea: "x", stack: Array.from({ length: PLAN_LIMITS.items + 1 }, () => ({ name: "a" })) })).toBe(true);
   });
