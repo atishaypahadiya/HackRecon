@@ -10,6 +10,7 @@ import type { PosterRole } from "./roles.ts";
 import { AMOUNT_BASES, AMOUNT_UNITS, DEADLINE_STATUSES, ITEM_KINDS, type Item, type Message } from "./schema.ts";
 import { ISO_WITH_OFFSET, tsToEventIsoWithDay } from "./time.ts";
 import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
+import { EVENT_PATH } from "./event.ts";
 
 export const MODEL = "claude-haiku-5-5" as const;
 /** Haiku 5.5 defaults to medium; set explicitly so the cache key names it. */
@@ -19,12 +20,6 @@ export const MAX_TOKENS = 8000;
 /** Retries for an output that fails validation (D10). API errors use the SDK's own 2 retries with backoff. */
 export const OUTPUT_RETRIES = 2;
 
-export const EVENT_PATH = "config/event.json";
-export const CACHE_PATH = "data/classify_cache.json";
-export const ERRORS_PATH = "data/classify_errors.json";
-export const ITEMS_PATH = "data/items.json";
-/** Which messages data/items.json covers, and under which prompt (scored by `hr gate`). */
-export const RUN_PATH = "data/classify_run.json";
 
 export interface ClassifyRun {
   prompt_hash: string;

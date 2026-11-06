@@ -5,15 +5,11 @@ import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
 import {
-  CACHE_PATH,
   classifyOne,
-  ERRORS_PATH,
-  ITEMS_PATH,
   MODEL,
   promptHash,
   readEvent,
   readJsonFile,
-  RUN_PATH,
   systemPrompt,
   toItems,
   writeJsonFile,
@@ -23,8 +19,8 @@ import {
   type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
-import { HAND_LABELER, labelerOf, labelProblems, LABELS_PATH, OPUS_LABELER, POOL_META_PATH, readLabels, readRules } from "./labels.ts";
+import { loadExport } from "./export.ts";
+import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
 import {
@@ -45,25 +41,44 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_DATA_PATH, BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData } from "./board.ts";
-import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData } from "./board.ts";
+import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
-  JUDGE_CACHE_PATH,
   JUDGE_EFFORT,
   JUDGE_MODEL,
-  JUDGE_RUN_PATH,
   judgeHash,
   judgeOne,
   judgeSystemPrompt,
-  RULES_PATH,
   rulesSection,
   type JudgeCache,
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
-import { buildOrganizers, loadOrganizerIds, ORGANIZERS_PATH, posterRole } from "./roles.ts";
-import { buildRun, MESSAGES_PATH, readMessages, readRuns, RUNS_PATH, saveRun } from "./runs.ts";
+import { buildOrganizers, loadOrganizerIds, posterRole } from "./roles.ts";
+import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
+import {
+  BOARD_DATA_PATH,
+  CACHE_PATH,
+  CAPTURES_DIR,
+  DEFAULT_EXPORT_DIR,
+  ERRORS_PATH,
+  GROUP_PATH,
+  ITEMS_PATH,
+  JUDGE_CACHE_PATH,
+  JUDGE_RUN_PATH,
+  LABELS_PATH,
+  MESSAGES_PATH,
+  ORGANIZERS_PATH,
+  POOL_META_PATH,
+  RULES_PATH,
+  RUN_PATH,
+  RUNS_PATH,
+  SPONSORS_PATH,
+  fromCaller,
+  takeEventArg,
+  useEvent,
+} from "./event.ts";
 import type { Item } from "./schema.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -148,15 +163,15 @@ function compare(args: string[]): number {
       export: { type: "string", default: DEFAULT_EXPORT_DIR },
       json: { type: "string" },
       cutoff: { type: "string", default: EXPORT_CUTOFF },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
-  const files = captureFiles(positionals.length ? positionals : ["captures"]);
+  const files = captureFiles(positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR]);
   if (!files.length) {
     console.error("No capture files found. Pass paths, e.g. bun run hr compare ~/Downloads/C0C7TCNCR1N.json");
     return 2;
   }
-  const exp = loadExport(values.export);
+  const exp = loadExport(fromCaller(values.export!));
   const cutoff = Date.parse(values.cutoff!) / 1000;
   const reports: ChannelReport[] = [];
   for (const f of files) {
@@ -174,8 +189,8 @@ function compare(args: string[]): number {
   for (const r of reports) printDetails(r);
   printLockedCoverage(values.sponsors!, reports);
   if (values.json) {
-    writeFileSync(values.json, JSON.stringify(reports, null, 2));
-    console.log(`\nwrote ${values.json}`);
+    writeFileSync(fromCaller(values.json), JSON.stringify(reports, null, 2));
+    console.log(`\nwrote ${fromCaller(values.json)}`);
   }
   return reports.some((r) => !r.pass.recall) ? 1 : 0;
 }
@@ -184,13 +199,13 @@ function recordRun(args: string[]): number {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { id: { type: "string" }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { id: { type: "string" }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   if (!values.id) {
     console.error("record-run needs --id, e.g. --id day1-2026-10-27");
     return 2;
   }
-  const files = captureFiles(positionals.length ? positionals : ["captures"]);
+  const files = captureFiles(positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR]);
   if (!files.length) {
     console.error("No capture files found.");
     return 2;
@@ -221,7 +236,7 @@ function pool(args: string[]): number {
     options: {
       seed: { type: "string", default: String(DEFAULT_SEED) },
       export: { type: "string", default: DEFAULT_EXPORT_DIR },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
       check: { type: "boolean", default: false },
       "add-flagged": { type: "boolean", default: false },
     },
@@ -231,7 +246,7 @@ function pool(args: string[]): number {
 
   const sponsors = readSponsors(values.sponsors!);
   const channels = lockedChannels(sponsors);
-  const cands = candidatesFromExport(loadExport(values.export), channels);
+  const cands = candidatesFromExport(loadExport(fromCaller(values.export!)), channels);
   const seed = Number(values.seed);
   const prev = readPoolMeta(POOL_META_PATH);
   // Sheets written before the miss checks were blinded marked random rows in the sheet itself.
@@ -331,7 +346,7 @@ async function prelabel(args: string[]): Promise<number> {
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
   const rows = readLabels();
@@ -480,7 +495,7 @@ function groupInput(sponsors: Sponsors) {
 async function group(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const g = groupInput(readSponsors(values.sponsors!));
   if (!g.ids.length) {
@@ -532,7 +547,7 @@ async function group(args: string[]): Promise<number> {
 async function board(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const sponsors = readSponsors(values.sponsors!);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
@@ -587,7 +602,7 @@ async function board(args: string[]): Promise<number> {
 }
 
 function receiptPreview(args: string[]): number {
-  const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: "config/sponsors.json" } } });
+  const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: SPONSORS_PATH } } });
   const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
   if (!run) {
     console.error(`${RUN_PATH} not found: run \`bun run hr classify\` first`);
@@ -620,7 +635,7 @@ function receiptPreview(args: string[]): number {
 
 function organizers(args: string[]): number {
   const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
-  const orgs = buildOrganizers(loadExport(values.export));
+  const orgs = buildOrganizers(loadExport(fromCaller(values.export!)));
   writeJsonFile(ORGANIZERS_PATH, orgs);
   const by = (w: string) => orgs.filter((o) => o.why.includes(w)).length;
   console.log(
@@ -639,7 +654,7 @@ async function classify(args: string[]): Promise<number> {
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
   const sponsors = readSponsors(values.sponsors!);
@@ -809,4 +824,13 @@ function printLockedCoverage(sponsorsPath: string, rs: ChannelReport[]): void {
   console.log(`\nlocked ${locked.length}: ${locked.length - todo.length} pass keyed recall` + (todo.length ? `; not yet: ${todo.join(", ")}` : ""));
 }
 
-process.exit(await main(process.argv.slice(2)));
+let args: string[];
+try {
+  const { slug, rest } = takeEventArg(process.argv.slice(2));
+  args = rest;
+  if (rest[0] && COMMANDS.includes(rest[0])) useEvent(slug);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exit(2);
+}
+process.exit(await main(args));

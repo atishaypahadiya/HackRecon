@@ -1,5 +1,5 @@
 // Every Slack DOM assumption lives here.
-// Verified against real samples in fixtures/slack-dom/ (spons-moss, spons-capital-one and spons-factory-ai
+// Verified against real samples in events/calhacks-13/fixtures/slack-dom/ (spons-moss, spons-capital-one and spons-factory-ai
 // views, 2026-10-27) by parse.fixtures.test.ts, which checks parsing against the slackdump export.
 // Entries marked UNVERIFIED had no matching element in the samples and are kept as best guesses.
 // Each entry is a comma-separated candidate list.

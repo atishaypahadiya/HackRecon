@@ -8,3 +8,12 @@ extension/dist/
 config/organizers.json
 data/
 review/
+
+# Per-event layout (v2 D10): workspace content under events/<slug>/ is never tracked.
+# pipeline/event.test.ts fails if any of these is tracked.
+events/*/captures/
+events/*/review/
+events/*/data/
+events/*/fixtures/
+events/*/config/organizers.json
+events/current

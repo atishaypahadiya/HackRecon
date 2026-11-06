@@ -9,8 +9,8 @@ import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { PosterRole } from "./roles.ts";
 import type { Message } from "./schema.ts";
+import {  } from "./event.ts";
 
-export const BOARD_DATA_PATH = "data/board.json";
 export const BOARD_PAGE = new URL("../board/index.html", import.meta.url).pathname;
 /** Self-hosted (CSP font-src 'self'), OFL texts beside them; see DESIGN.md. Only these names are served. */
 export const BOARD_FONT_DIR = new URL("../board/fonts/", import.meta.url).pathname;

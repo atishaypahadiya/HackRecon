@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareChannel } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR, expectedAuthorNames, isChannelVisible, loadExport, readChannel, rowClass, type ExportMessage } from "./export.ts";
+import { DEFAULT_EXPORT_DIR } from "./event.ts";
+import { expectedAuthorNames, isChannelVisible, loadExport, readChannel, rowClass, type ExportMessage } from "./export.ts";
 import { messageId, type CaptureFile, type Message } from "./schema.ts";
 
 const CID = "C0TEST";

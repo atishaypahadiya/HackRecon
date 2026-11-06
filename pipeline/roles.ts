@@ -4,8 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import type { SlackExport } from "./export.ts";
 import type { SponsorEntry } from "./pool.ts";
 import type { Message } from "./schema.ts";
+import { ORGANIZERS_PATH } from "./event.ts";
 
-export const ORGANIZERS_PATH = "config/organizers.json";
 
 export type PosterRole = "organizer" | "sponsor-side" | "other";
 

@@ -1,10 +1,9 @@
 // Read-only access to the slackdump baseline (Slack export format: <channel>/<YYYY-MM-DD>.json,
 // plus channels.json and users.json). Used by compare only; never imported into product tables.
 import { readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_EXPORT_DIR } from "./event.ts";
 
-export const DEFAULT_EXPORT_DIR = join(homedir(), "projects/hackrecon-data/calhacks");
 
 export interface ExportMessage {
   ts: string;
