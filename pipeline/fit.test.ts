@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fitGate, mcnemarExact } from "./fiteval.ts";
 import type { EventConfig } from "./classify.ts";
-import { checkFit, ELIGIBILITY, isEventLevel, isToolGated, nameOnlyQuote, trackCards, type Ranked, type TrackCard } from "./fit.ts";
+import { checkFit, ELIGIBILITY, isEventLevel, isToolGated, nameOnlyQuote, productMentioned, sponsorAliases, titleProducts, trackCards, type Ranked, type TrackCard } from "./fit.ts";
 import { scoreFit, type EvalItem } from "./fiteval.ts";
 import type { Entity } from "./schema.ts";
 
@@ -26,8 +26,10 @@ const es: Entity[] = [
   ent("s:acme", "entry_step", "Acme", "Opt in", { track_id: "t:acme", step_kind: "opt_in", text: "Opt in on the Acme portal" }),
   ent("t:fig", "track", "Fig", "[Fig] Best Design", { cash_value_usd: 0, winners: 1 }),
   ent("p:fig", "prize", "Fig", "Best Design", { track_id: "t:fig", award_text: "Gift cards and a recruiter session" }),
-  ent("t:cash", "track", "Cashco", "[Cashco] Best Use of Cashco", { cash_value_usd: 5000, winners: 4 }),
-  ent("p:cash", "prize", "Cashco", "Best Use of Cashco", { track_id: "t:cash", award_text: "$5,000 in cash" }),
+  ent("t:cash", "track", "Cashco", "[Cashco] Best use of Reimagining Shopping sponsored by Cashco", { cash_value_usd: 5000, winners: 1 }),
+  ent("p:cash", "prize", "Cashco", "Cashco", { track_id: "t:cash", award_text: "$5,000 in cash" }),
+  ent("t:mana", "track", "Mana", "[Mana] Best Use of Mana", { cash_value_usd: 5000, winners: 4 }),
+  ent("p:mana", "prize", "Mana", "Mana", { track_id: "t:mana", award_text: "$5,000 in cash" }),
   ent("c:acme", "criterion", "Acme", "Agent depth", { track_id: "t:acme", description: "How autonomous the agent is" }),
   ent("p:acme", "prize", "Acme", "1st", { track_id: "t:acme", award_text: "$500 + interview" }),
 ];
@@ -35,7 +37,7 @@ const es: Entity[] = [
 describe("tracks for fit", () => {
   test("event-level tracks are left out; only requirements and criteria are quotable, the rest is context", () => {
     const cards = trackCards(es, ev);
-    expect(cards.map((c) => [c.id, c.evidence])).toEqual([["t:acme", "stated"], ["t:gem", "stated"], ["t:viz", "stated"], ["t:fig", "title"], ["t:cash", "cash_only"]]);
+    expect(cards.map((c) => [c.id, c.evidence])).toEqual([["t:acme", "stated"], ["t:gem", "stated"], ["t:viz", "stated"], ["t:fig", "title"], ["t:cash", "cash_only"], ["t:mana", "title"]]);
     expect(cards[0]!.lines).toEqual(["must use the Acme API", "Agent depth", "How autonomous the agent is"]);
     expect(cards[0]!.context).toEqual(["Build an agent on Acme.", "Opt in on the Acme portal", "$500 + interview"]);
     expect(isEventLevel(es[1]!, ev)).toBe(true);
@@ -48,17 +50,42 @@ describe("checkFit", () => {
   const cards = trackCards(es, ev);
   const r = (track_id: string, quote: string, reason = "Your stack lists Acme; this track requires the Acme API."): Ranked => ({ track_id, fit: "likely", reason, quote });
   const five = (over: Partial<Record<string, Ranked>> = {}) => ({
-    ranked: [r("t:cash", "Best Use of Cashco"), r("t:acme", "must use the acme API"), r("t:fig", "[Fig] Best Design"), r("t:gem", "Use the Gemini API"), r("t:viz", "How clearly the chart tells")].map((x) => over[x.track_id] ?? x),
+    ranked: [r("t:cash", "Best use of Reimagining Shopping"), r("t:acme", "must use the acme API"), r("t:fig", "[Fig] Best Design"), r("t:gem", "Use the Gemini API"), r("t:viz", "How clearly the chart tells")].map((x) => over[x.track_id] ?? x),
   });
-  const cashPossible = { "t:cash": { ...r("t:cash", "Best Use of Cashco"), fit: "possible" as const } };
+  const cashPossible = { "t:cash": { ...r("t:cash", "Best use of Reimagining Shopping"), fit: "possible" as const } };
   test("tiered evidence: stated tracks quote a requirement or criterion, the others their title; cash_only goes last", () => {
     const out = checkFit(five(cashPossible), cards) as Ranked[];
     expect(out.map((x) => x.track_id)).toEqual(["t:acme", "t:fig", "t:gem", "t:viz", "t:cash"]);
   });
   test("a cash_only track is never likely; a title-tier quote must be in the title", () => {
-    expect((checkFit(five(), cards) as { error: string }).error).toContain('[Cashco] Best Use of Cashco gives only a prize amount (evidence="cash_only"): fit must be "possible"');
+    expect((checkFit(five(), cards) as { error: string }).error).toContain('[Cashco] Best use of Reimagining Shopping sponsored by Cashco gives only a prize amount (evidence="cash_only"): fit must be "possible"');
     const e = (checkFit(five({ ...cashPossible, "t:fig": r("t:fig", "Gift cards and a recruiter session") }), cards) as { error: string }).error;
     expect(e).toContain('[Fig] Best Design states no requirements (evidence="title"): quote its title');
+  });
+  test("a title that names a sponsor product is at least title-only, whatever its prize block holds (user 2026-11-06)", () => {
+    // Real Cal Hacks 13.0 titles, sponsor, aliases from sponsors.json.
+    const al = { Anthropic: ["Claude"] };
+    const cases: [string, string, string[]][] = [
+      ["[Anthropic] Claude for Public Benefit", "Anthropic", ["Claude"]],
+      ["[MLH] Best Use of Gemini API", "MLH", ["Gemini API"]],
+      ["[Factory] Best Use of the Factory Droid SDK", "Factory", ["Factory Droid SDK"]],
+      ["[Elastic] Best use of the Elastic Agent Builder on a Serverless Instance", "Elastic", ["Elastic Agent Builder"]],
+      ["[Coinbase] Best Use of x402 by Coinbase", "Coinbase", ["x402", "Coinbase"]],
+      ["[Mana] Best Use of Mana", "Mana", ["Mana"]],
+      ["[Visa] Best use of Reimagining Shopping sponsored by Visa", "Visa", []],
+      ["[Apify] Best Actor sponsored by Apify", "Apify", []],
+      ["[Figma] Best Design", "Figma", []],
+    ];
+    for (const [name, sponsor, want] of cases) expect([name, titleProducts(name, sponsor, al)]).toEqual([name, want]);
+    expect(sponsorAliases({ a: { sponsor: "Anthropic", aliases: ["Claude"] }, b: { sponsor: "Anthropic", aliases: [] } })).toEqual({ Anthropic: ["Claude"] });
+  });
+  test("productMentioned: whole words, the product's core without generic suffixes", () => {
+    expect(productMentioned("Gemini API", "Python, Gemini")).toBe(true);
+    expect(productMentioned("Bitdeer AI Model Studio", "models on Bitdeer")).toBe(true);
+    expect(productMentioned("Factory Droid SDK", "Factory Droid SDK, Figma")).toBe(true);
+    expect(productMentioned("Factory Droid SDK", "an app for the factory floor")).toBe(false);
+    expect(productMentioned("Mana", "helps students manage credits")).toBe(false);
+    expect(productMentioned("Fetch.ai", "agents on fetch.ai")).toBe(true);
   });
   test("a requirement from any source upgrades a title track to stated (step 1: Slack sponsor posts)", () => {
     const up = es.map((e) => (e.id === "t:fig" ? { ...e, fields: { ...e.fields, "requirements[0]": fv("Design it in Fig") } } : e));
@@ -73,7 +100,7 @@ describe("checkFit", () => {
     expect(e).toContain("t:viz is ranked twice");
   });
   test("a quote that is only the track's name fails, even when a line contains it (user 2026-11-06)", () => {
-    const named: TrackCard[] = [{ id: "t:n", sponsor: "Acme", name: "[Acme] Best Use of Acme", evidence: "stated", lines: ["Best Use of Acme: must ship an agent"], context: [] }];
+    const named: TrackCard[] = [{ id: "t:n", sponsor: "Acme", name: "[Acme] Best Use of Acme", evidence: "stated", products: ["Acme"], lines: ["Best Use of Acme: must ship an agent"], context: [] }];
     expect(nameOnlyQuote("[Acme] Best Use of Acme", "[Acme] Best Use of Acme")).toBe(true);
     expect(nameOnlyQuote("Best Use of", "[Acme] Best Use of Acme")).toBe(true);
     expect(nameOnlyQuote("must ship an agent", "[Acme] Best Use of Acme")).toBe(false);

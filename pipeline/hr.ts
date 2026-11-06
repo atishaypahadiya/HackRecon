@@ -120,7 +120,7 @@ import {
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
-import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
+import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { boothQuestions, parseStack, planTracks, type FitCache } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
@@ -1117,7 +1117,7 @@ async function planCli(args: string[]): Promise<number> {
   const input = { idea, stack: parseStack(dog?.stack ?? values.stack) };
   const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
   const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
-  const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache);
+  const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
   if ("error" in r) {
     console.error(`couldn't rank tracks: ${r.error}`);
     return 1;
@@ -1128,7 +1128,7 @@ async function planCli(args: string[]): Promise<number> {
   for (const t of r.items) {
     if (t.fit === "possible" && shown !== "possible") console.log("  Also possible");
     shown = t.fit;
-    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.label ? `   (${t.label})` : ""}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
+    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.capped ? " (ranked likely; the title's product isn't in your description or stack)" : ""}${t.label ? `   (${t.label})` : ""}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
     for (const s of t.steps) console.log(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
   }
   const booths = boothQuestions(r.items);
@@ -1159,7 +1159,7 @@ async function fitEval(args: string[]): Promise<number> {
     console.error(`no eval set at ${FIT_EVAL_SET_PATH}`);
     return 2;
   }
-  const cards = trackCards(entities, event);
+  const cards = trackCards(entities, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
   const system = fitSystemPrompt(event, cards);
   const names = new Set(entities.filter((e) => e.kind === "track").map((e) => e.name.value ?? ""));
   let items = set.items.filter((it) => it.won.some((w) => cards.some((c) => c.name === w)));
