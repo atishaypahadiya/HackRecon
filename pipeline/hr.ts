@@ -125,7 +125,8 @@ import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SC
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, repoFacts } from "./repo.ts";
-import { boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
+import { cliWidth, wrapText } from "./wrap.ts";
+import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -688,7 +689,7 @@ async function board(args: string[]): Promise<number> {
         }
         if (r.from === "model") writeJsonFile(FIT_CACHE_PATH, cache);
         console.log(`plan: tracks in ${r.ms} ms (${r.from})`);
-        return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothQuestions(r.items, input), from: r.from, ms: r.ms });
+        return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothBlocks(boothQuestions(r.items, input)), from: r.from, ms: r.ms });
       }
       if (req.method === "POST" && path === "/plan/gaps") {
         if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
@@ -720,7 +721,7 @@ async function board(args: string[]): Promise<number> {
         }
         if (g.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
         console.log(`plan: gaps in ${g.ms} ms (${g.from})`);
-        return json({ gaps: g.gaps, checked: g.checked, repo_lines: g.facts.repo });
+        return json({ gaps: g.gaps, checked: g.checked, repo_lines: g.facts.repo, booths: boothBlocks(boothQuestions(r.items, input, g.gaps)) });
       }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
       if (path === "/plan/meta") {
@@ -1191,31 +1192,20 @@ async function planCli(args: string[]): Promise<number> {
     return 1;
   }
   writeJsonFile(FIT_CACHE_PATH, cache);
-  console.log(`Tracks to target (${r.from}, ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
-  let shown = "";
-  for (const t of r.items) {
-    if (t.fit === "possible" && shown !== "possible") console.log("  Also possible");
-    shown = t.fit;
-    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.capped ? " (ranked likely; the title's product isn't in your description or stack)" : ""}${t.label ? `   (${t.label})` : ""}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
-    for (const s of t.steps) console.log(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
-  }
-  const booths = boothQuestions(r.items, input);
-  if (booths.length) console.log("\nBooths: questions for reps");
-  for (const b of booths) console.log(`  ${b.sponsor}: ${b.question}\n    ${b.grounds}  ${b.source_url}`);
-  if (dog?.targeted?.length) {
-    const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
-    console.log(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
-  }
 
-  // Gaps: likely tracks' stated requirements and entry steps against the project, and the repo when linked.
+  // Gaps first, so each prints under its track as on the board: likely tracks' stated requirements and entry steps
+  // against the project, and the repo when linked.
   const repoUrl = values.repo ?? dog?.repo;
   if (repoUrl) input.repo = repoUrl;
   let repoLines: ProjectFact[] = [];
+  let repoNote = "";
   if (repoUrl) {
     const repo = checkoutRepo(repoUrl);
     if ("error" in repo) console.error(`repo: ${repo.error}; checking against the description and stack only`);
-    else repoLines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
-    if (!("error" in repo)) console.log(`\nrepo ${repo.url} @ ${repo.sha.slice(0, 7)}: ${repoLines.length} lines naming the likely tracks' products`);
+    else {
+      repoLines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
+      repoNote = `repo ${repo.url} @ ${repo.sha.slice(0, 7)}: ${repoLines.length} lines naming the likely tracks' products`;
+    }
   }
   const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const g = await planGaps(anthropicClient(), r.items, entities, input, repoLines, gcache);
@@ -1224,11 +1214,36 @@ async function planCli(args: string[]): Promise<number> {
     return 1;
   }
   writeJsonFile(GAPS_CACHE_PATH, gcache);
-  console.log(`\nGaps (${g.from}, ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines`);
-  if (!g.gaps.length) console.log("  none found: no project fact given differs from a stated requirement. That says nothing about whether the requirements are met.");
-  for (const x of g.gaps) {
-    console.log(`  ${x.track}\n    ${x.gap}\n    page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
-    for (const p of x.project) console.log(`    ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+
+  // Every line is wrapped at spaces here, so the terminal never soft-wraps one (a soft wrap can lose the space).
+  const width = cliWidth();
+  const out = (line: string) => console.log(wrapText(line, width));
+  out(`Tracks to target (${r.from}, ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
+  out(`Gaps (${g.from}, ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
+  let shown = "";
+  for (const t of r.items) {
+    if (t.fit === "possible" && shown !== "possible") out("\n  Also possible");
+    shown = t.fit;
+    out(`\n  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.capped ? " (ranked likely; the title's product isn't in your description or stack)" : ""}${t.label ? `   (${t.label})` : ""}`);
+    out(`    ${t.reason}`);
+    out(`    "${t.quote}"  ${t.source_url}`);
+    for (const s of t.steps) out(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
+    for (const x of g.gaps.filter((x) => x.track_id === t.track_id)) {
+      out(`    Gap: ${x.gap}`);
+      out(`      page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
+      for (const p of x.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+    }
+    if (t.fit === "likely" && t.evidence === "stated" && !g.gaps.some((x) => x.track_id === t.track_id)) out(`    Gaps: none found. That says nothing about whether the requirements are met.`);
+  }
+  const blocks = boothBlocks(boothQuestions(r.items, input, g.gaps));
+  if (blocks.length) out("\nBooths: questions for reps, one block per sponsor");
+  for (const b of blocks) {
+    out(`  ${b.sponsor}: ${b.text}`);
+    for (const q of b.questions) out(`    ${q.grounds}  ${q.source_url}`);
+  }
+  if (dog?.targeted?.length) {
+    const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
+    out(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
   }
   return 0;
 }

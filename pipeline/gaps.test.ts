@@ -27,6 +27,9 @@ const input = { idea: "Hindsight: a transfer planner. It has an Ask assistant.",
 const repoLine = { id: "", kind: "repo" as const, source: "api/scan.py:3", url: "https://github.com/o/r/blob/abc/api/scan.py#L3", text: 'ACTOR = "apify/cheerio-scraper"' };
 
 describe("Plan gaps", () => {
+  test("Ship's scope checks every entered track, possible ones too", () => {
+    expect(gapRequirements(tracks, [actor, { ...actor, id: "other" }], "all").map((r) => r.track_id)).toEqual(["actor", "actor", "other", "other"]);
+  });
   test("requirements: likely tracks only, each sentence once (an entry step repeating a requirement isn't asked twice)", () => {
     expect(gapRequirements(tracks, [actor]).map((r) => [r.id, r.kind, r.text])).toEqual([
       ["R1", "requirement", "We have a Best Actor award for building an actor for this event."],
@@ -42,10 +45,10 @@ describe("Plan gaps", () => {
   });
   const reqs = gapRequirements(tracks, [actor]);
   const facts = [...inputFacts(input), { ...repoLine, id: "F4" }];
-  const ok = { requirement_id: "R1", facts: [{ fact_id: "F4", quote: "apify/cheerio-scraper" }], gap: "Best Actor asks for building an actor; the repository runs Apify's prebuilt Cheerio Scraper." };
+  const ok = { requirement_id: "R1", facts: [{ fact_id: "F4", quote: "apify/cheerio-scraper" }], gap: "Best Actor asks for building an actor; the repository runs Apify's prebuilt Cheerio Scraper.", instead: "run Apify's prebuilt Cheerio Scraper." };
   test("a gap keeps the page's quote from canon and the project's quote with its source and link", () => {
     expect(checkGaps({ gaps: [ok] }, reqs, facts)).toEqual([
-      { track_id: "actor", track: "[Apify] Best Actor", gap: ok.gap, requirement: { kind: "requirement", quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "apify/cheerio-scraper", source: "api/scan.py:3", url: repoLine.url }] },
+      { track_id: "actor", track: "[Apify] Best Actor", gap: ok.gap, instead: "run Apify's prebuilt Cheerio Scraper", requirement: { kind: "requirement", quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "apify/cheerio-scraper", source: "api/scan.py:3", url: repoLine.url }] },
     ]);
   });
   test("rejected: a quote not in its fact, an unknown id, no project fact, a verdict or advice", () => {
@@ -55,6 +58,9 @@ describe("Plan gaps", () => {
     expect(err({ facts: [{ fact_id: "F9", quote: "x" }] })).toContain("not a project fact id");
     expect(err({ facts: [] })).toContain("cite 1 to 3");
     for (const gap of ["So it doesn't qualify for Best Actor.", "This won't count as an Actor.", "The project fails the requirement.", "You should build an Actor.", "It isn't eligible."]) expect(err({ gap })).toContain("judges eligibility");
+    expect(err({ instead: "We run a scraper" })).toContain("without the");
+    expect(err({ instead: "" })).toContain("verb phrase");
+    expect(err({ instead: "run a scraper, which doesn't qualify" })).toContain("judges eligibility");
   });
   test("nothing to check (no likely track states a requirement): no model call", async () => {
     const r = await planGaps(null, [pt("t", "[X] Best Use of X", "likely", "title")], [actor], input, [], {});

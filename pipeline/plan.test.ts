@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fitHash, fitRequest, fitSystemPrompt, trackCards } from "./fit.ts";
-import { boothQuestions, capLikely, entryUse, NOT_STATED, PLAN_LIMITS, parsePlanBody, planMeta, trackDetail, projectLead, stackForRanker, stackProduct, statedUse, useClause, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
+import { boothBlocks, boothQuestions, capLikely, entryUse, NOT_STATED, PLAN_LIMITS, parsePlanBody, planMeta, trackDetail, projectLead, stackForRanker, stackProduct, statedUse, useClause, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
 import type { TrackCard } from "./fit.ts";
 import type { Entity } from "./schema.ts";
 
@@ -126,5 +126,22 @@ describe("Plan tracks", () => {
     const crit = { id: "c1", kind: "criterion", sponsor: "Acme", name: { value: "Depth", source: src }, fields: { track_id: { value: "t1", source: src }, description: { value: "How deep", source: src } }, history: [], origin: "page" } as Entity;
     const prize = { id: "p1", kind: "prize", sponsor: "Acme", name: { value: "1st", source: src }, fields: { track_id: { value: "t1", source: src }, place: { value: "1st place", source: src }, award_text: { value: "$500", source: src } }, history: [], origin: "page" } as Entity;
     expect(trackDetail([...ents, crit, prize], "t1")).toEqual({ requirements: ["must use Acme"], criteria: [{ name: "Depth", description: "How deep" }], descriptions: [], prizes: [{ place: "1st place", award: "$500" }] });
+  });
+  test("Booths: a track with a gap asks from the gap; a sponsor's questions merge into one block, a shared opening said once", () => {
+    const input = { idea: "Hindsight: a transfer planner.", stack: [{ name: "Apify", used_for: "scrape campus calendars" }] };
+    const tr = (track_id: string, name: string, evidence: PlanTrack["evidence"], quote: string): PlanTrack => ({ track_id, name, sponsor: "Apify", evidence, label: evidence === "stated" ? null : NOT_STATED, fit: "likely", capped: false, product_names: ["Apify"], reason: "", quote, source_url: "https://e.devpost.com/", steps: [] });
+    const actor = tr("actor", "[Apify] Best Actor", "stated", "Project must be using Apify in a meaningful way.");
+    const use = tr("use", "[Apify] Best Use of Apify", "title", "[Apify] Best Use of Apify");
+    const gap = { track_id: "actor", track: "[Apify] Best Actor", gap: "g", instead: "run Apify's prebuilt Cheerio Scraper", requirement: { kind: "requirement" as const, quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "Not used: Radar runs Apify's Cheerio Scraper", source: "apps/actor/README.md:7", url: "u" }] };
+    const withGap = boothQuestions([actor, use], input, [gap]);
+    expect(withGap.map((x) => x.question)).toEqual([
+      "We run Apify's prebuilt Cheerio Scraper; what does ‘We have a Best Actor award for building an actor for this event’ need from us?",
+      "We use Apify to scrape campus calendars; what does ‘Best Use of Apify’ reward beyond that?",
+    ]);
+    expect(withGap[0]!.grounds).toBe("the gap check: apps/actor/README.md:7 “Not used: Radar runs Apify's Cheerio Scraper”; the page's requirement “We have a Best Actor award for building an actor for this event”");
+    expect(boothBlocks(withGap).map((b) => [b.sponsor, b.text])).toEqual([["Apify", `${withGap[0]!.question} ${withGap[1]!.question}`]]);
+    expect(boothBlocks(boothQuestions([actor, use], input)).map((b) => b.text)).toEqual(["We use Apify to scrape campus calendars; does that count as ‘Project must be using Apify in a meaningful way’, and what does ‘Best Use of Apify’ reward beyond that?"]);
+    const noProduct = { ...input, stack: null, idea: "a planner" };
+    expect(boothBlocks(boothQuestions([{ ...use, product_names: ["Zed"] }, { ...use, track_id: "u2", name: "[Apify] Best Design", product_names: ["Zed"] }], noProduct)).map((b) => b.text)).toEqual(["What does ‘Best Use of Apify’ reward, and what does ‘Best Design’ reward?"]);
   });
 });
