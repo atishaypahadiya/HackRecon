@@ -224,7 +224,6 @@
   .trio .th { margin-bottom: 4px; }
   .trio > :only-child { grid-column: 1 / -1; }
   .bq p { max-width: 75ch; }
-  .bq .pmeta + p { margin-top: 14px; }
   .pf { display: grid; gap: 16px; }
   .pf .l { display: block; font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 0 6px; }
   .pf textarea, .pf input { width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: #fff; border: 1px solid var(--dim); border-radius: var(--r-chip); }
@@ -985,7 +984,7 @@ async function runPlan() {
   P.busy = false;
   P.gaps = null;
   paintResults();
-  if (P.res) $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, ${plural(P.res.booths.length, "booth question")}.`;
+  if (P.res) $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, questions for ${plural(P.res.booths.length, "sponsor")}.`;
   if (!P.res) return;
   // Gaps come second: the tracks show first, then each likely track's stated requirements are checked against
   // what the user gave (description, stack). The answer cites both sides; it never says whether a track is open to them.
@@ -1022,11 +1021,11 @@ function paintResults() {
   $("pt-body").innerHTML = !ts.length
     ? state("No track's stated requirements match this description")
     : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
-  const bs = P.res.booths, sponsors = [...new Set(bs.map((b) => b.sponsor))];
-  const q = (b) => `<p>${esc(b.question)}</p><div class="pmeta m"><button type="button" class="how" data-bq="${bs.indexOf(b)}">Copy</button>${srcLink(b.source_url)}</div>`;
+  // One block per sponsor; once gaps are checked, a track with a gap asks from it (the server rebuilds the blocks).
+  const bs = P.gaps?.booths || P.res.booths;
   $("pb-body").innerHTML = !bs.length
     ? state("No questions yet for the tracks in your plan")
-    : `<ul class="bqs">${sponsors.map((sp) => `<li class="bq"><b>${esc(sp)}</b>${bs.filter((b) => b.sponsor === sp).map(q).join("")}</li>`).join("")}</ul>`;
+    : `<ul class="bqs">${bs.map((b, k) => `<li class="bq"><b>${esc(b.sponsor)}</b><p>${esc(b.text)}</p><div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div></li>`).join("")}</ul>`;
 }
 
 function openTrack(id, from) {
@@ -1066,8 +1065,8 @@ $("p-plan").addEventListener("click", async (e) => {
   const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]");
   if (row) { openTrack(row.dataset.track, row); return; }
   if (cp) {
-    const b = P.res.booths[Number(cp.dataset.bq)];
-    const ok = await copyText(b.question);
+    const b = (P.gaps?.booths || P.res.booths)[Number(cp.dataset.bq)];
+    const ok = await copyText(b.text);
     $("say").textContent = ok ? "Copied the question." : "Couldn't copy. Select the question's text.";
     if (ok) { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1400); }
   }

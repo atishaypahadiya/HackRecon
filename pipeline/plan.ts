@@ -8,6 +8,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { EventConfig } from "./classify.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, productMentioned, trackCards, type Evidence, type Ranked, type SponsorAliases, type TrackCard } from "./fit.ts";
 import { callChecked } from "./model.ts";
+import type { Gap } from "./gaps.ts";
 import type { Entity } from "./schema.ts";
 import type { Usage } from "./usage.ts";
 
@@ -56,7 +57,10 @@ export interface PlanTrack {
 export interface BoothQuestion {
   track_id: string;
   sponsor: string;
+  /** opening + "; " + ask. A sponsor's block says a shared opening once (boothBlocks). */
   question: string;
+  opening: string;
+  ask: string;
   /** Why it's asked, in what the page does or doesn't say. */
   grounds: string;
   source_url: string;
@@ -134,18 +138,27 @@ export function statedUse(names: string[], idea: string): string | null {
  * products the user doesn't name gets the plain "What does '<track>' reward?"; a stated track without one gets no
  * question (its requirement is already on the page). cash_only tracks get none.
  */
-export function boothQuestions(tracks: PlanTrack[], input: PlanInput): BoothQuestion[] {
+export function boothQuestions(tracks: PlanTrack[], input: PlanInput, gaps: Gap[] = []): BoothQuestion[] {
   const lead = projectLead(input.idea);
   const out: BoothQuestion[] = [];
+  const q = (base: Pick<BoothQuestion, "track_id" | "sponsor" | "source_url">, opening: string, ask: string, grounds: string): BoothQuestion => ({ ...base, opening, ask, question: `${opening}; ${ask}`, grounds });
   for (const t of tracks) {
     if (t.evidence === "cash_only") continue;
+    // A gap (user 2026-11-06): the question names what the project does instead, from the checked gap, and asks
+    // what the requirement needs. Both sides are already verified quotes; this only words them.
+    const gap = gaps.find((g) => g.track_id === t.track_id);
+    if (gap) {
+      const from = gap.project.map((p) => `${p.source} “${unstop(p.quote)}”`).join("; ");
+      out.push(q({ track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url }, `We ${gap.instead}`, `what does ‘${unstop(gap.requirement.quote)}’ need from us?`, `the gap check: ${from}; the page's ${gap.requirement.kind === "entry_step" ? "entry step" : "requirement"} “${unstop(gap.requirement.quote)}”`));
+      continue;
+    }
     const sp = stackProduct(t.product_names, input.stack);
     const named = sp ? null : t.product_names.find((n) => productMentioned(n, input.idea));
     const product = sp?.phrase ?? named;
     const base = { track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url };
     const page = t.evidence === "stated" ? `the page's requirement “${unstop(t.quote)}”` : `Devpost states no requirements or judging criteria for ${t.name}`;
     if (!product) {
-      if (t.evidence === "title") out.push({ ...base, question: `What does ‘${bare(t.name)}’ reward?`, grounds: page });
+      if (t.evidence === "title") out.push({ ...base, opening: "", ask: `What does ‘${bare(t.name)}’ reward?`, question: `What does ‘${bare(t.name)}’ reward?`, grounds: page });
       continue;
     }
     const ask = t.evidence === "stated" ? `does that count as ‘${unstop(t.quote)}’?` : `what does ‘${bare(t.name)}’ reward beyond that?`;
@@ -159,9 +172,32 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput): BoothQues
         : inEntry
           ? [inEntry, said]
           : [`We use ${product} for ${lead}`, `${said}; your description: “${lead}”`];
-    out.push({ ...base, question: `${opening}; ${ask}`, grounds: `${why}; ${page}` });
+    out.push(q(base, opening, ask, `${why}; ${page}`));
   }
   return out;
+}
+
+/** One block per sponsor (user 2026-11-06), in first-appearance order. Questions with the same opening share it:
+ *  "We use Apify to …; does that count as ‘…’, and what does ‘Best Use of Apify’ reward beyond that?". The text is
+ *  what Copy copies. */
+export interface BoothBlock {
+  sponsor: string;
+  text: string;
+  questions: BoothQuestion[];
+}
+
+export function boothBlocks(questions: BoothQuestion[]): BoothBlock[] {
+  const sponsors = [...new Set(questions.map((x) => x.sponsor))];
+  return sponsors.map((sponsor) => {
+    const qs = questions.filter((x) => x.sponsor === sponsor);
+    const openings = [...new Set(qs.map((x) => x.opening))];
+    const sentences = openings.map((o) => {
+      const asks = qs.filter((x) => x.opening === o).map((x) => x.ask);
+      const joined = asks.map((a, k) => (k ? a.replace(/^What /, "what ") : a)).map((a, k) => (k < asks.length - 1 ? a.replace(/\?$/, "") : a)).join(", and ");
+      return o ? `${o}; ${joined}` : joined;
+    });
+    return { sponsor, text: sentences.join(" "), questions: qs };
+  });
 }
 
 export interface PlanSection<T> {

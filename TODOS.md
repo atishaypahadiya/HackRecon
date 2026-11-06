@@ -92,6 +92,23 @@ Folded into `hr sync` (D11 reversed by the user, 2026-11-06): public pages are f
 **Priority:** P2
 **Depends on:** P1 (the Plan input, built)
 
+### Gap check: find counter-evidence for requirements that name no product
+
+**What:** Pick repo lines for the gap check by what each requirement asks, not only by the track's product names. Today `repoFacts` (pipeline/repo.ts) keeps only lines naming a likely track's product (Apify, Claude, Factory …), so a requirement that names none, such as voice, deployment or open source, gets no repo lines and can't find counter-evidence.
+
+**Why:** A gap needs a project fact that differs from the requirement. With no relevant repo lines in front of the model, the check reports "none found" for those requirements even when the code clearly does something else (no audio code for a voice track, no deploy config for "deployed", no license file for "open source").
+
+**Context:** Found on Hindsight (2026-11-06): the one gap it found was on a requirement naming Apify, and 115 repo lines were all about the likely tracks' products. Directions to weigh:
+- Code-level signals per requirement kind: a LICENSE file, deploy config (Dockerfile, render.yaml, vercel.json), audio/speech dependencies in package.json or pyproject.
+- Requirement keywords as extra search terms.
+- A bounded repo summary (file tree plus dependency lists) as facts.
+
+Each fact still needs its path:line, and "the repo has no LICENSE file" is a fact about absence, so it needs its own wording rule before it can back a gap.
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** Plan gaps (built)
+
 ## Product
 
 ### Rerun /office-hours in startup mode after the MLH reply
