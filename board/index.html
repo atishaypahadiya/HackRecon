@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="hr-token" content="">
 <title>HackRecon</title>
 <style>
   /* Tokens and rules: DESIGN.md ("Daylight glass"). */
@@ -206,7 +207,69 @@
   /* Phone dock: the replay stays reachable while reading offers. */
   .dock { display: none; }
 
+  /* Tabs (DESIGN.md v2): text, ink underline on the active one, nothing else. */
+  [hidden] { display: none !important; }
+  .tabs { flex-basis: 100%; display: flex; gap: 4px; margin: 4px 0 -8px -10px; }
+  .tabs [role="tab"] { min-height: 44px; padding: 0 10px; font-size: 15px; font-weight: 600; color: var(--muted); box-shadow: inset 0 -2px 0 transparent; }
+  .tabs [role="tab"][aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
+  .on-plan .names, .on-plan .basis { display: none; }
+
+  /* Plan (v2 D2, D3, D7, D8, D12). Tracks is a tile that holds rows; the input and the band are one plain
+     surface (90% white, no border); the field never carries text. */
+  .plan { align-items: start; }
+  .band { grid-column: 1 / -1; background: var(--surface); border-radius: var(--r-tile); padding: var(--pad); min-width: 0; }
+  .plan .tracks { grid-column: 1 / -1; }
+  .plan .tracks:has(~ .credits) { grid-column: 1 / span 8; } /* the spec's 8 | 4 once Credits is built */
+  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+  .trio .th { margin-bottom: 4px; }
+  .trio > :only-child { grid-column: 1 / -1; }
+  .bq p { max-width: 75ch; }
+  .bq .pmeta + p { margin-top: 14px; }
+  .pf { display: grid; gap: 16px; }
+  .pf .l { display: block; font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 0 6px; }
+  .pf textarea, .pf input { width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: #fff; border: 1px solid var(--dim); border-radius: var(--r-chip); }
+  .pf textarea { min-height: 72px; resize: vertical; field-sizing: content; }
+  .pf textarea:hover, .pf input:hover { border-color: rgba(21,23,28,.24); }
+  .pf ::placeholder { color: var(--muted); opacity: 1; }
+  .si { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 44px; gap: 8px; margin-top: 8px; }
+  .si:first-child { margin-top: 0; }
+  .rm { width: 44px; height: 44px; border-radius: var(--r-chip); font-size: 22px; line-height: 1; color: var(--muted); }
+  .rm:hover, .add:hover, .edit:hover { color: var(--text); }
+  .add, .edit { min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted); }
+  .pf .go-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .sum { display: flex; align-items: center; gap: 16px; }
+  .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sum .stk { color: var(--muted); }
+  #next { grid-column: 1 / -1; margin: 0; padding: 0 4px; font-size: 15px; font-weight: 650; }
+  .prows, .bqs { list-style: none; margin: 0; padding: 0; }
+  .prow { border-top: 1px solid var(--line); padding-bottom: 10px; }
+  .prow:first-child { border-top: 0; }
+  .pmain { display: block; width: 100%; min-height: 44px; padding: 12px 0 2px; text-align: left; }
+  .pmain:hover .pn { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .pn { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
+  .pr { display: block; margin-top: 4px; max-width: 75ch; }
+  .also { margin: 6px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+  .also + .prows .prow:first-child { border-top: 0; }
+  .pmeta a, .bq .pmeta a { color: var(--text); text-underline-offset: 3px; position: relative; }
+  .pmeta a::before { content: ""; position: absolute; inset: -14px -4px; }
+  .pmeta { margin-top: 4px; }
+  /* Checkbox (DESIGN.md v2): a styled native input; the label row is the 44px hit area. */
+  .ck { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; cursor: pointer; }
+  .ck input { appearance: none; flex: none; display: grid; place-content: center; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--muted); border-radius: 4px; background: #fff; cursor: pointer; }
+  .ck input:checked { background: var(--text); border-color: var(--text); }
+  .ck input:checked::after { content: ""; width: 9px; height: 5px; border: solid #fff; border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+  .ck input:checked + span { opacity: .42; transition: opacity 200ms var(--ease); }
+  .bq { padding: 10px 0 6px; }
+  .bq b { display: block; font-size: 15px; font-weight: 650; }
+  .bq p { margin: 2px 0 6px; }
+  .bq .how { min-width: 0; height: 32px; margin-right: 12px; font: 650 13px/1 Manrope, sans-serif; }
+  .item ul.dl { display: block; margin: 0; padding: 0; font: 500 14px/1.5 Manrope, sans-serif; color: var(--text); }
+  .item ul.dl li + li { margin-top: 6px; }
+  .item .ck + q { margin: 0 0 8px 28px; }
+  .pstate { margin: 4px 0; color: var(--muted); }
+
   @media (max-width: 1099px) {
+    .trio { grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .hero { grid-column: 1 / -1; grid-row: 1; }
     .value { grid-column: 1 / span 6; grid-row: 2; }
     .closes { grid-column: 7 / span 6; grid-row: 2; }
@@ -221,6 +284,13 @@
     .basis { width: 100%; margin: 0; }
     main { grid-template-columns: minmax(0, 1fr); padding-bottom: calc(136px + env(safe-area-inset-bottom)); }
     .hero, .value, .closes, .act, .stream, .reps { grid-column: 1; }
+    .plan { padding-bottom: 48px; }
+    .plan .tracks:has(~ .credits) { grid-column: 1; }
+    .si { grid-template-columns: minmax(0, 1fr) 44px; }
+    .si .uf { grid-column: 1; grid-row: 2; }
+    .si { row-gap: 6px; }
+    .si + .si { margin-top: 18px; }
+    .on-plan .dock { display: none; }
     .hero { grid-row: 1; } .stream { grid-row: 2; } .closes { grid-row: 3; } .value { grid-row: 4; } .reps { grid-row: 5; } .act { grid-row: 6; }
     .lead { font-size: 18px; margin-bottom: 16px; }
     .act .controls { display: none; }
@@ -237,16 +307,38 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 </style>
 </head>
-<body>
+<body class="on-plan">
 <div class="field" aria-hidden="true"></div>
 <header>
   <h1 class="brand">HackRecon</h1>
   <span class="ev" id="ev"></span>
   <span class="names">Names hidden</span>
   <span class="basis" id="basis"></span>
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="t-plan" aria-controls="p-plan" aria-selected="true" tabindex="0">Plan</button>
+    <button role="tab" id="t-claim" aria-controls="p-claim" aria-selected="false" tabindex="-1">Claim</button>
+  </nav>
 </header>
 
-<main>
+<main class="plan" id="p-plan" role="tabpanel" aria-labelledby="t-plan">
+  <section class="band" id="pi" aria-labelledby="h-pi">
+    <h2 class="sr" id="h-pi">Your project</h2>
+    <div id="pi-body"></div>
+  </section>
+  <p id="next" hidden></p>
+  <section class="tile tracks" id="pt" aria-labelledby="h-pt" hidden>
+    <div class="th"><h2 id="h-pt">Tracks to target</h2><span class="ctx m" id="pt-ctx"></span></div>
+    <div id="pt-body"></div>
+  </section>
+  <div class="band trio" id="pband" hidden>
+    <section aria-labelledby="h-pb" id="pb">
+      <div class="th"><h2 id="h-pb">Booths and reps</h2></div>
+      <div id="pb-body"></div>
+    </section>
+  </div>
+</main>
+
+<main id="p-claim" role="tabpanel" aria-labelledby="t-claim" hidden>
   <section class="tile hero" data-drawer="offers" aria-labelledby="h-hero">
     <div class="th"><h2><button id="h-hero" data-drawer="offers">Offers found</button></h2><span class="ctx" id="hero-ctx"></span></div>
     <div class="big" id="hero-n"></div>
@@ -331,6 +423,7 @@ let D, F, i = 0, timer = null, drawer = null, showMissed = false, DONE_KEY = "";
 let done = new Set();
 const days = [], dayOf = new Map(), offerByTs = new Map(), postIndex = new Map();
 let cols = 0;
+let tab = "plan";
 
 const fmt = (t, o) => new Date(t * 1000).toLocaleString("en-US", { timeZone: D.timezone, ...o });
 const dayTime = (t) => fmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -597,14 +690,17 @@ function paintDrawer(now, prev) {
   $("dr-title").innerHTML = `${esc(t)}<span class="cap">${esc(cap)}</span>`;
   $("dr-body").innerHTML = body;
 }
-function openDrawer(kind) {
+function openDrawer(kind, from) {
+  if (!$("drawer").open) drawerFrom = from || document.activeElement;
   drawer = kind;
   setPlaying(false);
   paintDrawer(F[i], i ? F[i - 1] : -Infinity);
   if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
   $("dr-body").scrollTop = 0;
 }
-$("drawer").addEventListener("close", () => { drawer = null; });
+// Focus goes back to whatever opened the drawer; Safari doesn't focus a clicked button, so callers pass it.
+let drawerFrom = null;
+$("drawer").addEventListener("close", () => { drawer = null; if (drawerFrom?.isConnected) drawerFrom.focus(); drawerFrom = null; });
 $("dr-x").onclick = () => $("drawer").close();
 $("drawer").addEventListener("click", (e) => { if (e.target === $("drawer")) $("drawer").close(); });
 
@@ -670,14 +766,14 @@ document.addEventListener("click", async (e) => {
   }
   if (claim) { const id = claim.dataset.claim; if (!done.has(id)) setTimeout(() => setDone(id, true), 0); return; }
   if (dn) { setDone(dn.dataset.done, !done.has(dn.dataset.done)); return; }
-  if (op) { openDrawer("o:" + op.dataset.open); return; }
+  if (op) { openDrawer("o:" + op.dataset.open, op); return; }
   if (jump) { setPlaying(false); render(Number(jump.dataset.jump)); return; }
   if (t.id === "missed-t") { showMissed = !showMissed; render(i); return; }
-  if (dr) { openDrawer(dr.dataset.drawer); return; }
+  if (dr) { openDrawer(dr.dataset.drawer, dr); return; }
   const lit = dotAt(t);
   if (lit) { openDrawer("o:" + lit.id); return; }
   const tile = t.closest(".tile[data-drawer]");
-  if (tile && !t.closest("button, a, input")) openDrawer(tile.dataset.drawer);
+  if (tile && !t.closest("button, a, input")) openDrawer(tile.dataset.drawer, tile.querySelector("[data-drawer]") || tile);
 });
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {}
@@ -747,7 +843,7 @@ for (const [p, a, b] of [["play", "prev", "next"], ["play2", "prev2", "next2"]])
   $(b).onclick = () => { setPlaying(false); render(i + 1); };
 }
 document.addEventListener("keydown", (e) => {
-  if ($("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
+  if (tab !== "claim" || $("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
   if (e.key === "ArrowLeft") { setPlaying(false); render(i - 1); e.preventDefault(); }
   else if (e.key === "ArrowRight") { setPlaying(false); render(i + 1); e.preventDefault(); }
   else if (e.key === " " && !e.target.matches("button, a")) { setPlaying(!timer); e.preventDefault(); }
@@ -755,6 +851,214 @@ document.addEventListener("keydown", (e) => {
 addEventListener("scroll", () => { if ($("tip").classList.contains("on")) { $("tip").classList.remove("on"); clearHot(); } }, { passive: true });
 let rz;
 addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { buildMatrix(); render(i); }, 120); });
+
+/* ---------- Plan (v2): the default tab ---------- */
+// Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
+const TOKEN = document.querySelector('meta[name="hr-token"]').content;
+const P = { meta: null, input: null, res: null, busy: false, failed: false, seq: 0, steps: new Set() };
+const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
+const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
+// ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
+const nowMs = () => { const q = new URLSearchParams(location.search).get("now"); const t = q ? Date.parse(q) : NaN; return Number.isNaN(t) ? Date.now() : t; };
+const pfmt = (iso, o) => new Date(iso).toLocaleString("en-US", { timeZone: P.meta.timezone, ...o });
+const firstSentence = (s) => s.split(/(?<=[.!?])\s+|\n+/)[0] || s;
+
+function setTab(name, focus) {
+  tab = name;
+  for (const t of document.querySelectorAll('[role="tab"]')) {
+    const on = t.id === `t-${name}`;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    if (on && focus) t.focus();
+  }
+  $("p-plan").hidden = name !== "plan";
+  $("p-claim").hidden = name !== "claim";
+  document.body.classList.toggle("on-plan", name === "plan");
+  // The dot matrix measures itself, so it's built once Claim is visible.
+  if (name === "claim" && D) { cols = 0; buildMatrix(); render(i); }
+}
+for (const t of document.querySelectorAll('[role="tab"]')) {
+  t.addEventListener("click", () => setTab(t.id.slice(2)));
+  t.addEventListener("keydown", (e) => {
+    const tabs = [...document.querySelectorAll('[role="tab"]')], k = tabs.indexOf(t);
+    const to = { ArrowRight: k + 1, ArrowLeft: k - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    tabs[(to + tabs.length) % tabs.length].focus();
+  });
+}
+
+/* the input: one description, then one row per stack item with an optional "used for" */
+function stackRow(it = { name: "", used_for: "" }) {
+  return `<div class="si"><input class="nm" value="${esc(it.name)}" placeholder="a tool, API or service" aria-label="Stack item" autocomplete="off" maxlength="80"><input class="uf" value="${esc(it.used_for || "")}" placeholder="what it does in your project" aria-label="What it does in your project (optional)" autocomplete="off" maxlength="160"><button type="button" class="rm" aria-label="Remove this item">×</button></div>`;
+}
+function paintInput(editing) {
+  const box = $("pi-body");
+  if (!editing && P.input) {
+    const names = (P.input.stack || []).map((x) => x.name).join(", ");
+    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>`;
+    $("pi-edit").onclick = () => { paintInput(true); $("pi-idea").focus(); };
+    return;
+  }
+  const stack = P.input?.stack?.length ? P.input.stack : [{ name: "", used_for: "" }];
+  box.innerHTML = `<form class="pf" id="pf" novalidate>
+    <div><label class="l" for="pi-idea">Your project</label><textarea id="pi-idea" maxlength="2000" placeholder="What are you building, and for whom?">${esc(P.input?.idea || "")}</textarea></div>
+    <div><span class="l" id="pi-sl">Stack</span><div id="pi-stack" role="group" aria-labelledby="pi-sl">${stack.map(stackRow).join("")}</div><button type="button" class="add" id="pi-add">Add to stack</button></div>
+    <div class="go-row"><button class="jump" type="submit">Make my plan</button><span class="cap" id="pi-cap">${esc(beforeLine())}</span></div>
+  </form>`;
+  $("pi-add").onclick = () => { $("pi-stack").insertAdjacentHTML("beforeend", stackRow()); $("pi-stack").lastElementChild.querySelector(".nm").focus(); };
+  $("pi-stack").addEventListener("click", (e) => {
+    const rm = e.target.closest(".rm");
+    if (!rm) return;
+    const rows = $("pi-stack").children;
+    if (rows.length === 1) { rm.parentElement.querySelectorAll("input").forEach((x) => (x.value = "")); return; }
+    const next = rm.parentElement.nextElementSibling || rm.parentElement.previousElementSibling;
+    rm.parentElement.remove();
+    next.querySelector(".nm").focus();
+  });
+  // Pasting "Apify: pull catalogs, Claude API" into a name splits it into rows, at the first ": " like the CLI.
+  $("pi-stack").addEventListener("paste", (e) => {
+    const nm = e.target.closest(".nm"), text = e.clipboardData?.getData("text") || "";
+    if (!nm || !text.includes(",")) return;
+    e.preventDefault();
+    const items = text.split(",").map((x) => x.trim()).filter(Boolean).map((x) => { const k = x.indexOf(": "); return k > 0 ? { name: x.slice(0, k), used_for: x.slice(k + 2) } : { name: x, used_for: "" }; });
+    const row = nm.parentElement;
+    row.insertAdjacentHTML("afterend", items.map(stackRow).join(""));
+    const last = [...$("pi-stack").children][[...$("pi-stack").children].indexOf(row) + items.length];
+    if (!row.querySelector(".nm").value && !row.querySelector(".uf").value) row.remove();
+    last?.querySelector(".nm").focus();
+  });
+  // Enter moves along the stack (name → its use → the next item) instead of submitting half a list.
+  $("pi-stack").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const row = e.target.parentElement;
+    if (e.target.classList.contains("nm")) row.querySelector(".uf").focus();
+    else if (row.nextElementSibling) row.nextElementSibling.querySelector(".nm").focus();
+    else $("pi-add").click();
+  });
+  $("pf").onsubmit = (e) => {
+    e.preventDefault();
+    const idea = $("pi-idea").value.trim();
+    if (!idea) { $("pi-cap").textContent = "Describe your project first."; $("pi-idea").focus(); return; }
+    const items = [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value.trim(), used_for: r.querySelector(".uf").value.trim() })).filter((x) => x.name);
+    P.input = { idea, stack: items.length ? items : null };
+    store.set(planKey(), JSON.stringify(P.input));
+    paintInput(false);
+    runPlan();
+  };
+}
+function beforeLine() {
+  return P.meta?.track_count ? `${plural(P.meta.track_count, "track")} on Devpost; your plan appears once you describe your project` : "";
+}
+
+/* Next for you (D2): the next time-bound item, hidden before the event starts and when nothing is upcoming. When
+   the start isn't known (Cal Hacks' config has none), an item shows only within 24 h of it. */
+function paintNext() {
+  const now = nowMs(), m = P.meta, el = $("next");
+  const started = m?.hacking_start ? now >= Date.parse(m.hacking_start) : null;
+  const d = m && started !== false ? m.deadlines.find((x) => Date.parse(x.at) > now && (started || Date.parse(x.at) - now <= 86400000)) : null;
+  el.hidden = !d;
+  if (!d) return;
+  const mins = Math.round((Date.parse(d.at) - now) / 60000);
+  const rel = mins < 60 ? plural(mins, "min") : mins < 48 * 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : plural(Math.round(mins / 1440), "day");
+  el.textContent = `${pfmt(d.at, { weekday: "short", hour: "numeric", minute: "2-digit" })} · ${d.name} · in ${rel}`;
+}
+
+async function runPlan() {
+  const seq = ++P.seq;
+  P.busy = true; P.failed = false;
+  paintResults();
+  try {
+    const r = await fetch("/plan", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input) });
+    const j = await r.json();
+    if (seq !== P.seq) return;
+    if (!r.ok || j.error) throw new Error(j.error);
+    P.res = j;
+  } catch { if (seq !== P.seq) return; P.failed = true; P.res = null; }
+  P.busy = false;
+  paintResults();
+  if (P.res) $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, ${plural(P.res.booths.length, "booth question")}.`;
+}
+
+const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
+const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : host(u))} ↗</a>` : "");
+function trackRow(t) {
+  const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
+  // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
+  const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
+  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span></button>${steps}<div class="pmeta m">${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
+}
+function paintResults() {
+  const show = !!P.input;
+  $("pt").hidden = $("pband").hidden = !show;
+  if (!show) return;
+  for (const id of ["pt", "pb"]) $(id).setAttribute("aria-busy", String(P.busy));
+  const state = (t) => `<p class="pstate">${esc(t)}</p>`;
+  if (P.busy) { $("pt-body").innerHTML = $("pb-body").innerHTML = state("Matching…"); $("pt-ctx").textContent = ""; return; }
+  if (P.failed) { $("pt-body").innerHTML = $("pb-body").innerHTML = state("Couldn't rank tracks just now; trying again on the next change"); return; }
+  const ts = P.res.tracks, likely = ts.filter((t) => t.fit === "likely"), possible = ts.filter((t) => t.fit !== "likely");
+  $("pt-ctx").textContent = ts.length ? `${likely.length} likely · ${possible.length} possible` : "";
+  $("pt-body").innerHTML = !ts.length
+    ? state("No track's stated requirements match this description")
+    : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
+  const bs = P.res.booths, sponsors = [...new Set(bs.map((b) => b.sponsor))];
+  const q = (b) => `<p>${esc(b.question)}</p><div class="pmeta m"><button type="button" class="how" data-bq="${bs.indexOf(b)}">Copy</button>${srcLink(b.source_url)}</div>`;
+  $("pb-body").innerHTML = !bs.length
+    ? state("No questions yet for the tracks in your plan")
+    : `<ul class="bqs">${sponsors.map((sp) => `<li class="bq"><b>${esc(sp)}</b>${bs.filter((b) => b.sponsor === sp).map(q).join("")}</li>`).join("")}</ul>`;
+}
+
+function openTrack(id, from) {
+  const t = P.res?.tracks.find((x) => x.track_id === id);
+  if (!t) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null; // the Claim drawer repaints from frames; this one is Plan's
+  const d = t.detail, list = (xs) => `<ul class="dl">${xs.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  const fit = t.fit === "likely" ? "likely fits" : t.capped ? "possible (ranked likely, but your project doesn't name the product in this track's title)" : "possible";
+  $("dr-title").innerHTML = `${esc(t.name)}<span class="cap">${esc([fit, t.label].filter(Boolean).join(" · "))}</span>`;
+  const parts = [
+    `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
+    t.steps.length ? `<h3>Entry steps</h3><div class="item">${t.steps.map((s) => `${stepBox(s)}<q>${esc(s.quote)}</q>`).join("")}</div>` : "",
+    d.requirements.length ? `<h3>Requirements</h3><div class="item">${list(d.requirements.map(esc))}</div>` : "",
+    d.criteria.length ? `<h3>Judging criteria</h3><div class="item">${list(d.criteria.map((c) => esc(c.description ? `${c.name}: ${c.description}` : c.name)))}</div>` : "",
+    d.descriptions.length ? `<h3>On the page</h3><div class="item">${list(d.descriptions.map(esc))}</div>` : "",
+    d.prizes.length ? `<h3>Prizes</h3><div class="item">${list(d.prizes.map((p) => esc(p.place ? `${p.place}: ${p.award}` : p.award)))}</div>` : "",
+    safeUrl(t.source_url) ? `<div class="item acts"><a href="${esc(t.source_url)}" target="_blank" rel="noopener">Open on Devpost ↗</a></div>` : "",
+  ];
+  $("dr-body").innerHTML = parts.join("");
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+  $("dr-body").scrollTop = 0;
+}
+
+// Plan's clicks: a row opens its drawer; a step box ticks the shared step (Ship reads the same ids); Copy copies.
+document.addEventListener("change", (e) => {
+  const box = e.target.closest("[data-step]");
+  if (!box) return;
+  if (box.checked) P.steps.add(box.dataset.step); else P.steps.delete(box.dataset.step);
+  store.set(stepKey(), JSON.stringify([...P.steps]));
+  for (const o of document.querySelectorAll(`[data-step="${CSS.escape(box.dataset.step)}"]`)) o.checked = box.checked;
+});
+$("p-plan").addEventListener("click", async (e) => {
+  const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]");
+  if (row) { openTrack(row.dataset.track, row); return; }
+  if (cp) {
+    const b = P.res.booths[Number(cp.dataset.bq)];
+    const ok = await copyText(b.question);
+    $("say").textContent = ok ? "Copied the question." : "Couldn't copy. Select the question's text.";
+    if (ok) { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1400); }
+  }
+});
+
+fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((m) => {
+  P.meta = m;
+  try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
+  try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
+  paintInput(!P.input);
+  paintNext();
+  setInterval(paintNext, 60000);
+  if (P.input) runPlan();
+}).catch(() => { $("pi-body").innerHTML = `<p class="pstate">Couldn't load this event's canon.</p>`; });
 
 /* ---------- load ---------- */
 fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
@@ -776,7 +1080,7 @@ fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) =>
   buildMatrix();
   setPlaying(false);
   render(F.length - 1);
-}).catch(() => { document.querySelector("main").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">Couldn't load the board data.</p><p class="cap">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></section>`; });
+}).catch(() => { $("p-claim").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">Couldn't load the board data.</p><p class="cap">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></section>`; });
 </script>
 </body>
 </html>

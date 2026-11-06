@@ -261,3 +261,84 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   items.sort((a, b) => (a.fit === b.fit ? 0 : a.fit === "likely" ? -1 : 1));
   return { items, from, ms: Math.round(now() - t0), usage };
 }
+
+// ---- the board's Plan tab (P1): request validation, the before-you-type summary, a track's drawer ----
+
+export const PLAN_LIMITS = { idea: 2000, items: 20, name: 80, used_for: 160 } as const;
+
+/** POST /plan's body → PlanInput, or why not. Lengths are capped so one request stays one ranking. */
+export function parsePlanBody(body: unknown): PlanInput | { error: string } {
+  const b = body as { idea?: unknown; stack?: unknown };
+  const idea = typeof b?.idea === "string" ? b.idea.trim() : "";
+  if (!idea) return { error: "describe your project first" };
+  if (idea.length > PLAN_LIMITS.idea) return { error: `the description is over ${PLAN_LIMITS.idea} characters` };
+  if (b.stack !== undefined && b.stack !== null && !Array.isArray(b.stack)) return { error: "stack must be a list" };
+  const raw = (b.stack ?? []) as unknown[];
+  if (raw.length > PLAN_LIMITS.items) return { error: `the stack has over ${PLAN_LIMITS.items} items` };
+  const stack: StackItem[] = [];
+  for (const x of raw) {
+    const it = x as { name?: unknown; used_for?: unknown };
+    const name = typeof it?.name === "string" ? it.name.trim() : "";
+    const used = typeof it?.used_for === "string" ? it.used_for.trim() : "";
+    if (!name) continue;
+    if (name.length > PLAN_LIMITS.name || used.length > PLAN_LIMITS.used_for) return { error: `a stack item is over ${PLAN_LIMITS.name} characters, or its use over ${PLAN_LIMITS.used_for}` };
+    stack.push({ name, used_for: used || null });
+  }
+  return { idea, stack: stack.length ? stack : null };
+}
+
+export interface PlanDeadline {
+  id: string;
+  name: string;
+  /** ISO 8601 with offset, as canon verified it against its quote. */
+  at: string;
+  quote: string;
+  url: string;
+}
+
+/** What Plan knows before the user types: the track count ("52 tracks on Devpost"), and the times the Next for you
+ *  line can show. Times are the event config's schedule items that nothing supersedes (Slack-sourced, so they carry
+ *  Cal Hacks' 9:30 extension); canon's deadlines only when there is no schedule. Merging the two with the D13 merge
+ *  line is Ship's (P6). */
+export interface PlanMeta {
+  event: string;
+  timezone: string;
+  track_count: number;
+  devpost_url: string | null;
+  as_of: string | null;
+  hacking_start: string | null;
+  deadlines: PlanDeadline[];
+}
+
+export function planMeta(entities: Entity[], e: EventConfig): PlanMeta {
+  const tracks = entities.filter((x) => x.kind === "track");
+  const captured = entities.map((x) => x.name.source.captured_at).filter(Boolean).sort();
+  const schedule = (e.schedule ?? []).filter((x) => !x.superseded_by && x.at).map((x, k) => ({ id: `schedule:${k}`, name: x.what, at: x.at, quote: x.what, url: x.source ?? "" }));
+  const canon = entities
+    .filter((x) => x.kind === "rule" && typeof x.fields.deadline?.value === "string")
+    .map((x) => ({ id: x.id, name: x.name.value ?? "", at: String(x.fields.deadline!.value), quote: x.fields.deadline!.source.quote, url: x.fields.deadline!.source.url }));
+  const deadlines = (schedule.length ? schedule : canon).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return { event: e.event, timezone: e.timezone, track_count: tracks.length, devpost_url: tracks[0]?.name.source.url ?? null, as_of: captured.at(-1) ?? null, hacking_start: e.hacking_start, deadlines };
+}
+
+/** Everything canon says about one track, for its drawer: requirements, judging criteria, the rest of the block's
+ *  text, and its prizes. Verbatim values; each list may be empty. */
+export interface TrackDetail {
+  requirements: string[];
+  criteria: { name: string; description: string | null }[];
+  descriptions: string[];
+  prizes: { place: string | null; award: string }[];
+}
+
+export function trackDetail(entities: Entity[], trackId: string): TrackDetail {
+  const t = entities.find((x) => x.id === trackId);
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const field = (re: RegExp) => Object.entries(t?.fields ?? {}).filter(([k]) => re.test(k)).map(([, v]) => str(v.value)).filter((v): v is string => !!v);
+  const of = (kind: string) => entities.filter((x) => x.kind === kind && x.fields.track_id?.value === trackId);
+  return {
+    requirements: field(/^requirements\[/),
+    criteria: of("criterion").map((c) => ({ name: c.name.value ?? "", description: str(c.fields.description?.value) })),
+    descriptions: field(/^descriptions?(\[|$)/),
+    prizes: of("prize").map((p) => ({ place: str(p.fields.place?.value), award: str(p.fields.award_text?.value) ?? "" })),
+  };
+}

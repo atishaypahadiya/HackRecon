@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fitHash, fitRequest, fitSystemPrompt, trackCards } from "./fit.ts";
-import { boothQuestions, capLikely, entryUse, NOT_STATED, projectLead, stackForRanker, stackProduct, statedUse, useClause, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
+import { boothQuestions, capLikely, entryUse, NOT_STATED, PLAN_LIMITS, parsePlanBody, planMeta, trackDetail, projectLead, stackForRanker, stackProduct, statedUse, useClause, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
 import type { TrackCard } from "./fit.ts";
 import type { Entity } from "./schema.ts";
 
@@ -103,5 +103,26 @@ describe("Plan tracks", () => {
   test("an unranked idea without an API key is an error, never an empty plan", async () => {
     expect(await planTracks(null, { idea: "new", stack: null }, ents, e, {})).toEqual({ error: "no API key, and this idea hasn't been ranked before" });
     expect(parseStack(" , ")).toBeNull();
+  });
+  test("POST /plan bodies: trimmed, empty items dropped, limits enforced", () => {
+    expect(parsePlanBody({ idea: "  an app ", stack: [{ name: " Apify ", used_for: " pull catalogs " }, { name: "", used_for: "x" }, { name: "Vercel" }] })).toEqual({ idea: "an app", stack: [{ name: "Apify", used_for: "pull catalogs" }, { name: "Vercel", used_for: null }] });
+    expect(parsePlanBody({ idea: "x", stack: [] })).toEqual({ idea: "x", stack: null });
+    expect(parsePlanBody({ idea: " " })).toEqual({ error: "describe your project first" });
+    expect(parsePlanBody({ idea: "x", stack: "Apify" })).toEqual({ error: "stack must be a list" });
+    expect("error" in parsePlanBody({ idea: "x".repeat(PLAN_LIMITS.idea + 1) })).toBe(true);
+    expect("error" in parsePlanBody({ idea: "x", stack: Array.from({ length: PLAN_LIMITS.items + 1 }, () => ({ name: "a" })) })).toBe(true);
+  });
+  test("plan meta: track count and times; the schedule's live items win over canon deadlines", () => {
+    const rule = { id: "r1", kind: "rule", sponsor: "event", name: { value: "Submit your hack", source: src }, fields: { deadline: { value: "2026-10-25T09:00-07:00", source: { ...src, quote: "October 25th @ 9 AM" } } }, history: [], origin: "page" } as Entity;
+    const ev = { ...(e as object), hacking_start: null, schedule: [] } as never;
+    const m = planMeta([...ents, rule], ev);
+    expect([m.track_count, m.deadlines.map((d) => [d.name, d.at])]).toEqual([2, [["Submit your hack", "2026-10-25T09:00-07:00"]]]);
+    const withSchedule = { ...(e as object), hacking_start: null, schedule: [{ what: "Deadline", at: "2026-10-25T09:00:00-07:00", superseded_by: "Extended", source: "s1" }, { what: "Extended", at: "2026-10-25T09:30:00-07:00", source: "s2" }] } as never;
+    expect(planMeta([...ents, rule], withSchedule).deadlines.map((d) => [d.name, d.url])).toEqual([["Extended", "s2"]]);
+  });
+  test("a track's drawer detail: requirements, criteria, prizes, verbatim", () => {
+    const crit = { id: "c1", kind: "criterion", sponsor: "Acme", name: { value: "Depth", source: src }, fields: { track_id: { value: "t1", source: src }, description: { value: "How deep", source: src } }, history: [], origin: "page" } as Entity;
+    const prize = { id: "p1", kind: "prize", sponsor: "Acme", name: { value: "1st", source: src }, fields: { track_id: { value: "t1", source: src }, place: { value: "1st place", source: src }, award_text: { value: "$500", source: src } }, history: [], origin: "page" } as Entity;
+    expect(trackDetail([...ents, crit, prize], "t1")).toEqual({ requirements: ["must use Acme"], criteria: [{ name: "Depth", description: "How deep" }], descriptions: [], prizes: [{ place: "1st place", award: "$500" }] });
   });
 });
