@@ -71,14 +71,26 @@ export function redactSnapshot(s: PageSnapshot, redact: (text: string) => { text
       .replace(/[\w.%+-]+@[\w-]+(?:\.[\w-]+)+/g, () => (replaced++, "[email]"))
       .replace(/(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)/g, () => (replaced++, "[phone]"));
   };
-  // The URL and title go into the request too: query strings and fragments (tokens, ids) are dropped, the rest scrubbed.
-  const url = (u: string) => {
+  // The URL and title go into the request too: query strings and fragments (tokens, ids) are dropped. Every host
+  // label and path segment is also read as words ("dana-reyes" → "Dana Reyes"), since the redactor matches
+  // names as capitalized words; a segment with a name in it becomes [person].
+  const segment = (seg: string) => {
+    let decoded = seg;
     try {
-      const x = new URL(u);
-      return `${x.protocol}//${x.host}${scrub(decodeURIComponent(x.pathname))}`;
-    } catch {
-      return scrub(u);
-    }
+      decoded = decodeURIComponent(seg);
+    } catch {}
+    const words = decoded
+      .split(/[-_.+\s]+/)
+      .filter(Boolean)
+      .map((w) => w[0]!.toUpperCase() + w.slice(1))
+      .join(" ");
+    return redact(words).replaced > 0 || redact(decoded).replaced > 0 ? "[person]" : scrub(decoded);
+  };
+  const url = (u: string) => {
+    const bare = u.replace(/[?#].*$/s, "");
+    const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/]*)(.*)$/i.exec(bare);
+    if (!m) return bare.split("/").map(segment).join("/");
+    return `${m[1]}${m[2]!.split(".").map(segment).join(".")}${m[3]!.split("/").map(segment).join("/")}`;
   };
   const blocks = s.blocks.map((b) => ({ ...b, text: scrub(b.text), path: b.path.map(scrub) }));
   const snapshot: PageSnapshot = { ...s, url: url(s.url), title: scrub(s.title), blocks, links: s.links.map((l) => ({ ...l, text: scrub(l.text), href: url(l.href) })) };
