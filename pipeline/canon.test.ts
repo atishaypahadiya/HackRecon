@@ -151,7 +151,7 @@ describe("coverage (D15)", () => {
   test("a complete extraction passes, with the stated total", () => {
     expect(statedTotal(snap)!.usd).toBe(1100);
     const r = coverage(snap, ok(good()));
-    expect(r.checks.map((c) => [c.name, c.pass])).toEqual([["prize_total", true], ["prize_blocks", true], ["figures", null]]);
+    expect(r.checks.map((c) => [c.name, c.pass])).toEqual([["prize_total", true], ["prize_blocks", true], ["prize_amounts", null], ["figures", null]]);
     expect(r.pass).toBe(true);
   });
 
