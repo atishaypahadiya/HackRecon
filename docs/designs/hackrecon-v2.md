@@ -377,7 +377,7 @@ Input: fixture snapshots built from the public overview and rules pages (`hr pag
 
 **Canon run-to-run diff and determinism (user, 2026-11-06).** Run 3 and the re-run had identical prompt and input hashes (b17ce034…, 35df0594… for the overview), yet differed in two places. Hyphenate's "Cash prizes of 8000$, 5000$, 3000$ for the top 3 teams" came out as three prizes in run 3 and one "top 3 teams" prize in the re-run (80 vs 78). The rules page gave 3 vs 4 rules. Every coverage check passed both ways, so these are granularity differences, not dropped lines. The user asked to pin extraction to temperature 0, but Opus 5.5 rejects `temperature`, `top_p` and `top_k` with a 400. So canon is made deterministic another way: every extraction is stored by prompt hash + input hash (`data/canon_extractions.json`, shared by fixture and real runs). An input is extracted once and reused from then on; `--force` re-extracts. The store was seeded with run 3, whose three-prize reading follows the prompt's own rule ("One per place the track states") and whose cards the fit baseline used. Real canon now reproduces run 3 (80 prizes, coverage PASS, judge 0/0), and fit-eval on real canon hits all 162 cached rankings. A new prompt still gets a fresh extraction, so a prompt change is the place a reading can move; it shows up in the canon diff and the fit gate.
 
-**Fit gate (user, 2026-11-06).** "recall@5 must stay ≥ 67% (baseline 72.3% minus ~1 SE at n = 94) or the change fails. A change counts as an improvement only if a paired McNemar test on the same 94 pairs gives p < 0.05." It's implemented in `hr fit-eval` on run B (with the stack): an exact two-sided McNemar on per-pair hits against `review/fit_baseline.json`, which was set from the T7 cache. Every full run prints recall@3 and @5 with n, the pairs lost and gained, and p, and exits 1 below 67%. If the pair set changed (a canon re-read renamed a track), no improvement can be claimed. First gated run: recall@3 55/94, recall@5 68/94, PASS.
+**Fit gate (user, 2026-11-06).** "recall@5 must stay ≥ 67% (baseline 72.3% minus ~1 SE at n = 94) or the change fails. A change counts as an improvement only if a paired McNemar test on the same 94 pairs gives p < 0.05." It's implemented in `hr fit-eval` on run B (with the stack): an exact two-sided McNemar on per-pair hits against `review/fit_baseline.json`, which was set from the T7 cache. Every full run prints recall@3 and @5 with n, the pairs lost and gained, and p, and exits 1 below 67%. **The baseline was re-set 2026-11-06 to the tiered-evidence run (recall@3 55/94, recall@5 67/94; see "Fit baseline before Slack requirements"); the 67% floor is unchanged.** If the pair set changed (a canon re-read renamed a track), no improvement can be claimed. First gated run: recall@3 55/94, recall@5 68/94, PASS.
 
 ### Idea-fit baseline (T7, D23, 2026-11-06)
 
@@ -1526,7 +1526,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - Gate on B: recall@3 55 → 53 (lost 6, gained 4, exact McNemar p = 0.754). recall@5 68 → 68 (lost 4, gained 4, p = 1.000). **PASS, not an improvement.**
       - The cash_only rule accounts for most losses (Apify Best Use ×3, Mana ×2, Visa ×1 across @3 and @5). Gains: GoDaddy, Apify Best Actor, Notability, Bright Data, Spacetime, Vultr.
 
-  - **Title products, label cap and tier floor (user 2026-11-06). Uncommitted: the gate run is incomplete.**
+  - **Title products, label cap and tier floor (user 2026-11-06). Committed `fa1210b` after a complete gate run (below); the first run was cut short.**
     - **`titleProducts`** works in code from the title and sponsors.json aliases. A product is the X of "Use of (the) X" when X holds the sponsor's name or is a proper name and not a gerund phrase, or the sponsor's name or an alias outside "sponsored by …".
       - Examples: Claude for Public Benefit → Claude, Gemini API, Factory Droid SDK, x402 + Coinbase.
       - Visa's "Reimagining Shopping sponsored by Visa", Apify's Best Actor and Figma's four titles name none.
@@ -1538,7 +1538,68 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - As reported, the gate reads recall@3 50/94 and recall@5 60/94 (FAIL < 67%). That isn't a valid result.
       - Diagnostic on the 86 completed pairs: recall@3 50 → 50 (lost 2, gained 2, p = 1.0), recall@5 61 → 60 (lost 7, gained 6, p = 1.0).
       - Passing needs 63/94; the 8 failed projects held 7 baseline @5 hits.
-    - **Next:** the 146 good rankings are cached, so the re-run is 16 rankings (about $0.20) once the limit is raised or resets. Commit if it passes.
+    - **Complete run** (2026-11-06T21:56Z, after the limit was lifted; re-confirmed from cache with 162 rankings, 0 not cached, 0 failed):
+      - recall@3: A 33/94, B 55/94.
+      - recall@5: A 38/94, B 67/94.
+      - Gate on B: recall@3 55 → 55 (lost 3, gained 3, exact McNemar p = 1.000). recall@5 68 → 67 (lost 7, gained 6, p = 1.000). **PASS, not an improvement.**
+      - Recorded as the new baseline (below).
+    - **Hindsight dogfood on the committed Plan** (4,381 ms uncached, n = 1, $0.01):
+      - Likely: [Apify] Best Actor (stated, quoting "Project must be using Apify in a meaningful way.", with its "Building an actor" entry step), plus three title-only tracks, [Anthropic] Claude for Public Benefit, [Factory] Factory Droid SDK and [Apify] Best Use of Apify. Each of those three kept "likely" because its title's product (Claude, Factory Droid SDK, Apify) is in the stack.
+      - Also possible: [Figma] Best Design, ranked "possible" by the model. Its title names no product, so the cap would have lowered a "likely" anyway.
+      - Booths asks Anthropic, Factory, Apify and Figma "What does ‘<track>’ reward?". All 4 targeted tracks appear; targeted, not won.
+
+### Fit baseline before Slack requirements (2026-11-06)
+
+`review/fit_baseline.json` is now the complete tiered run above (run 2026-11-06T21:56Z, set with `hr fit-eval --set-baseline` from cache), replacing the T7 baseline. This is the measurement step 1 compares against: Slack sponsor posts merged as requirements or criteria move tracks from title-only to stated, and the next gate run is paired against these 94 pairs.
+
+- **Setup:** canon prompt 631eb71c8c39d023 (Devpost overview + rules), 40 sponsor tracks, tiers 7 stated / 32 title-only / 1 cash-only. Ranker claude-sonnet-5-5 at effort medium.
+- **Run B by tier:** title-only 80 pairs, 45 at @3 and 55 at @5. Stated 13 pairs, 10 and 11. Cash-only 1 pair, 0 and 1.
+- **The gate floor stays at the user's 67%.** It was set as the old baseline (72.3%) minus about 1 SE. The new baseline's recall@5 is 71.3%, 1 point lower.
+- **Columns:** A is the description only, B adds Built With. n is the won pairs per track. The eval's own printed table is the "Best Use of X" subset at @3.
+
+| Track | Tier | n | A @3 | B @3 | A @5 | B @5 |
+|---|---|---|---|---|---|---|
+| [Spacetime] Best Use of Spacetime | title | 9 | 2 | 8 | 2 | 8 |
+| [Fetch.ai] Best Use of Fetch.ai | title | 7 | 3 | 6 | 3 | 6 |
+| [Apify] Best Use of Apify | title | 5 | 0 | 1 | 0 | 2 |
+| [CRS] Best Use of CRS API | title | 5 | 2 | 4 | 2 | 4 |
+| [Hyphenate] The Hyphenated Enterprise: Autonomous Systems for Finance | title | 5 | 4 | 4 | 4 | 5 |
+| [Notability] Best Use of Notability | title | 5 | 0 | 0 | 0 | 2 |
+| [Apify] 1st Customer Award | title | 4 | 0 | 0 | 0 | 0 |
+| [Fetch.ai] Best Use of ASI:One | title | 4 | 1 | 3 | 1 | 3 |
+| [Mana] Best Use of Mana | title | 4 | 0 | 2 | 0 | 2 |
+| [Anthropic] Claude for Public Benefit | title | 3 | 3 | 3 | 3 | 3 |
+| [Atlassian] Best Agent / Best Security Solution for Agents | stated | 3 | 3 | 3 | 3 | 3 |
+| [Bright Data] Best Agent/App Using Public Web Data sponsored by Bright Data | title | 3 | 1 | 3 | 1 | 3 |
+| [Convex] Best use of Convex | stated | 3 | 1 | 3 | 1 | 3 |
+| [Meta] Meta/Facebook: Bringing People Closer Together with AI | stated | 3 | 1 | 1 | 2 | 1 |
+| [Bitdeer AI] Best Use of Bitdeer AI Model Studio | title | 2 | 0 | 0 | 0 | 1 |
+| [Coinbase] Best Use of x402 by Coinbase | title | 2 | 2 | 2 | 2 | 2 |
+| [Elastic] Best use of the Elastic Agent Builder on a Serverless Instance | title | 2 | 0 | 2 | 0 | 2 |
+| [Microsoft] Built for the Real World (1st), Customer Impact Award (2nd) | title | 2 | 1 | 0 | 2 | 0 |
+| [Moss] Long Horizon Agent | title | 2 | 1 | 0 | 2 | 1 |
+| [Apify] Best Actor sponsored by Apify | stated | 1 | 0 | 1 | 1 | 1 |
+| [Armadin] Best Security Hack | title | 1 | 1 | 1 | 1 | 1 |
+| [Capital One] Best Use of Nessie | title | 1 | 0 | 0 | 0 | 1 |
+| [Cartesia] Best Use of Cartesia | title | 1 | 1 | 1 | 1 | 1 |
+| [Creao AI] Best AI-First Disruptor | title | 1 | 0 | 1 | 0 | 1 |
+| [Creao AI] Best One-Person Company | title | 1 | 0 | 0 | 0 | 0 |
+| [Creao AI] Best Team Empowerment | title | 1 | 0 | 0 | 0 | 1 |
+| [Factory] Best Use of the Factory Droid SDK | title | 1 | 1 | 1 | 1 | 1 |
+| [Figma] Best Design | title | 1 | 0 | 0 | 0 | 0 |
+| [Figma] Best Stage Log | title | 1 | 0 | 0 | 0 | 0 |
+| [Figma] Best Use Case | title | 1 | 1 | 1 | 1 | 1 |
+| [Figma] Most Creative | title | 1 | 1 | 1 | 1 | 1 |
+| [MLH] Best Domain Name from GoDaddy Registry | stated | 1 | 0 | 0 | 0 | 1 |
+| [MLH] Best Use of Gemini API | title | 1 | 1 | 0 | 1 | 1 |
+| [MLH] Best Use of Snowflake API | title | 1 | 1 | 1 | 1 | 1 |
+| [MLH] Best Use of Solana | title | 1 | 0 | 0 | 0 | 0 |
+| [MLH] Best Use of Tiger Data | stated | 1 | 0 | 1 | 0 | 1 |
+| [MLH] Best Use of Vultr | title | 1 | 0 | 0 | 0 | 1 |
+| [Moss] Best Use of Moss | title | 1 | 0 | 0 | 0 | 0 |
+| [SpaceXSI] Make it Legendary with SpaceXSI | stated | 1 | 1 | 1 | 1 | 1 |
+| [Visa] Best use of Reimagining Shopping sponsored by Visa | cash_only | 1 | 0 | 0 | 1 | 1 |
+| **All (40 tracks)** | | **94** | **33** | **55** | **38** | **67** |
 
 ## Design Review (plan-design-review, 2026-11-06): Plan + Ship
 
