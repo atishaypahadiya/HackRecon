@@ -65,6 +65,9 @@ import {
   CANON_JUDGE_PATH,
   CANON_PATH,
   CAPTURES_DIR,
+  FIT_CACHE_PATH,
+  FIT_EVAL_PATH,
+  FIT_EVAL_SET_PATH,
   EVENT_PATH,
   DEFAULT_EXPORT_DIR,
   ERRORS_PATH,
@@ -111,6 +114,8 @@ import {
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
+import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
+import { formatFitReport, scoreFit, type EvalItem } from "./fiteval.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, PageSnapshot } from "./schema.ts";
 import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
@@ -163,6 +168,10 @@ const USAGE = `usage:
       ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
+  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6]
+      The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
+      ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
+      Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -175,7 +184,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -192,6 +201,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "board") return board(rest);
   if (cmd === "pages") return pages(rest);
   if (cmd === "canon") return canon(rest);
+  if (cmd === "fit-eval") return fitEval(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -880,6 +890,82 @@ async function canon(args: string[]): Promise<number> {
     writeJsonFile(judgePath, [...judged.values()]);
   }
   return failed ? 1 : 0;
+}
+
+interface FitCached {
+  ranked: Ranked[];
+  usage: Usage;
+  calls: number;
+}
+
+async function fitEval(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" } },
+  });
+  const event = readEvent();
+  const canonPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
+  const pages = readJsonFile<CanonPage[]>(canonPath, []);
+  const entities = pages.flatMap((p) => p.entities);
+  if (!entities.some((e) => e.kind === "track")) {
+    console.error(`no tracks in ${canonPath}: run \`bun run hr canon${values.fixtures ? " --fixtures" : ""}\` first`);
+    return 2;
+  }
+  const set = readJsonFile<{ items: EvalItem[] } | null>(FIT_EVAL_SET_PATH, null);
+  if (!set) {
+    console.error(`no eval set at ${FIT_EVAL_SET_PATH}`);
+    return 2;
+  }
+  const cards = trackCards(entities, event);
+  const system = fitSystemPrompt(event, cards);
+  const names = new Set(entities.filter((e) => e.kind === "track").map((e) => e.name.value ?? ""));
+  let items = set.items.filter((it) => it.won.some((w) => cards.some((c) => c.name === w)));
+  if (values.limit) items = items.slice(0, Number(values.limit));
+  const jobs = items.flatMap((it) =>
+    (["A", "B"] as const).map((run) => {
+      const request = fitRequest(it.description, run === "B" ? it.built_with : null);
+      return { it, run, request, hash: fitHash(system, request) };
+    }),
+  );
+  const cache = readJsonFile<Record<string, FitCached>>(FIT_CACHE_PATH, {});
+  const todo = jobs.filter((j) => !cache[j.hash]);
+  console.log(`${items.length} projects with a won sponsor track, ${cards.length} sponsor tracks from ${canonPath}; model ${FIT_MODEL}, effort ${FIT_EFFORT}; system ${system.length} chars; ${jobs.length} rankings, ${todo.length} not cached`);
+  if (values["dry-run"]) {
+    console.log(`\n--- system prompt (first 3000 chars) ---\n${system.slice(0, 3000)}\n--- request, run B, first project ---\n${jobs[1]?.request}\n\ndry run: no API call`);
+    return 0;
+  }
+  let client: Anthropic | null = null;
+  if (todo.length) {
+    client = anthropicClient();
+    if (!client) return 2;
+  }
+  let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  let calls = 0;
+  const failed: string[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const j = todo[next++]!;
+      const r = await callChecked(client!, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request: j.request, check: (p) => checkFit(p, cards) });
+      usage = sumUsage([usage, r.usage]);
+      calls += r.calls;
+      if ("error" in r) failed.push(`${j.run} ${j.it.slug}: ${r.error}`);
+      else cache[j.hash] = { ranked: r.value, usage: r.usage, calls: r.calls };
+      if ((Object.keys(cache).length + failed.length) % 20 === 0) writeJsonFile(FIT_CACHE_PATH, cache);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+  if (todo.length) {
+    writeJsonFile(FIT_CACHE_PATH, cache);
+    console.log(formatUsage(calls, usage, FIT_MODEL));
+  }
+  for (const f of failed) console.error(`failed: ${f}`);
+  const runMap = (run: "A" | "B") => new Map(jobs.filter((j) => j.run === run && cache[j.hash]).map((j) => [j.it.slug, cache[j.hash]!.ranked]));
+  const report = scoreFit(items, cards, names, event, runMap("A"), runMap("B"));
+  console.log(`\n${formatFitReport(report)}`);
+  writeJsonFile(FIT_EVAL_PATH, { ...report, model: FIT_MODEL, effort: FIT_EFFORT, canon: canonPath, written_at: new Date().toISOString() });
+  console.log(`\nwrote ${FIT_EVAL_PATH}`);
+  return failed.length ? 1 : 0;
 }
 
 function receiptPreview(args: string[]): number {

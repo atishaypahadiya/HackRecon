@@ -36,5 +36,11 @@
     "https://cal-hacks-13-0.devpost.com/",
     "https://cal-hacks-13-0.devpost.com/rules"
   ],
-  "schedule_pages": []
+  "schedule_pages": [],
+  "event_level_prizes": [
+    "[MLH] Commit Fellowship"
+  ],
+  "tool_gated_prizes": [
+    "[MLH] Best Use of *"
+  ]
 }
