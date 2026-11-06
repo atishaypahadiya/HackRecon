@@ -122,7 +122,7 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
-import { parseStack, planTracks, type FitCache } from "./plan.ts";
+import { boothQuestions, parseStack, planTracks, type FitCache } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -1128,8 +1128,12 @@ async function planCli(args: string[]): Promise<number> {
   for (const t of r.items) {
     if (t.fit === "possible" && shown !== "possible") console.log("  Also possible");
     shown = t.fit;
-    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
+    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.label ? `   (${t.label})` : ""}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
+    for (const s of t.steps) console.log(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
   }
+  const booths = boothQuestions(r.items);
+  if (booths.length) console.log("\nBooths: questions for reps");
+  for (const b of booths) console.log(`  ${b.sponsor}: ${b.question}\n    ${b.grounds}  ${b.source_url}`);
   if (dog?.targeted?.length) {
     const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
     console.log(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);

@@ -6,7 +6,7 @@
 // live with 'new' markers; never sends anything." Fit words are "likely fits" / "possible", never "eligible".
 import type Anthropic from "@anthropic-ai/sdk";
 import type { EventConfig } from "./classify.ts";
-import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
+import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Evidence, type Ranked } from "./fit.ts";
 import { callChecked } from "./model.ts";
 import type { Entity } from "./schema.ts";
 import type { Usage } from "./usage.ts";
@@ -19,13 +19,39 @@ export interface PlanInput {
 
 export interface PlanTrack {
   track_id: string;
+  /** This track's entry steps: D3's checkboxes, shared with Ship. */
+  steps: PlanStep[];
   name: string;
   sponsor: string;
   fit: "likely" | "possible";
   reason: string;
-  /** Verified to appear in the track's own canon lines (checkFit). */
+  /** Tiered evidence (fit.ts): stated → a requirement or criterion sentence; title / cash_only → the title. */
+  evidence: Evidence;
+  /** "requirements not stated" when the page states none (tiers title and cash_only); null on stated tracks. */
+  label: string | null;
+  /** Verified by checkFit against the track's requirement and criterion lines, or its title. */
   quote: string;
   source_url: string;
+}
+
+/** A question for a sponsor's rep (Booths section). Grounded in what the page leaves out, never invented. */
+export interface BoothQuestion {
+  track_id: string;
+  sponsor: string;
+  question: string;
+  /** Why it's asked, in what the page does or doesn't say. */
+  grounds: string;
+  source_url: string;
+}
+
+export const NOT_STATED = "requirements not stated";
+const bare = (name: string) => name.replace(/^\[[^\]]*\]\s*/, "");
+
+/** Booths (user 2026-11-06): each title-tier track in the plan → "What does '<track>' reward?" for its rep. */
+export function boothQuestions(tracks: PlanTrack[]): BoothQuestion[] {
+  return tracks
+    .filter((t) => t.evidence === "title")
+    .map((t) => ({ track_id: t.track_id, sponsor: t.sponsor, question: `What does ‘${bare(t.name)}’ reward?`, grounds: `Devpost states no requirements or judging criteria for ${t.name}`, source_url: t.source_url }));
 }
 
 export interface PlanSection<T> {
@@ -38,12 +64,44 @@ export interface PlanSection<T> {
 
 export type FitCache = Record<string, { ranked: Ranked[]; usage: Usage; calls: number }>;
 
+/** One canon entry_step (user 2026-11-06): a Plan checkbox under its track (D3) and a line of Ship's checklist.
+ *  Both read this one list, keyed by entity id, so checking it in one view checks it in the other (P5). */
+export interface PlanStep {
+  id: string;
+  track_id: string;
+  track: string;
+  step_kind: string;
+  label: string;
+  /** The page's sentence, verbatim; checked against the snapshot block at extraction (checkCanon). */
+  quote: string;
+  source_url: string;
+}
+
+/** Entry steps for the given tracks, in plan order, then the page's order within a track. */
+export function entrySteps(entities: Entity[], trackIds: string[]): PlanStep[] {
+  const byId = new Map(entities.map((x) => [x.id, x]));
+  return trackIds.flatMap((tid) =>
+    entities
+      .filter((s) => s.kind === "entry_step" && s.fields.track_id?.value === tid)
+      .sort((a, b) => (a.fields.text?.source.block ?? 0) - (b.fields.text?.source.block ?? 0))
+      .map((s) => ({
+        id: s.id,
+        track_id: tid,
+        track: byId.get(tid)?.name.value ?? "",
+        step_kind: String(s.fields.step_kind?.value ?? ""),
+        label: s.name.value ?? "",
+        quote: s.fields.text?.source.quote ?? "",
+        source_url: s.fields.text?.source.url ?? s.name.source.url,
+      })),
+  );
+}
+
 export function parseStack(s: string | undefined | null): string[] | null {
   const parts = (s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   return parts.length ? parts : null;
 }
 
-/** Tracks to target. Likely fits first, then possible (D12), each in the ranker's order. */
+/** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). */
 export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, now = () => performance.now()): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
   const cards = trackCards(entities, e);
@@ -62,9 +120,11 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
     cache[hash] = { ranked, usage: r.usage, calls: r.calls };
   }
   const byId = new Map(entities.map((x) => [x.id, x]));
+  const tier = new Map(cards.map((c) => [c.id, c.evidence]));
   const items = ranked.map((r): PlanTrack => {
     const t = byId.get(r.track_id)!;
-    return { track_id: r.track_id, name: t.name.value ?? "", sponsor: t.sponsor, fit: r.fit, reason: r.reason, quote: r.quote, source_url: t.name.source.url };
+    const evidence = tier.get(r.track_id) ?? "cash_only";
+    return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit: r.fit, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
   });
   items.sort((a, b) => (a.fit === b.fit ? 0 : a.fit === "likely" ? -1 : 1));
   return { items, from, ms: Math.round(now() - t0), usage };

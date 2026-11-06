@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fitGate, mcnemarExact } from "./fiteval.ts";
 import type { EventConfig } from "./classify.ts";
-import { checkFit, isEventLevel, isToolGated, trackCards, type Ranked, type TrackCard } from "./fit.ts";
+import { checkFit, ELIGIBILITY, isEventLevel, isToolGated, nameOnlyQuote, trackCards, type Ranked, type TrackCard } from "./fit.ts";
 import { scoreFit, type EvalItem } from "./fiteval.ts";
 import type { Entity } from "./schema.ts";
 
@@ -20,17 +20,24 @@ const es: Entity[] = [
   ent("t:overall", "track", "event", "Mini Overall"),
   ent("t:commit", "track", "MLH", "[MLH] Commit Fellowship"),
   ent("t:acme", "track", "Acme", "[Acme] Best Use of Acme", { description: "Build an agent on Acme.", "requirements[0]": "must use the Acme API" }),
-  ent("t:gem", "track", "MLH", "[MLH] Best Use of Gemini API", { description: "Use Gemini." }),
+  ent("t:gem", "track", "MLH", "[MLH] Best Use of Gemini API", { "descriptions[0]": "Gemini is great.", "requirements[0]": "Use the Gemini API in your project" }),
   ent("t:viz", "track", "Viz", "[Viz] Best Visualization"),
+  ent("c:viz", "criterion", "Viz", "Clarity", { track_id: "t:viz", description: "How clearly the chart tells its story" }),
+  ent("s:acme", "entry_step", "Acme", "Opt in", { track_id: "t:acme", step_kind: "opt_in", text: "Opt in on the Acme portal" }),
+  ent("t:fig", "track", "Fig", "[Fig] Best Design", { cash_value_usd: 0, winners: 1 }),
+  ent("p:fig", "prize", "Fig", "Best Design", { track_id: "t:fig", award_text: "Gift cards and a recruiter session" }),
+  ent("t:cash", "track", "Cashco", "[Cashco] Best Use of Cashco", { cash_value_usd: 5000, winners: 4 }),
+  ent("p:cash", "prize", "Cashco", "Best Use of Cashco", { track_id: "t:cash", award_text: "$5,000 in cash" }),
   ent("c:acme", "criterion", "Acme", "Agent depth", { track_id: "t:acme", description: "How autonomous the agent is" }),
   ent("p:acme", "prize", "Acme", "1st", { track_id: "t:acme", award_text: "$500 + interview" }),
 ];
 
 describe("tracks for fit", () => {
-  test("event-level tracks are left out; cards carry description, requirements, own criteria, prizes", () => {
+  test("event-level tracks are left out; only requirements and criteria are quotable, the rest is context", () => {
     const cards = trackCards(es, ev);
-    expect(cards.map((c) => c.id)).toEqual(["t:acme", "t:gem", "t:viz"]);
-    expect(cards[0]!.lines).toEqual(["Build an agent on Acme.", "must use the Acme API", "Agent depth", "How autonomous the agent is", "$500 + interview"]);
+    expect(cards.map((c) => [c.id, c.evidence])).toEqual([["t:acme", "stated"], ["t:gem", "stated"], ["t:viz", "stated"], ["t:fig", "title"], ["t:cash", "cash_only"]]);
+    expect(cards[0]!.lines).toEqual(["must use the Acme API", "Agent depth", "How autonomous the agent is"]);
+    expect(cards[0]!.context).toEqual(["Build an agent on Acme.", "Opt in on the Acme portal", "$500 + interview"]);
     expect(isEventLevel(es[1]!, ev)).toBe(true);
     expect(isToolGated("[MLH] Best Use of Gemini API", ev)).toBe(true);
     expect(isToolGated("[Acme] Best Use of Acme", ev)).toBe(false);
@@ -39,16 +46,44 @@ describe("tracks for fit", () => {
 
 describe("checkFit", () => {
   const cards = trackCards(es, ev);
-  const r = (track_id: string, quote: string): Ranked => ({ track_id, fit: "likely", reason: "", quote });
-  test("accepts quotes from the track's own lines or name", () => {
-    expect(checkFit({ ranked: [r("t:acme", "must use the acme API"), r("t:gem", "Use Gemini"), r("t:viz", "[Viz] Best Visualization")] }, cards)).toHaveLength(3);
+  const r = (track_id: string, quote: string, reason = "Your stack lists Acme; this track requires the Acme API."): Ranked => ({ track_id, fit: "likely", reason, quote });
+  const five = (over: Partial<Record<string, Ranked>> = {}) => ({
+    ranked: [r("t:cash", "Best Use of Cashco"), r("t:acme", "must use the acme API"), r("t:fig", "[Fig] Best Design"), r("t:gem", "Use the Gemini API"), r("t:viz", "How clearly the chart tells")].map((x) => over[x.track_id] ?? x),
   });
-  test("rejects another track's quote, unknown or event-level ids, duplicates, short lists", () => {
-    const out = checkFit({ ranked: [r("t:gem", "must use the Acme API"), r("t:overall", "x"), r("t:viz", "Best Visualization"), r("t:viz", "Best Visualization")] }, cards);
-    expect(out).toEqual({ error: expect.stringContaining("is not in [MLH] Best Use of Gemini API's lines") });
+  const cashPossible = { "t:cash": { ...r("t:cash", "Best Use of Cashco"), fit: "possible" as const } };
+  test("tiered evidence: stated tracks quote a requirement or criterion, the others their title; cash_only goes last", () => {
+    const out = checkFit(five(cashPossible), cards) as Ranked[];
+    expect(out.map((x) => x.track_id)).toEqual(["t:acme", "t:fig", "t:gem", "t:viz", "t:cash"]);
+  });
+  test("a cash_only track is never likely; a title-tier quote must be in the title", () => {
+    expect((checkFit(five(), cards) as { error: string }).error).toContain('[Cashco] Best Use of Cashco gives only a prize amount (evidence="cash_only"): fit must be "possible"');
+    const e = (checkFit(five({ ...cashPossible, "t:fig": r("t:fig", "Gift cards and a recruiter session") }), cards) as { error: string }).error;
+    expect(e).toContain('[Fig] Best Design states no requirements (evidence="title"): quote its title');
+  });
+  test("a requirement from any source upgrades a title track to stated (step 1: Slack sponsor posts)", () => {
+    const up = es.map((e) => (e.id === "t:fig" ? { ...e, fields: { ...e.fields, "requirements[0]": fv("Design it in Fig") } } : e));
+    expect(trackCards(up, ev).find((c) => c.id === "t:fig")!.evidence).toBe("stated");
+  });
+  test("rejects another track's quote, context lines, unknown or event-level ids, duplicates", () => {
+    const out = checkFit({ ranked: [r("t:gem", "must use the Acme API"), r("t:overall", "x"), r("t:acme", "Build an agent on Acme"), r("t:viz", "Clarity"), r("t:viz", "Clarity")] }, cards);
     const e = (out as { error: string }).error;
+    expect(e).toContain("is not one of [MLH] Best Use of Gemini API's requirement or criterion lines");
+    expect(e).toContain("\"Build an agent on Acme\" is not one of [Acme] Best Use of Acme's");
     expect(e).toContain("t:overall is not a track id");
     expect(e).toContain("t:viz is ranked twice");
+  });
+  test("a quote that is only the track's name fails, even when a line contains it (user 2026-11-06)", () => {
+    const named: TrackCard[] = [{ id: "t:n", sponsor: "Acme", name: "[Acme] Best Use of Acme", evidence: "stated", lines: ["Best Use of Acme: must ship an agent"], context: [] }];
+    expect(nameOnlyQuote("[Acme] Best Use of Acme", "[Acme] Best Use of Acme")).toBe(true);
+    expect(nameOnlyQuote("Best Use of", "[Acme] Best Use of Acme")).toBe(true);
+    expect(nameOnlyQuote("must ship an agent", "[Acme] Best Use of Acme")).toBe(false);
+    expect((checkFit({ ranked: [r("t:n", "Best Use of Acme")] }, named) as { error: string }).error).toContain("is only [Acme] Best Use of Acme's name");
+    expect(checkFit({ ranked: [r("t:n", "Best Use of Acme: must ship an agent")] }, named)).toHaveLength(1);
+  });
+  test("eligibility language in a reason is rejected (and so retried)", () => {
+    for (const reason of ["They can enter this track directly.", "This qualifies.", "Clearly eligible.", "A guaranteed fit.", "You could still enter it."])
+      expect([reason, "error" in (checkFit({ ranked: [r("t:acme", "must use the Acme API", reason), r("t:gem", "Use the Gemini API"), r("t:viz", "How clearly")] }, cards) as object)]).toEqual([reason, true]);
+    expect(ELIGIBILITY.test("Your stack lists Apify; this track requires a published Actor.")).toBe(false);
   });
 });
 

@@ -1,10 +1,13 @@
 // `hr canon`: page snapshot → verified canon entities (v2 §Extraction, D7, D12, D15). One Opus call per
 // page, with a JSON schema; code then checks every value against the snapshot the model read: the quote
 // is in the cited block, every number and date in the value is in the quote, enums are valid, and every
-// reference names an entity from the same answer. A failed check goes back to the model with the error.
+// reference names an entity from the same answer, and the gating D15 coverage checks pass on the result (a
+// dropped prize, e.g. Mana's on Cal Hacks 2026-11-06, is retried, not shipped). A failed check goes back to the
+// model with the error.
 // Logged-in pages (access not "public") are redacted first and checked against the redacted text (D12).
 import { createHash } from "node:crypto";
 import { scheduleLines, type EventConfig } from "./classify.ts";
+import { coverage } from "./coverage.ts";
 import { pageKey } from "./pages.ts";
 import { JUDGE_EFFORT, JUDGE_MODEL } from "./prelabel.ts";
 import type { Entity, FieldValue, PageSnapshot } from "./schema.ts";
@@ -14,24 +17,30 @@ export const CANON_EFFORT = JUDGE_EFFORT;
 /** One page per request; thinking counts toward max_tokens. */
 export const CANON_MAX_TOKENS = 64000;
 
-export const CANON_KINDS = ["track", "prize", "criterion", "rule"] as const;
+export const CANON_KINDS = ["track", "prize", "criterion", "rule", "entry_step"] as const;
 export type CanonKind = (typeof CANON_KINDS)[number];
 
-/** Field names each kind may carry. `requirement` repeats; the rest appear at most once. */
+/** Field names each kind may carry. A track's `description` and `requirement` repeat (one per sentence of the
+ *  prize block, user 2026-11-06); the rest appear at most once. */
 export const KIND_FIELDS: Record<CanonKind, readonly string[]> = {
   track: ["description", "requirement", "eligible_with", "max_entries", "cash_value_usd", "winners"],
   prize: ["track", "place", "award_text", "amount_usd", "per"],
   criterion: ["description", "weight", "track"],
   rule: ["text", "applies_to", "rule_kind", "deadline"],
+  entry_step: ["track", "step_kind", "text"],
 };
 const ALL_FIELDS = [...new Set(Object.values(KIND_FIELDS).flat())];
-const REPEATS = new Set(["requirement"]);
+/** kind.field pairs that repeat, stored as `<field>s[n]` ("requirements[0]", "descriptions[1]"). */
+const REPEATS = new Set(["track.requirement", "track.description"]);
+/** Entry steps (user 2026-11-06): what entering a track takes beyond building and ticking it on Devpost. */
+export const STEP_KINDS = ["opt_in", "supplemental_form", "description_mention", "submission_field"] as const;
 /** Fields whose value names another entity by its ref in the same answer (or "all"). */
 const REF_FIELDS = new Set(["track", "applies_to"]);
 const NUMBER_FIELDS = new Set(["max_entries", "cash_value_usd", "winners", "amount_usd", "weight"]);
 const ENUMS: Record<string, readonly string[]> = {
   per: ["team", "person"],
   rule_kind: ["submission", "eligibility", "conduct"],
+  step_kind: STEP_KINDS,
 };
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?[+-]\d{2}:\d{2}$/;
 
@@ -43,15 +52,16 @@ ${scheduleLines(e)}
 
 Return entities. Each has:
 - ref: your own short id ("t1", "p1", "c1", "r1"), used only to point one entity at another in this answer.
-- kind: track | prize | criterion | rule.
+- kind: track | prize | criterion | rule | entry_step.
 - sponsor: the sponsor's name as the page writes it (Devpost prize titles start with it in brackets: "[Fetch.ai] Best Use of ASI:One" → "Fetch.ai"), or "event" for the event's own tracks, criteria and rules.
 - name: the entity's name, with the block and verbatim quote it comes from.
 - fields: a list of {field, value, block, quote}. Leave a field out when the page doesn't state it. Never guess.
 
 Kinds and their fields:
-- track: something a team enters or is judged for. On Devpost every prize block (a heading such as "[Visa] Best use of …" followed by its value, winner count and description) is one track. Its name is the heading. Fields: description (the block's description text), requirement (one per stated condition on entering or winning, e.g. "must be built with Cursor", "subject to eligibility verification"; repeat the field for each), eligible_with (stated stacking rules), max_entries, cash_value_usd (the block's own "$X in cash" line, as a number, "0" when it says $0), winners (the "N winners" line, as a number).
-- prize: what a winner of a track gets. One per place the track states ("1st place: $1250 + Interview" is one prize, "Special Recognition: $250 each" another); a track that names no places gets one prize with no place; something every entrant gets (a raffle entry, swag for all submitters) is its own prize with place "every entrant". Fields: track (the track's ref; quote ""), place ("1st place"), award_text (the award, verbatim, with everything the block says that winner gets: cash, credits, travel, interviews, swag), amount_usd (a number, only when a dollar amount is stated for that prize; credits and gift cards count only if stated in dollars), per ("team" or "person", only if stated).
-- criterion: a judging criterion. Name = the criterion's name. Fields: description, weight (only if stated, as a number), track (the track's ref, quote "", when the criterion is how one track is judged: "most innovative use of Tiger Data", "the more you use Cursor, the more likely you are to win"; leave it out for the event's criteria). A track's stated judging basis is a criterion, not a requirement.
+- track: something a team enters or is judged for. On Devpost every prize block (a heading such as "[Visa] Best use of …" followed by its value, winner count and description) is one track. Its name is the heading. Carry the block's full text, sentence by sentence, so nothing in it is lost: every sentence goes to exactly one of the track's requirement or description fields, one of its criteria, one of its entry steps, or one of its prizes. Fields: requirement (one per sentence that states what a project must do, use, build or submit to enter or win, copied as the sentence: "Build it on Convex", "Project must be using Apify in a meaningful way", "must be built with Cursor", "subject to eligibility verification"; repeat the field for each), description (one per remaining sentence of the block's description that is not a requirement, criterion, entry step or prize; repeat the field for each), eligible_with (stated stacking rules), max_entries, cash_value_usd (the block's own "$X in cash" line, as a number, "0" when it says $0), winners (the "N winners" line, as a number).
+- prize: what a winner of a track gets. One per place the track states ("1st place: $1250 + Interview" is one prize, "Special Recognition: $250 each" another); a track that names no places gets exactly one prize with no place, whatever its winner count and however many lines its award has ("3 winners" over an invitation, travel and a swag bag is one prize whose award_text holds all of it; "$5,000 in cash" and "4 winners" with no other line is one prize, award_text "$5,000 in cash"); something every entrant gets (a raffle entry, swag for all submitters) is its own prize with place "every entrant". Fields: track (the track's ref; quote ""), place ("1st place"), award_text (the award, verbatim, with everything the block says that winner gets: cash, credits, travel, interviews, swag), amount_usd (a number, only when a dollar amount is stated for that prize; credits and gift cards count only if stated in dollars), per ("team" or "person", only if stated).
+- criterion: a judging criterion. Name = the criterion's name. Fields: description, weight (only if stated, as a number), track (the track's ref, quote "", when the criterion is how one track is judged: "most innovative use of Tiger Data", "the more you use Cursor, the more likely you are to win"; leave it out for the event's criteria). A track's stated judging basis is a criterion, not a requirement: every sentence saying how the track is judged or what wins it ("We will judge the quality of the project", "Use real Convex features like live queries and components to win") is its own criterion with track set.
+- entry_step: something entering a track takes beyond building the project and ticking the track on Devpost. Fields: track (the track's ref; quote ""), step_kind: opt_in (register, sign up, join, apply or create an account first), supplemental_form (a separate form or survey to fill in), description_mention (something the Devpost description or submission must say or include, such as naming the track or the tool used), submission_field (a specific item the submission must carry for this track: a demo video, a repo link, a deck, a published Actor); text (the sentence, verbatim). Name = a short label in the page's words. The sentence may also be a requirement: then give both.
 - rule: a submission, eligibility or conduct rule hackers must follow. Name = a short label of 2 to 6 words taken from the rule's own words. Fields: text (the rule, verbatim), applies_to ("all", or a track ref when the rule is for one track; quote ""), rule_kind (submission | eligibility | conduct), deadline (ISO 8601 with offset, e.g. 2026-10-25T09:00-07:00, only when the rule states a date and time). A deadline's time is the event's local time: write the UTC offset actually in effect in ${e.timezone} on that date, even if the page's zone label (PST/PDT) disagrees.
 
 Quoting:
@@ -193,7 +203,7 @@ export function checkCanon(parsed: unknown, s: PageSnapshot, snapshotHash: strin
         errors.push(`${fat}: not a ${e.kind} field (allowed: ${KIND_FIELDS[e.kind]?.join(", ")})`);
         continue;
       }
-      if (seen.has(f.field) && !REPEATS.has(f.field)) errors.push(`${fat}: given twice`);
+      if (seen.has(f.field) && !REPEATS.has(`${e.kind}.${f.field}`)) errors.push(`${fat}: given twice`);
       seen.add(f.field);
       if (REF_FIELDS.has(f.field)) {
         const target = refs.get(f.value);
@@ -217,6 +227,7 @@ export function checkCanon(parsed: unknown, s: PageSnapshot, snapshotHash: strin
       if (missing.length) errors.push(`${fat}: ${missing.join(", ")} not in its quote`);
     }
     if (e.kind === "prize" && !e.fields.some((f) => f.field === "track")) errors.push(`${at}: a prize needs its track`);
+    if (e.kind === "entry_step" && !(["track", "step_kind", "text"] as const).every((k) => e.fields.some((f) => f.field === k))) errors.push(`${at}: an entry step needs track, step_kind and text`);
   }
   if (errors.length) return { error: `${errors.length} problem(s): ${errors.slice(0, 12).join("; ")}${errors.length > 12 ? "; …" : ""}` };
 
@@ -224,15 +235,24 @@ export function checkCanon(parsed: unknown, s: PageSnapshot, snapshotHash: strin
   const ids = new Map(raw.map((e) => [e.ref, `ref:${e.ref}`])); // replaced by D7 ids in assignIds
   const entities = raw.map((e): Entity => {
     const fields: Record<string, FieldValue<unknown>> = {};
-    let reqs = 0;
+    const n = new Map<string, number>();
     for (const f of e.fields) {
-      const key = f.field === "requirement" ? `requirements[${reqs++}]` : f.field;
+      const rep = REPEATS.has(`${e.kind}.${f.field}`);
+      const i = n.get(f.field) ?? 0;
+      if (rep) n.set(f.field, i + 1);
+      const key = rep ? `${f.field}s[${i}]` : f.field;
       const value = REF_FIELDS.has(f.field) ? (f.value === "all" ? "all" : ids.get(f.value)!) : NUMBER_FIELDS.has(f.field) ? Number(f.value) : f.value;
       fields[key === "track" ? "track_id" : key] = { value, source: src(REF_FIELDS.has(f.field) ? e.name.block : f.block, REF_FIELDS.has(f.field) ? e.name.quote : f.quote) };
     }
     return { id: ids.get(e.ref)!, kind: e.kind, sponsor: e.sponsor, name: { value: e.name.value, source: src(e.name.block, e.name.quote) }, fields, history: [], origin: "page" };
   });
-  return { entities: assignIds(entities, s) };
+  const final = assignIds(entities, s);
+  const failed = coverage(s, final).checks.filter((c) => c.pass === false);
+  if (failed.length)
+    return {
+      error: `coverage: ${failed.map((c) => `${c.name} (${c.summary}): ${c.details.slice(0, 8).join("; ")}`).join(" | ")}. Every prize block is one track; give each track one prize per stated place, or one prize with no place when it names none.`,
+    };
+  return { entities: final };
 }
 
 const words8 = (q: string) => slug(q.split(/\s+/).slice(0, 8).join(" "));
@@ -270,9 +290,9 @@ export function assignIds(entities: Entity[], s: PageSnapshot): Entity[] {
       id = prizeBase(e);
       const usd = e.fields.amount_usd?.value;
       if (baseCount.get(id)! > 1 && typeof usd === "number") id = `${id.slice(0, id.lastIndexOf("/"))}/usd-${usd}`;
-    } else if (e.kind === "rule") {
+    } else if (e.kind === "rule" || e.kind === "entry_step") {
       const at = e.fields.text?.source ?? e.name.source;
-      id = `rule:${page}#${pathOf(s, at.block)}/${words8(at.quote)}`;
+      id = `${e.kind}:${page}#${pathOf(s, at.block)}/${words8(at.quote)}`;
     } else id = entityId(e.kind as CanonKind, s, e.name.source.block!, e.name.value ?? "");
     remap.set(e.id, uniq(id));
   }
@@ -287,10 +307,10 @@ export function assignIds(entities: Entity[], s: PageSnapshot): Entity[] {
 // ---- the judge (D15, D21): a fresh Opus call that sees the page and the extraction, nothing else ----
 
 export function canonJudgeSystemPrompt(e: EventConfig): string {
-  return `You check an extraction of ${e.event}'s canon (tracks, prizes, judging criteria, rules) from one of its pages. You get the page as numbered blocks and the entities another model extracted, each with its id, kind, name and fields.
+  return `You check an extraction of ${e.event}'s canon (tracks, prizes, judging criteria, rules, entry steps) from one of its pages. You get the page as numbered blocks and the entities another model extracted, each with its id, kind, name and fields.
 
 Report:
-- missing: anything hackers need that the page states and no entity carries: a track or prize block with no track, a stated place or award with no prize, a judging criterion, a submission/eligibility/conduct rule, a stated requirement, deadline or dollar amount left out. Give its kind, the block it's in, and one line on what's missing.
+- missing: anything hackers need that the page states and no entity carries: a track or prize block with no track, a stated place or award with no prize, a judging criterion, a submission/eligibility/conduct rule, an entry step (opt-in, supplemental form, something the description must mention, a required submission item), a sentence of a prize block carried by no field, a stated requirement, deadline or dollar amount left out. Give its kind, the block it's in, and one line on what's missing.
 - misplaced: an entity or field that is wrong: a value the page doesn't say, a prize on the wrong track, a sponsor that isn't the one the page names, a rule given the wrong kind, a deadline at the wrong time. Give the entity id and one line on the problem.
 
 Don't report sponsor logos, navigation, judges' names, footers, or wording choices that keep the meaning. Return empty lists when the extraction is complete and correct.`;
