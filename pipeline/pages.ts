@@ -90,7 +90,8 @@ export function redactSnapshot(s: PageSnapshot, redact: (text: string) => { text
     const bare = u.replace(/[?#].*$/s, "");
     const m = /^([a-z][a-z0-9+.-]*:\/\/)([^/]*)(.*)$/i.exec(bare);
     if (!m) return bare.split("/").map(segment).join("/");
-    return `${m[1]}${m[2]!.split(".").map(segment).join(".")}${m[3]!.split("/").map(segment).join("/")}`;
+    const host = m[2]!.replace(/^.*@/s, ""); // userinfo (user:password@) never leaves the machine
+    return `${m[1]}${host.split(".").map(segment).join(".")}${m[3]!.split("/").map(segment).join("/")}`;
   };
   const blocks = s.blocks.map((b) => ({ ...b, text: scrub(b.text), path: b.path.map(scrub) }));
   const snapshot: PageSnapshot = { ...s, url: url(s.url), title: scrub(s.title), blocks, links: s.links.map((l) => ({ ...l, text: scrub(l.text), href: url(l.href) })) };

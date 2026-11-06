@@ -26,7 +26,7 @@ export interface CoverageReport {
 }
 
 const PRIZE_ANCHOR = /^prize_\d+$/;
-const MONEY = /\$\s?\d[\d,]*(?:\.\d+)?\s?[kK]?(?![\d])|\b\d[\d,]*(?:\.\d+)?\s?(?:USD|USDC)\b|\b\d[\d,]*\$/g;
+const MONEY = /\$\s?\d(?:[\d,]*\d)?(?:\.\d+)?\s?[kK]?(?![\d])|\b\d(?:[\d,]*\d)?(?:\.\d+)?\s?(?:USD|USDC)\b|\b\d(?:[\d,]*\d)?\$/g;
 const MONTH = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
 const DATE = new RegExp(`\\b${MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b|\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, "gi");
 
