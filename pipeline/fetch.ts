@@ -9,6 +9,8 @@
 // or renders no text without JavaScript is reported "needs the extension": the extension reads only pages that
 // need the user's login (or a browser to render). Fetched snapshots are access "public" by definition: the
 // request carries no cookies or credentials.
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import type { PageSnapshot } from "./schema.ts";
 
 export const USER_AGENT = "HackRecon/2.0 (+https://github.com/atishaypahadiya/hackrecon; a hacker's local tool, one request per page per sync)";
@@ -85,18 +87,51 @@ export interface FetchResult {
 }
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
+type Resolver = (host: string) => Promise<string[]>;
+const resolveAll: Resolver = async (host) => (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
 
-const sameSite = (a: URL, b: URL) => {
-  const base = (h: string) => h.split(".").slice(-2).join(".");
-  return base(a.hostname) === base(b.hostname);
-};
+/** A redirect may stay on the host or move between it and its own subdomains (http→https, devpost.com ↔
+ *  x.devpost.com); never sideways to a sibling under a shared suffix (a.co.uk → b.co.uk). */
+export const sameSite = (a: URL, b: URL) => a.hostname === b.hostname || b.hostname.endsWith(`.${a.hostname}`) || a.hostname.endsWith(`.${b.hostname}`);
+
+/** Addresses a sync must never reach: loopback, private, link-local (cloud metadata), CGNAT, ULA, unspecified, multicast. */
+export function isPublicAddress(ip: string): boolean {
+  const v4 = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/i.exec(ip);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224);
+  }
+  const h = ip.toLowerCase();
+  return !(h === "::" || h === "::1" || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || /^ff/.test(h) || h.startsWith("::ffff:"));
+}
+
+/** Refuses non-http(s) URLs, IP-literal hosts, and names that resolve to any non-public address. Checked on
+ *  every hop. (A DNS answer can change between this check and the request; the window is one lookup.) */
+export async function publicTarget(u: URL, resolve: Resolver = resolveAll): Promise<string | null> {
+  if (u.protocol !== "https:" && u.protocol !== "http:") return `${u.protocol} is not fetched`;
+  if (u.username || u.password) return "URLs with credentials are not fetched";
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) return `IP-address hosts (${host}) are not fetched`;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return `${host} is a local name`;
+  let addrs: string[];
+  try {
+    addrs = await resolve(host);
+  } catch (e) {
+    return `${host} doesn't resolve (${(e as Error).message})`;
+  }
+  const bad = addrs.find((a) => !isPublicAddress(a));
+  return bad ? `${host} resolves to a non-public address (${bad})` : addrs.length ? null : `${host} has no address`;
+}
 
 /** One sync's worth of polite fetching. Holds robots.txt per host for the run only, so each sync rereads it. */
 export class PoliteFetcher {
   private robots = new Map<string, Promise<Robots>>();
   private seen = new Map<string, Promise<FetchResult>>();
   robotsRequests = 0;
-  constructor(private fetcher: Fetcher = fetch) {}
+  constructor(
+    private fetcher: Fetcher = fetch,
+    private resolve: Resolver = resolveAll,
+  ) {}
 
   private headers() {
     return { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5" };
@@ -126,6 +161,8 @@ export class PoliteFetcher {
     let at = new URL(url);
     let requests = 0;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const unsafe = await publicTarget(at, this.resolve);
+      if (unsafe) return { url, status: "error", detail: `not fetched: ${unsafe}`, requests };
       if (!robotsAllows(await this.robotsFor(at.origin), at.pathname + at.search))
         return { url, status: "blocked_by_robots", detail: `${at.origin}/robots.txt does not allow ${at.pathname}${(await this.robotsFor(at.origin)) === "deny" ? " (robots.txt unreachable: fetching nothing from this host this sync)" : ""}`, requests };
       let res: Response;

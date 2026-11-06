@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft } from "./discover.ts";
-import { needsExtension, parseRobots, PoliteFetcher, robotsAllows, USER_AGENT } from "./fetch.ts";
+import { isPublicAddress, needsExtension, parseRobots, PoliteFetcher, robotsAllows, sameSite, USER_AGENT } from "./fetch.ts";
 import type { Entity, Message, PageSnapshot } from "./schema.ts";
 
 const msg = (o: Partial<Message>): Message => ({
@@ -102,11 +102,14 @@ describe("PoliteFetcher", () => {
   const html = (body: string) => new Response(`<html><body>${body}</body></html>`, { headers: { "content-type": "text/html" } });
   const mk = (routes: Record<string, () => Response>) => {
     const calls: { url: string; ua: string }[] = [];
-    const f = new PoliteFetcher(async (url, init) => {
-      calls.push({ url, ua: (init.headers as Record<string, string>)["User-Agent"]! });
-      const r = routes[url];
-      return r ? r() : new Response("nf", { status: 404 });
-    });
+    const f = new PoliteFetcher(
+      async (url, init) => {
+        calls.push({ url, ua: (init.headers as Record<string, string>)["User-Agent"]! });
+        const r = routes[url];
+        return r ? r() : new Response("nf", { status: 404 });
+      },
+      async (host) => (host === "intranet.corp" ? ["10.0.0.5"] : host === "meta.ok.example" ? ["169.254.169.254"] : ["93.184.216.34"]),
+    );
     return { f, calls };
   };
   test("one request per URL per sync, robots.txt once per host, honest User-Agent", async () => {
@@ -134,6 +137,23 @@ describe("PoliteFetcher", () => {
     const e = await f.get("http://e.com/");
     expect([e.status, e.final_url, e.requests]).toEqual(["fetched", "https://e.com/", 2]);
     expect((await f.get("https://f.com/")).detail).toContain("off-site");
+  });
+  test("never reaches private addresses, IP literals or local names, including via a redirect", async () => {
+    const { f, calls } = mk({
+      "https://ok.example/": () => new Response(null, { status: 302, headers: { location: "https://meta.ok.example/latest" } }),
+    });
+    for (const u of ["http://127.0.0.1/", "http://[::1]/", "http://localhost:3000/", "https://intranet.corp/", "file:///etc/passwd", "https://u:p@ok.example/x"])
+      expect((await f.get(u)).detail).toMatch(/^not fetched/);
+    expect((await f.get("https://ok.example/")).detail).toContain("meta.ok.example resolves to a non-public address (169.254.169.254)");
+    expect(calls.some((c) => c.url.includes("meta.ok.example") || c.url.includes("intranet"))).toBe(false);
+    expect(isPublicAddress("172.20.1.1")).toBe(false);
+    expect(isPublicAddress("100.64.0.1")).toBe(false);
+    expect(isPublicAddress("fd00::1")).toBe(false);
+    expect(isPublicAddress("::ffff:10.0.0.1")).toBe(false);
+    expect(isPublicAddress("8.8.8.8")).toBe(true);
+    expect(isPublicAddress("2606:4700::1")).toBe(true);
+    expect(sameSite(new URL("https://a.co.uk/"), new URL("https://b.co.uk/"))).toBe(false);
+    expect(sameSite(new URL("http://devpost.com/"), new URL("https://x.devpost.com/"))).toBe(true);
   });
   test("a page with no text or a short login form needs the extension", () => {
     const snap = (blocks: PageSnapshot["blocks"], no_text?: string) => ({ blocks, no_text }) as PageSnapshot;
