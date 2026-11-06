@@ -126,6 +126,7 @@ describe("numbers and dates", () => {
   });
   test("figuresIn finds amounts and dates", () => {
     expect(figuresIn("Win $500 or 200 USD by October 25th, 10/26")).toEqual(["$500", "200 USD", "October 25th", "10/26"]);
+    expect(figuresIn("1st place: $2000, 2nd: $1,000.")).toEqual(["$2000", "$1,000"]);
   });
 });
 
@@ -201,6 +202,7 @@ describe("redaction (D12)", () => {
     const red = (t: string) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: t.includes("Dana Reyes") ? 1 : 0 });
     const s = { ...snap, url: "https://dana-reyes.hive.io/p/dana_reyes/%E0%A4%A?token=abc", links: [] };
     expect(redactSnapshot(s, red).snapshot.url).toBe("https://[person].hive.io/p/[person]/%E0%A4%A");
+    expect(redactSnapshot({ ...s, url: "https://dana:hunter2@hive.io/x" }, red).snapshot.url).toBe("https://hive.io/x");
   });
 });
 
