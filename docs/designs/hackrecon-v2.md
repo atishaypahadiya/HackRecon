@@ -300,6 +300,10 @@ Input: fixture snapshots built from the public overview and rules pages (`hr pag
 
 **Stack rule result: Build asks for the stack.** B − A = 21.3 points over 94 pairs (bar 10); the "Best Use of X" gap is 32.8 points (bar 20), so both branches fire. The per-prize table is in `review/fit_eval.json` (gitignored). Prizes neither run finds: Notability (0/5), Bitdeer (0/2), and Nessie, Moss, Gemini, Solana, Vultr (0/1 each). The 12 event-level wins are listed, not scored. No fit threshold is set yet: the doc's rule is "threshold after the first run", and that call is the user's.
 
+### Offer ids (OV5, 2026-11-06)
+
+Claim board offers are now `o-<channel>-<first post ts>` (e.g. `o-spons-cartesia-1792446957154859`) instead of `o1…o20`. `board.json` carries `v1_ids`, built once by matching the v1 board.json's offers on their first post (20/20 matched) and carried forward on later builds; the board moves saved done marks through it on first load. D14 compares every offer field exactly after translating ids back through that map, so the only allowed difference is the id itself (12/12 pass).
+
 ## Build order and exit gates
 
 | Step | Builds | Exit gate | Est. |

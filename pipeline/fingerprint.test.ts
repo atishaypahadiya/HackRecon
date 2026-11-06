@@ -13,6 +13,10 @@ const BOARD = join(DIR, BOARD_DATA_PATH);
 
 /** Top-level fingerprint fields allowed to differ from the checked-in v1 fingerprint, with the decision. */
 const ALLOWED: Partial<Record<keyof Fingerprint, string>> = {};
+/** Field-level differences inside a field that is otherwise compared exactly, with the decision. */
+const ALLOWED_WITHIN = {
+  "offers[].id": "OV5 (D21): ids come from each offer's first post; compared through board.json's v1_ids map",
+};
 
 const key = readFingerprintKey(DIR);
 const ready = existsSync(BOARD) && key !== null;
@@ -21,7 +25,19 @@ if (!ready)
 
 describe.skipIf(!ready)("v1 Claim board fingerprint (D14)", () => {
   const want = JSON.parse(readFileSync(join(DIR, FINGERPRINT_FILE), "utf8")) as Fingerprint;
-  const got = fingerprint(JSON.parse(readFileSync(BOARD, "utf8")) as BoardData, key!);
+  const board = JSON.parse(readFileSync(BOARD, "utf8")) as BoardData;
+  const got = fingerprint(board, key!);
+  // OV5: translate today's ids back to v1's, so every other offer field is still compared exactly.
+  const toV1 = new Map(Object.entries(board.v1_ids ?? {}).map(([v1, id]) => [id, v1]));
+  got.offers = got.offers.map((o) => ({ ...o, id: toV1.get(o.id) ?? o.id }));
+
+  test(`offer ids are first-post ids (allowed to differ: ${ALLOWED_WITHIN["offers[].id"]})`, () => {
+    for (const o of board.offers) {
+      const p = o.posts.reduce((a, b) => (b.ts < a.ts ? b : a));
+      expect(o.id).toMatch(new RegExp(`^o-${p.channel}-${/\/p(\d{16})/.exec(p.permalink)?.[1] ?? "\\d+"}(~\\d+)?$`));
+    }
+    expect(toV1.size).toBe(board.offers.length);
+  });
 
   for (const field of Object.keys(want) as (keyof Fingerprint)[]) {
     test(ALLOWED[field] ? `${field} (allowed to differ: ${ALLOWED[field]})` : `${field} unchanged`, () => {

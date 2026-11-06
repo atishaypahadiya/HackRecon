@@ -73,6 +73,37 @@ export interface BoardData {
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
+  /** v1's positional ids (`o<n>`) → today's, so done marks saved before OV5 migrate once in the browser. */
+  v1_ids?: Record<string, string>;
+}
+
+/** OV5: an offer's id is its first post: `o-<channel name>-<ts digits>`, the ts as the permalink writes it.
+ *  Stable when offers are regrouped or reordered; a second offer from the same first post gets `~2`. */
+export function offerIds(firsts: { channel: string; ts: string }[]): string[] {
+  const seen = new Map<string, number>();
+  return firsts.map((f) => {
+    const base = `o-${f.channel}-${f.ts.replace(".", "")}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base}~${n}`;
+  });
+}
+
+const firstKey = (o: Pick<BoardOffer, "posts">) => {
+  const p = o.posts.reduce((a, b) => (b.ts < a.ts ? b : a));
+  return `${p.channel} ${p.ts}`;
+};
+
+/** v1 id → today's id, from the board.json this build replaces: carried forward when it already has the map,
+ *  else matched by first post when its ids are still positional (v1). Offers with no match are left out. */
+export function v1Ids(prev: Pick<BoardData, "offers" | "v1_ids"> | null, offers: BoardOffer[]): Record<string, string> {
+  if (!prev) return {};
+  const ids = new Set(offers.map((o) => o.id));
+  if (prev.v1_ids) return Object.fromEntries(Object.entries(prev.v1_ids).filter(([, id]) => ids.has(id)));
+  const byFirst = new Map(offers.filter((o) => o.posts.length).map((o) => [firstKey(o), o.id]));
+  const out: Record<string, string> = {};
+  for (const o of prev.offers) if (/^o\d+$/.test(o.id) && o.posts.length && byFirst.has(firstKey(o))) out[o.id] = byFirst.get(firstKey(o))!;
+  return out;
 }
 
 /** A Slack permalink's message time: .../p1792918203114859 is ts 1792918203.114859. */
@@ -183,6 +214,12 @@ export function boardData(o: {
   const byId = new Map(o.messages.map((m) => [m.id, m]));
   const redact = compileRedactor(buildNameList(new Set(o.messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), o.sponsors));
   const posts = o.messages.filter((m) => !m.subtype && m.author_kind !== "bot").map((m) => Number(m.ts)).sort((a, b) => a - b);
+  const ids = offerIds(
+    o.offers.map((f) => {
+      const id = f.posts.reduce((a, b) => (Number(b.split(":")[1]) < Number(a.split(":")[1]) ? b : a));
+      return { channel: byId.get(id)?.channel_name ?? "", ts: id.split(":")[1] ?? "" };
+    }),
+  );
   const offers: BoardOffer[] = o.offers.map((f, i) => {
     const ps = f.posts.map((id) => {
       const m = byId.get(id);
@@ -190,7 +227,7 @@ export function boardData(o: {
     });
     const texts = f.posts.map((id) => byId.get(id)).filter((m): m is Message => !!m).map((m) => ({ raw: m.text, plain: redact(plainText(m.text)).text }));
     return {
-      id: `o${i + 1}`,
+      id: ids[i]!,
       sponsor: f.sponsor === "event" ? o.event : f.sponsor,
       title: f.title,
       value_short: f.value_short,
