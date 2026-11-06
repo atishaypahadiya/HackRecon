@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkGaps, copies, gapRequirements, shortTrack, inputFacts, planGaps, type GapCache } from "./gaps.ts";
 import { NOT_STATED, type PlanTrack } from "./plan.ts";
-import { parseRepoUrl, repoFacts } from "./repo.ts";
+import { parseRepoUrl, repoFacts, repoTexts } from "./repo.ts";
 import type { Entity } from "./schema.ts";
 
 const src = { kind: "page" as const, url: "https://e.devpost.com/", quote: "", captured_at: "" };
@@ -87,9 +88,10 @@ describe("Linked repo", () => {
   test("only public GitHub repo links", () => {
     expect(parseRepoUrl("https://github.com/Cal-Hacks-2026/Hindsight")).toEqual({ owner: "Cal-Hacks-2026", name: "Hindsight" });
     expect(parseRepoUrl("https://github.com/o/r.git")).toEqual({ owner: "o", name: "r" });
-    for (const u of ["http://github.com/o/r", "https://gitlab.com/o/r", "https://github.com/o/r/tree/main", "file:///etc", "https://github.com/o"]) expect(parseRepoUrl(u)).toBeNull();
+    expect(["http://github.com/o/r", "https://www.github.com/o/r/"].map(parseRepoUrl)).toEqual([{ owner: "o", name: "r" }, { owner: "o", name: "r" }]);
+    for (const u of ["https://gitlab.com/o/r", "https://github.com/o/r/tree/main", "file:///etc", "https://github.com/o"]) expect(parseRepoUrl(u)).toBeNull();
   });
-  test("lines naming a product: README first, code next; tests, lockfiles, env files, secret-looking lines and symlinks skipped", () => {
+  test("lines naming a product, read from git objects: README first, code next; tests, lockfiles, env files, secret-looking lines, symlinks and binaries skipped", () => {
     const dir = mkdtempSync(join(tmpdir(), "hr-repo-"));
     const files: Record<string, string> = {
       "README.md": "# App\nWe scrape with Apify.\n",
@@ -97,6 +99,7 @@ describe("Linked repo", () => {
       "tests/test_scan.py": "apify in a test\n",
       "package-lock.json": '"apify": "1"\n',
       ".env.example": "APIFY=1\n",
+      "logo.bin": "apify\0binary",
     };
     for (const [f, t] of Object.entries(files)) {
       mkdirSync(join(dir, f, ".."), { recursive: true });
@@ -105,11 +108,15 @@ describe("Linked repo", () => {
     const outside = mkdtempSync(join(tmpdir(), "hr-outside-"));
     writeFileSync(join(outside, "secret.txt"), "apify secret outside the repo\n");
     symlinkSync(join(outside, "secret.txt"), join(dir, "link.md"));
-    const facts = repoFacts({ url: "https://github.com/o/r", dir, sha: "abc" }, ["Apify"], [...Object.keys(files), "link.md"]);
+    for (const args of [["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"]]) execFileSync("git", args, { cwd: dir });
+    const repo = { url: "https://github.com/o/r", dir, sha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim() };
+    const texts = repoTexts(repo);
+    expect([texts.has("link.md"), texts.has("logo.bin"), texts.get("README.md")]).toEqual([false, false, "# App\nWe scrape with Apify.\n"]);
+    const facts = repoFacts(repo, ["Apify"], texts);
     expect(facts.map((f) => [f.source, f.text])).toEqual([
       ["README.md:2", "We scrape with Apify."],
       ["api/scan.py:2", 'ACTOR = "apify/cheerio-scraper"'],
     ]);
-    expect(facts[1]!.url).toBe("https://github.com/o/r/blob/abc/api/scan.py#L2");
+    expect(facts[1]!.url).toBe(`https://github.com/o/r/blob/${repo.sha}/api/scan.py#L2`);
   });
 });

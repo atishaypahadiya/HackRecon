@@ -1716,7 +1716,17 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
     - Repo text is untrusted data, read through `pipeline/repo.ts` (outside the tree, no symlinks, nothing run).
     - A draft states only what its source line shows.
     - Where the code contradicts a claim (Hindsight lists Apify but runs the Store's Cheerio Scraper; `apps/actor` is a placeholder), the draft says what the code does.
-  - **Verify:** Hindsight's link reproduces the three used-fors the user confirmed by hand (2026-11-06) with their files. A draft with no source line is refused in a test. Nothing is saved before confirmation (board test). State the cost of any run over $1 first.
+  - **Verify (user 2026-11-06, replacing the Hindsight-only check):**
+    - **Smoke test:** Hindsight's link reproduces the three used-fors the user confirmed by hand, with their files.
+    - **Eval:** Cal Hacks 13.0's 90 winners with a public GitHub repo (`hr prefill-eval`; links read from their public Devpost pages into `fixtures/fit/repos13.json`). (a) Recall of each project's Devpost Built With from the repo-drafted stack. Strict: same name once case and punctuation are dropped. Loose: also one name's words inside the other's. No alias table. (b) Fit recall@3 and @5 with the drafted stack in place of Built With (run C), paired against the baseline's run B (58.5% and 71.3% on all 94 pairs) on the same pairs, with McNemar.
+    - **Tests:** a draft with no source line, a quote not in its line, or a used-for citing only a dependency line is refused. Nothing is saved before confirmation (board test, with the UI).
+    - State the cost of any run over $1 first.
+  - **Built so far (2026-11-06):**
+    - **Engine:** `pipeline/prefill.ts`, `hr prefill --repo`, and `hr prefill-eval`.
+    - **Facts picked in code:** README lines, a file-type and config summary, each declared dependency's line, and where each is imported (up to 6 files, with the file's opening comment).
+    - **Model:** one Sonnet call drafts; every citation is checked like the gap check.
+    - **Repos:** now partial clones with no working tree (blobs over 300 kB stay on GitHub), read from git's objects. Nothing from a repo is a file on disk.
+    - **Reachability:** of the 90 winners, 86 link a GitHub repo and 75 of those are readable. 7 are gone or private; 4 were `http://` links, now read over https.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.

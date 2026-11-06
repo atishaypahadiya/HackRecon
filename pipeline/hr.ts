@@ -73,6 +73,9 @@ import {
   FIT_CACHE_PATH,
   GAPS_CACHE_PATH,
   SHIP_GAPS_PATH,
+  PREFILL_CACHE_PATH,
+  PREFILL_EVAL_PATH,
+  PREFILL_REPOS_PATH,
   FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
@@ -122,10 +125,12 @@ import {
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
-import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
-import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
+import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
+import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
-import { checkoutRepo, repoFacts } from "./repo.ts";
+import { checkoutRepo, repoFacts, repoTexts } from "./repo.ts";
+import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft } from "./prefill.ts";
+import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
 import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
@@ -186,6 +191,12 @@ const USAGE = `usage:
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
   bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
+  bun run hr prefill --repo https://github.com/<owner>/<repo>
+      P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
+      Prints drafts only; nothing is saved to a project until the user confirms each one.
+  bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4]
+      P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
+      drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
   bun run hr ship --from fixtures/dogfood/<name>.json --enter "Best Actor, Claude for Public Benefit, ..." [--repo URL]
       Ship's Recheck gaps: the entered tracks' stated requirements and entry steps against the repo's latest
       commit (the result is reused while the commit is unchanged), open gaps first, then the tracks' checklist.
@@ -212,7 +223,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -232,6 +243,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "fit-eval") return fitEval(rest);
   if (cmd === "plan") return planCli(rest);
   if (cmd === "ship") return shipCli(rest);
+  if (cmd === "prefill") return prefillCli(rest);
+  if (cmd === "prefill-eval") return prefillEval(rest);
   if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
@@ -1349,6 +1362,145 @@ async function shipCli(args: string[]): Promise<number> {
     for (const q of d.requirements.filter((q) => !t.steps.some((s) => s.quote === q))) out(`    [ ] requirement: "${q}"`);
   }
   return 0;
+}
+
+function printDraft(d: PrefillDraft, out: (line: string) => void) {
+  const src = (s: PrefillDraft["description"]["sources"]) => s.map((x) => `      ${x.source}: "${x.quote}"${x.url ? `  ${x.url}` : ""}`);
+  out(`Description (draft)\n  ${d.description.text}`);
+  for (const l of src(d.description.sources)) out(l);
+  out(`\nStack (drafts; confirm each before it's saved)`);
+  for (const it of d.stack) {
+    out(`  ${it.name}${it.used_for ? `: ${it.used_for}` : "   (no used-for: no README or code line says what it does)"}`);
+    for (const l of src(it.sources)) out(l);
+  }
+}
+
+async function prefillCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { repo: { type: "string" } } });
+  if (!values.repo) {
+    console.error("--repo https://github.com/<owner>/<repo> is required");
+    return 2;
+  }
+  const repo = checkoutRepo(values.repo);
+  if ("error" in repo) {
+    console.error(repo.error);
+    return 1;
+  }
+  const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+  const t0 = Date.now();
+  const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache);
+  if ("error" in r) {
+    console.error(`couldn't draft: ${r.error}`);
+    return 1;
+  }
+  writeJsonFile(PREFILL_CACHE_PATH, cache);
+  const out = (line: string) => console.log(wrapText(line, cliWidth()));
+  out(`Prefill from ${repo.url} @ ${repo.sha.slice(0, 7)} (${r.from}, ${Date.now() - t0} ms; ${r.facts} repo lines${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})\n`);
+  printDraft(r.draft, out);
+  return 0;
+}
+
+async function prefillEval(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "4" } } });
+  const set = readJsonFile<{ items: EvalItem[] } | null>(FIT_EVAL_SET_PATH, null);
+  const repos = readJsonFile<Record<string, string>>(PREFILL_REPOS_PATH, {});
+  const baseline = readJsonFile<{ canon: string; pair_hits: PairHit[] } | null>(FIT_BASELINE_PATH, null);
+  if (!set || !baseline) {
+    console.error(`needs ${FIT_EVAL_SET_PATH} and ${FIT_BASELINE_PATH}`);
+    return 2;
+  }
+  let items = set.items.filter((it) => repos[it.slug]);
+  if (values.limit) items = items.slice(0, Number(values.limit));
+  const event = readEvent();
+  const entities = readJsonFile<CanonPage[]>(baseline.canon, []).flatMap((p) => p.entities);
+  const cards = trackCards(entities, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+  const system = fitSystemPrompt(event, cards);
+  const pcache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+  const fcache = readJsonFile<Record<string, FitCached>>(FIT_CACHE_PATH, {});
+  console.log(`${items.length} of ${set.items.length} winners link a GitHub repo (${PREFILL_REPOS_PATH}); canon ${baseline.canon}, ${cards.length} sponsor tracks`);
+  // Clone (or reuse) and read every repo first: free, and it tells the dry run how big each request is.
+  const prepared: { it: EvalItem; repo: Exclude<ReturnType<typeof checkoutRepo>, { error: string }>; texts: Map<string, string> }[] = [];
+  const unreadable: string[] = [];
+  for (const it of items) {
+    const repo = checkoutRepo(repos[it.slug]!);
+    if ("error" in repo) unreadable.push(`${it.slug}: ${repo.error}`);
+    else prepared.push({ it, repo, texts: repoTexts(repo) });
+  }
+  for (const u of unreadable) console.log(`  unreadable: ${u}`);
+  const sizes = prepared.map((p) => prefillRequest(prefillFacts(p.repo, p.texts)).length);
+  const cachedDrafts = prepared.filter((p) => pcache[prefillHashOf(p)]).length;
+  console.log(`${prepared.length} repos read; prefill request ${Math.min(...sizes)}–${Math.max(...sizes)} chars (mean ${Math.round(sizes.reduce((a, b) => a + b, 0) / Math.max(1, sizes.length))}); ${cachedDrafts} drafts cached`);
+  if (values["dry-run"]) {
+    console.log("dry run: no API call");
+    return 0;
+  }
+  const client = anthropicClient();
+  if (!client) return 2;
+  let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  let calls = 0;
+  const failed: string[] = [];
+  const drafts = new Map<string, PrefillDraft>();
+  let next = 0;
+  const worker = async () => {
+    while (next < prepared.length) {
+      const p = prepared[next++]!;
+      const r = await prefillDraft(client, p.repo, p.texts, pcache);
+      if ("error" in r) {
+        failed.push(`prefill ${p.it.slug}: ${r.error}`);
+        continue;
+      }
+      if (r.usage) {
+        usage = sumUsage([usage, r.usage]);
+        calls++;
+      }
+      drafts.set(p.it.slug, r.draft);
+      const request = fitRequest(p.it.description, r.draft.stack.map((s) => s.name));
+      const hash = fitHash(system, request);
+      if (!fcache[hash]) {
+        const f = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request, check: (x) => checkFit(x, cards) });
+        usage = sumUsage([usage, f.usage]);
+        calls += f.calls;
+        if ("error" in f) failed.push(`fit C ${p.it.slug}: ${f.error}`);
+        else fcache[hash] = { ranked: f.value, usage: f.usage, calls: f.calls };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+  writeJsonFile(PREFILL_CACHE_PATH, pcache);
+  writeJsonFile(FIT_CACHE_PATH, fcache);
+  console.log(formatUsage(calls, usage, FIT_MODEL));
+  for (const f of failed) console.error(`failed: ${f}`);
+  // (a) Built With recall
+  const scores = prepared.filter((p) => drafts.has(p.it.slug)).map((p) => scoreBuiltWith(p.it.slug, p.it.built_with ?? [], drafts.get(p.it.slug)!.stack.map((s) => s.name)));
+  const bw = builtWithReport(scores);
+  console.log(`\n(a) Built With recall from the drafted stack, ${bw.projects} projects with a Built With list, ${bw.tags} tags:`);
+  console.log(`  strict (same name once case and punctuation are dropped): ${fmt(bw.strict)}`);
+  console.log(`  loose (also one name's words inside the other's, e.g. "claude" in "Claude API"): ${fmt(bw.loose)}; per-project mean ${bw.mean_project_loose.toFixed(1)}%`);
+  // (b) Fit with the drafted stack (run C), paired against the baseline's B on the same pairs
+  const byName = new Map(cards.map((c) => [c.name, c]));
+  const C = new Map<string, { C3: boolean; C5: boolean }>();
+  for (const p of prepared) {
+    const d = drafts.get(p.it.slug);
+    const ranked = d ? fcache[fitHash(system, fitRequest(p.it.description, d.stack.map((s) => s.name)))]?.ranked : undefined;
+    for (const prize of p.it.won) {
+      const card = byName.get(prize);
+      if (!card) continue;
+      const ids = (ranked ?? []).map((r) => r.track_id);
+      C.set(`${p.it.slug}|${prize}`, { C3: ids.slice(0, 3).includes(card.id), C5: ids.slice(0, FIT_TOP).includes(card.id) });
+    }
+  }
+  const paired = pairedVsBaseline(baseline.pair_hits, C);
+  console.log(`\n(b) Fit with the drafted stack in place of Built With (run C), ${paired.pairs} won sponsor-track pairs of ${baseline.pair_hits.length} (projects with a readable repo), paired with the baseline's run B on the same pairs:`);
+  for (const r of paired.paired) console.log(`  ${formatPaired(r)}`);
+  console.log(`  whole baseline for reference: B recall@3 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B3).length, n: baseline.pair_hits.length })}, recall@5 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B5).length, n: baseline.pair_hits.length })}`);
+  if (paired.not_in_baseline.length) console.log(`  not in the baseline (skipped): ${paired.not_in_baseline.join(", ")}`);
+  writeJsonFile(PREFILL_EVAL_PATH, { built_with: bw, scores, fit: paired, failed, unreadable, usage, calls, model: FIT_MODEL, written_at: new Date().toISOString(), limit: values.limit ?? null });
+  console.log(`\nwrote ${PREFILL_EVAL_PATH}`);
+  return failed.length ? 1 : 0;
+
+  function prefillHashOf(p: (typeof prepared)[number]) {
+    return prefillHash(prefillRequest(prefillFacts(p.repo, p.texts)));
+  }
 }
 
 async function fitEval(args: string[]): Promise<number> {
