@@ -26,11 +26,53 @@ export const isToolGated = (name: string, e: EventConfig) => (e.tool_gated_prize
  *   stated     a requirement or judging-criterion sentence → the quote is one of them, plus a reason
  *   title      none, but the block says more than a prize amount → the title is the evidence ("requirements
  *              not stated"), and Plan asks the rep in Booths: "What does '<track>' reward?"
- *   cash_only  the block gives only "$X in cash" / "N winners" → title as evidence, ranked last, never "likely"
+ *   cash_only  the block gives only "$X in cash" / "N winners" and the title names no sponsor product → title as
+ *              evidence, ranked last, never "likely"
  * A requirement from any source upgrades the track: when step 1 merges Slack sponsor posts into canon as
  * requirements or criteria, title and cash_only tracks become stated with no change here.
  */
 export const EVIDENCE = ["stated", "title", "cash_only"] as const;
+/** Sponsor name → its aliases from sponsors.json ("Anthropic" → ["Claude"]): the product names a title may use. */
+export type SponsorAliases = Record<string, string[]>;
+export function sponsorAliases(sponsors: Record<string, { sponsor: string; aliases: string[] }>): SponsorAliases {
+  const out: SponsorAliases = {};
+  for (const s of Object.values(sponsors)) out[s.sponsor] = [...new Set([...(out[s.sponsor] ?? []), ...s.aliases])];
+  return out;
+}
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whole-word, case-insensitive: "Fetch.ai" in "built on fetch.ai agents", not "Mana" in "manage". */
+const hasWord = (text: string, w: string) => new RegExp(`(?<![a-z0-9])${esc(w)}(?![a-z0-9])`, "i").test(text);
+
+/**
+ * The sponsor products a track's title names (user 2026-11-06), in code: the X of "Use of (the) X" ("Gemini API",
+ * "Factory Droid SDK", "x402"), and the sponsor's name or a sponsors.json alias anywhere in the title outside
+ * "sponsored by …" ("Claude for Public Benefit" → Claude). "Best use of Reimagining Shopping sponsored by Visa"
+ * names none: that X is no product of Visa's, and "sponsored by" credits a sponsor, not a product.
+ */
+export function titleProducts(name: string, sponsor: string, aliases: SponsorAliases = {}): string[] {
+  const body = name.replace(/^\[[^\]]*\]\s*/, "");
+  const credited = body.replace(/\bsponsored by\b.*$/i, "");
+  const out: string[] = [];
+  const m = /\buse of (?:the )?(.+?)(?=\s+(?:by|sponsored|on|for|in)\b|$)/i.exec(credited);
+  const names = [sponsor, ...(aliases[sponsor] ?? [])].filter((n) => n && n !== "event");
+  // "Use of X" names a product when X holds the sponsor's name, or is a proper name ("Gemini API", "Nessie",
+  // "x402") that isn't a gerund phrase ("Reimagining Shopping").
+  const x = m?.[1]?.trim();
+  if (x && (names.some((n) => hasWord(x, n)) || (/^(?:[A-Z0-9]|[a-z]+\d)/.test(x) && !/^[A-Z][a-z]+ing\b/.test(x)))) out.push(x);
+  for (const n of names) if (hasWord(credited, n) && !out.some((o) => hasWord(o, n))) out.push(n);
+  return out;
+}
+
+/** Words a product name ends in that don't identify it: "Gemini API" is named by "Gemini", "Bitdeer AI Model Studio" by "Bitdeer". */
+const GENERIC = /\s+(?:api|sdk|ai|model|studio|builder|agent|platform|cloud)$/i;
+/** True when the user's idea or stack names the product: in full, or by its core without generic trailing words. */
+export function productMentioned(product: string, text: string): boolean {
+  let core = product;
+  while (GENERIC.test(core)) core = core.replace(GENERIC, "");
+  return hasWord(text, product) || (core.length >= 3 && hasWord(text, core));
+}
+
 /** A line that only restates a prize amount or winner count ("$5,000 in cash": Mana's whole award, Cal Hacks 13.0). */
 const CASH_ONLY = /^(?:\$\s?[\d,]+(?:\.\d+)?\+?(?:\s+in cash)?|\d+ winners?)$/i;
 export type Evidence = (typeof EVIDENCE)[number];
@@ -40,6 +82,8 @@ export interface TrackCard {
   sponsor: string;
   name: string;
   evidence: Evidence;
+  /** Sponsor products the title names (titleProducts); a track with any is at least "title". */
+  products: string[];
   /** What the ranker may quote on a stated track: its requirement and judging-criterion sentences only. */
   lines: string[];
   /** Shown to the ranker, never quotable: description sentences, entry steps, stacking rules, awards. */
@@ -47,7 +91,7 @@ export interface TrackCard {
 }
 
 /** A sponsor track and everything canon says about it, split into quotable (requirements, criteria) and context. */
-export function trackCards(entities: Entity[], e: EventConfig): TrackCard[] {
+export function trackCards(entities: Entity[], e: EventConfig, aliases: SponsorAliases = {}): TrackCard[] {
   const str = (v: unknown) => (typeof v === "string" ? v : null);
   const clean = (ls: (string | null)[]) => [...new Set(ls.filter((l): l is string => !!l).map(norm))];
   return entities
@@ -58,8 +102,11 @@ export function trackCards(entities: Entity[], e: EventConfig): TrackCard[] {
       const crit = of("criterion").flatMap((c) => [str(c.name.value), str(c.fields.description?.value)]);
       const lines = clean([...field(/^requirements\[/), ...crit]);
       const context = clean([...field(/^descriptions?(\[|$)/), ...of("entry_step").map((s) => str(s.fields.text?.value)), ...field(/^eligible_with$/), ...of("prize").map((p) => str(p.fields.award_text?.value))]).filter((l) => !lines.includes(l));
-      const evidence: Evidence = lines.length ? "stated" : context.some((l) => !CASH_ONLY.test(l)) ? "title" : "cash_only";
-      return { id: t.id, sponsor: t.sponsor, name: t.name.value ?? "", evidence, lines, context };
+      const name = t.name.value ?? "";
+      const products = titleProducts(name, t.sponsor, aliases);
+      // A title that names a sponsor product is evidence whatever the prize block holds (user 2026-11-06).
+      const evidence: Evidence = lines.length ? "stated" : products.length || context.some((l) => !CASH_ONLY.test(l)) ? "title" : "cash_only";
+      return { id: t.id, sponsor: t.sponsor, name, evidence, products, lines, context };
     });
 }
 

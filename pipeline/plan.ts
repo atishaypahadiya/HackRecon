@@ -6,7 +6,7 @@
 // live with 'new' markers; never sends anything." Fit words are "likely fits" / "possible", never "eligible".
 import type Anthropic from "@anthropic-ai/sdk";
 import type { EventConfig } from "./classify.ts";
-import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Evidence, type Ranked } from "./fit.ts";
+import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, productMentioned, trackCards, type Evidence, type Ranked, type SponsorAliases, type TrackCard } from "./fit.ts";
 import { callChecked } from "./model.ts";
 import type { Entity } from "./schema.ts";
 import type { Usage } from "./usage.ts";
@@ -24,6 +24,8 @@ export interface PlanTrack {
   name: string;
   sponsor: string;
   fit: "likely" | "possible";
+  /** True when the ranker said "likely" and capLikely lowered it to "possible". */
+  capped: boolean;
   reason: string;
   /** Tiered evidence (fit.ts): stated → a requirement or criterion sentence; title / cash_only → the title. */
   evidence: Evidence;
@@ -101,10 +103,21 @@ export function parseStack(s: string | undefined | null): string[] | null {
   return parts.length ? parts : null;
 }
 
+/**
+ * The label rule (user 2026-11-06), applied after ranking, in code: a title-tier track keeps "likely" only when a
+ * product its title names appears in the user's idea or stack ("Best Use of Claude" and a stack listing the Claude
+ * API); otherwise it shows as "possible". Ranking order and the eval are untouched: recall reads checkFit's list.
+ */
+export function capLikely(r: Ranked, card: TrackCard | undefined, input: PlanInput): { fit: Ranked["fit"]; capped: boolean } {
+  if (r.fit !== "likely" || card?.evidence !== "title") return { fit: r.fit, capped: false };
+  const text = [input.idea, ...(input.stack ?? [])].join("\n");
+  return card.products.some((p) => productMentioned(p, text)) ? { fit: "likely", capped: false } : { fit: "possible", capped: true };
+}
+
 /** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). */
-export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, now = () => performance.now()): Promise<PlanSection<PlanTrack> | { error: string }> {
+export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now()): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
-  const cards = trackCards(entities, e);
+  const cards = trackCards(entities, e, aliases);
   const system = fitSystemPrompt(e, cards);
   const request = fitRequest(input.idea, input.stack);
   const hash = fitHash(system, request);
@@ -120,11 +133,13 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
     cache[hash] = { ranked, usage: r.usage, calls: r.calls };
   }
   const byId = new Map(entities.map((x) => [x.id, x]));
-  const tier = new Map(cards.map((c) => [c.id, c.evidence]));
+  const cardOf = new Map(cards.map((c) => [c.id, c]));
   const items = ranked.map((r): PlanTrack => {
     const t = byId.get(r.track_id)!;
-    const evidence = tier.get(r.track_id) ?? "cash_only";
-    return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit: r.fit, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
+    const card = cardOf.get(r.track_id);
+    const evidence = card?.evidence ?? "cash_only";
+    const { fit, capped } = capLikely(r, card, input);
+    return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit, capped, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
   });
   items.sort((a, b) => (a.fit === b.fit ? 0 : a.fit === "likely" ? -1 : 1));
   return { items, from, ms: Math.round(now() - t0), usage };
