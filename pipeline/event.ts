@@ -41,6 +41,12 @@ export const POOL_META_PATH = "review/pool.json";
 export const GROUP_PATH = "review/offers.json";
 export const JUDGE_CACHE_PATH = "review/prelabel_cache.json";
 export const JUDGE_RUN_PATH = "review/prelabel_run.json";
+/** `hr canon`: entities per canon page, from extension snapshots. */
+export const CANON_PATH = "data/canon.json";
+/** `hr canon --fixtures`: the same from fixture snapshots, kept apart so it never reaches a board. */
+export const CANON_FIXTURES_PATH = "data/canon.fixtures.json";
+export const CANON_JUDGE_PATH = "review/canon_judge.json";
+export const CANON_JUDGE_FIXTURES_PATH = "review/canon_judge.fixtures.json";
 
 // Repo paths (shared by every event).
 /** The labeling rules. Their Columns section goes verbatim into both prompts: the Opus judge's

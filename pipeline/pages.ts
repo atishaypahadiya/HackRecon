@@ -59,3 +59,21 @@ export function pageCoverage(pages: LoadedPage[], wanted: string[]) {
   const missing = wanted.filter((u) => !latest.has(pageKey(u)));
   return { latest, missing };
 }
+
+/** D12: a logged-in page's text (access "authenticated", or no flag) is redacted before any model sees it, with
+ *  the v1 redactor (poster names) plus emails and phone numbers. Quotes are then checked against this text. */
+export function redactSnapshot(s: PageSnapshot, redact: (text: string) => { text: string; replaced: number }): { snapshot: PageSnapshot; replaced: number } {
+  let replaced = 0;
+  const scrub = (t: string) => {
+    const r = redact(t);
+    replaced += r.replaced;
+    return r.text
+      .replace(/[\w.%+-]+@[\w-]+(?:\.[\w-]+)+/g, () => (replaced++, "[email]"))
+      .replace(/(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)/g, () => (replaced++, "[phone]"));
+  };
+  const blocks = s.blocks.map((b) => ({ ...b, text: scrub(b.text), path: b.path.map(scrub) }));
+  return { snapshot: { ...s, blocks, links: s.links.map((l) => ({ ...l, text: scrub(l.text) })) }, replaced };
+}
+
+/** D12: only an explicit "public" skips redaction; the domain never decides. */
+export const needsRedaction = (s: PageSnapshot) => s.access !== "public";
