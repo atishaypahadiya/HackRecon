@@ -34,7 +34,7 @@ function fakeClient() {
         finalMessage: async () => {
           calls.n++;
           const factId = /\[(F\d+)\] README\.md:2/.exec(req.messages[0]!.content)![1];
-          const text = JSON.stringify({ gaps: [{ requirement_id: "R1", facts: [{ fact_id: factId, quote: "prebuilt Cheerio Scraper" }], gap: "Best Actor asks for building an actor; the README says the app runs Apify's prebuilt Cheerio Scraper.", instead: "run Apify's prebuilt Cheerio Scraper" }] });
+          const text = JSON.stringify({ gaps: [{ requirement_id: "R1", facts: [{ fact_id: factId, quote: "prebuilt Cheerio Scraper" }], gap: "Best Actor asks for building an actor; the README says the app runs Apify's prebuilt Cheerio Scraper.", instead: "run Apify's prebuilt Cheerio Scraper", question: "Does Best Actor need a new Actor built this weekend?" }] });
           return { content: [{ type: "text", text }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } };
         },
       }),

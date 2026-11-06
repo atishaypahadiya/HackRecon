@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkGaps, gapRequirements, inputFacts, planGaps, type GapCache } from "./gaps.ts";
+import { checkGaps, copies, gapRequirements, shortTrack, inputFacts, planGaps, type GapCache } from "./gaps.ts";
 import { NOT_STATED, type PlanTrack } from "./plan.ts";
 import { parseRepoUrl, repoFacts } from "./repo.ts";
 import type { Entity } from "./schema.ts";
@@ -45,10 +45,10 @@ describe("Plan gaps", () => {
   });
   const reqs = gapRequirements(tracks, [actor]);
   const facts = [...inputFacts(input), { ...repoLine, id: "F4" }];
-  const ok = { requirement_id: "R1", facts: [{ fact_id: "F4", quote: "apify/cheerio-scraper" }], gap: "Best Actor asks for building an actor; the repository runs Apify's prebuilt Cheerio Scraper.", instead: "run Apify's prebuilt Cheerio Scraper." };
+  const ok = { requirement_id: "R1", facts: [{ fact_id: "F4", quote: "apify/cheerio-scraper" }], gap: "Best Actor asks for building an actor; the repository runs Apify's prebuilt Cheerio Scraper.", instead: "run Apify's prebuilt Cheerio Scraper.", question: "Does Best Actor need a new Actor built this weekend?" };
   test("a gap keeps the page's quote from canon and the project's quote with its source and link", () => {
     expect(checkGaps({ gaps: [ok] }, reqs, facts)).toEqual([
-      { track_id: "actor", track: "[Apify] Best Actor", gap: ok.gap, instead: "run Apify's prebuilt Cheerio Scraper", requirement: { kind: "requirement", quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "apify/cheerio-scraper", source: "api/scan.py:3", url: repoLine.url }] },
+      { track_id: "actor", track: "[Apify] Best Actor", gap: ok.gap, instead: "run Apify's prebuilt Cheerio Scraper", question: "Does Best Actor need a new Actor built this weekend?", requirement: { kind: "requirement", quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "apify/cheerio-scraper", source: "api/scan.py:3", url: repoLine.url }] },
     ]);
   });
   test("rejected: a quote not in its fact, an unknown id, no project fact, a verdict or advice", () => {
@@ -61,6 +61,10 @@ describe("Plan gaps", () => {
     expect(err({ instead: "We run a scraper" })).toContain("without the");
     expect(err({ instead: "" })).toContain("verb phrase");
     expect(err({ instead: "run a scraper, which doesn't qualify" })).toContain("judges eligibility");
+    expect(err({ question: "Does it need a new Actor?" })).toContain('name the track as "Best Actor"');
+    expect(err({ question: "Does Best Actor need a new Actor" })).toContain('ending with "?"');
+    expect(err({ question: "Best Actor: is it a Best Actor award for building an actor for this event?" })).toContain("own words");
+    expect(err({ question: "Does Best Actor still count?" })).toContain("judges eligibility");
   });
   test("nothing to check (no likely track states a requirement): no model call", async () => {
     const r = await planGaps(null, [pt("t", "[X] Best Use of X", "likely", "title")], [actor], input, [], {});
@@ -71,6 +75,12 @@ describe("Plan gaps", () => {
     const first = await planGaps(null, tracks, [actor], input, [repoLine], cache);
     expect("error" in first).toBe(true);
   });
+});
+
+test("a track's spoken name, and the copy check", () => {
+  expect(["[Apify] Best Actor sponsored by Apify", "[Factory] Best Use of the Factory Droid SDK", "[Figma] Best Design"].map(shortTrack)).toEqual(["Best Actor", "Best Use of the Factory Droid SDK", "Best Design"]);
+  expect(copies("does it need building an actor for this event?", "We have a Best Actor award for building an actor for this event.")).toBe(true);
+  expect(copies("does Best Actor need a new Actor built this weekend?", "We have a Best Actor award for building an actor for this event.")).toBe(false);
 });
 
 describe("Linked repo", () => {

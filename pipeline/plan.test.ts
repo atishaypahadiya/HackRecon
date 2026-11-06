@@ -132,10 +132,10 @@ describe("Plan tracks", () => {
     const tr = (track_id: string, name: string, evidence: PlanTrack["evidence"], quote: string): PlanTrack => ({ track_id, name, sponsor: "Apify", evidence, label: evidence === "stated" ? null : NOT_STATED, fit: "likely", capped: false, product_names: ["Apify"], reason: "", quote, source_url: "https://e.devpost.com/", steps: [] });
     const actor = tr("actor", "[Apify] Best Actor", "stated", "Project must be using Apify in a meaningful way.");
     const use = tr("use", "[Apify] Best Use of Apify", "title", "[Apify] Best Use of Apify");
-    const gap = { track_id: "actor", track: "[Apify] Best Actor", gap: "g", instead: "run Apify's prebuilt Cheerio Scraper", requirement: { kind: "requirement" as const, quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "Not used: Radar runs Apify's Cheerio Scraper", source: "apps/actor/README.md:7", url: "u" }] };
+    const gap = { track_id: "actor", track: "[Apify] Best Actor", gap: "g", instead: "run Apify's prebuilt Cheerio Scraper", question: "Does Best Actor need a new Actor built this weekend?", requirement: { kind: "requirement" as const, quote: "We have a Best Actor award for building an actor for this event.", source_url: "https://e.devpost.com/" }, project: [{ quote: "Not used: Radar runs Apify's Cheerio Scraper", source: "apps/actor/README.md:7", url: "u" }] };
     const withGap = boothQuestions([actor, use], input, [gap]);
     expect(withGap.map((x) => x.question)).toEqual([
-      "We run Apify's prebuilt Cheerio Scraper; what does ‘We have a Best Actor award for building an actor for this event’ need from us?",
+      "We run Apify's prebuilt Cheerio Scraper; does Best Actor need a new Actor built this weekend?",
       "We use Apify to scrape campus calendars; what does ‘Best Use of Apify’ reward beyond that?",
     ]);
     expect(withGap[0]!.grounds).toBe("the gap check: apps/actor/README.md:7 “Not used: Radar runs Apify's Cheerio Scraper”; the page's requirement “We have a Best Actor award for building an actor for this event”");

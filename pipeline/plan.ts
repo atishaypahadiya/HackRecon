@@ -149,7 +149,8 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput, gaps: Gap[
     const gap = gaps.find((g) => g.track_id === t.track_id);
     if (gap) {
       const from = gap.project.map((p) => `${p.source} “${unstop(p.quote)}”`).join("; ");
-      out.push(q({ track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url }, `We ${gap.instead}`, `what does ‘${unstop(gap.requirement.quote)}’ need from us?`, `the gap check: ${from}; the page's ${gap.requirement.kind === "entry_step" ? "entry step" : "requirement"} “${unstop(gap.requirement.quote)}”`));
+      const ask = gap.question.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
+      out.push(q({ track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url }, `We ${gap.instead}`, ask, `the gap check: ${from}; the page's ${gap.requirement.kind === "entry_step" ? "entry step" : "requirement"} “${unstop(gap.requirement.quote)}”`));
       continue;
     }
     const sp = stackProduct(t.product_names, input.stack);
