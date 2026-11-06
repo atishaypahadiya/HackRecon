@@ -288,6 +288,18 @@ Input: fixture snapshots built from the public overview and rules pages (`hr pag
 - **Coverage checks as implemented** (`pipeline/coverage.ts`): (1) the page total = Σ track `cash_value_usd` × `winners`; (2) every prize block has a track named from its heading and at least one prize; (3) every $-amount and date is in a verified quote from its block or listed "unattached", a listing, not a failure. These differ from D15's wording; see Unresolved decisions.
 - **D7 ids.** Ids that included a model-chosen name kept 100 of 148 across two extractions of the same snapshot. Ids now come only from page-fixed parts: a track by its heading path; a prize by its track and stated place (by stated amount when several prizes share one place); a rule by its path and the first words of its verbatim text; a criterion by its path and name. Across the three runs every recurring id is kept (148/148, 149/149, rules 3/3); later runs only add entities. The tolerant-match threshold (0.8) is therefore uncalibrated: an unchanged snapshot never needs it. Calibrate it on the first re-capture whose snapshot hash changes.
 
+### Idea-fit baseline (T7, D23, 2026-11-06)
+
+`hr fit-eval --fixtures`: claude-sonnet-5-5, effort medium, top 5 per project, against the 40 sponsor tracks in run 3's canon (fixture snapshots). 162 rankings, 0 failed, every cited quote verified; $1.47 at list price. Agreement with Devpost outcomes, not accuracy.
+
+| Metric | Run A (description) | Run B (+ Built With) |
+|---|---|---|
+| recall@3, all sponsor-track pairs | **37.2% (35/94)** headline | 58.5% (55/94) |
+| recall@3, "Best Use of X" pairs (21 prizes) | 27.6% (16/58) | 60.3% (35/58) |
+| any-hit per project | 40.7% (33/81) | 65.4% (53/81) |
+
+**Stack rule result: Build asks for the stack.** B − A = 21.3 points over 94 pairs (bar 10); the "Best Use of X" gap is 32.8 points (bar 20), so both branches fire. The per-prize table is in `review/fit_eval.json` (gitignored). Prizes neither run finds: Notability (0/5), Bitdeer (0/2), and Nessie, Moss, Gemini, Solana, Vultr (0/1 each). The 12 event-level wins are listed, not scored. No fit threshold is set yet: the doc's rule is "threshold after the first run", and that call is the user's.
+
 ## Build order and exit gates
 
 | Step | Builds | Exit gate | Est. |
