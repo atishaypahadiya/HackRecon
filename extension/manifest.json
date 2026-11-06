@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HackRecon capture",
   "version": "0.1.0",
-  "description": "Captures the Slack channel open in this tab, or the page open in this tab, as rendered. After capturing an announcement channel it reads the event's Devpost pages in a background tab and saves them for hr sync.",
+  "description": "Captures the Slack channel open in this tab, or the page open in this tab, as rendered. After capturing an announcement channel it reads the event's own Devpost pages in a background tab and saves them for hr sync.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -14,9 +14,6 @@
   },
   "host_permissions": [
     "https://*.devpost.com/*"
-  ],
-  "optional_host_permissions": [
-    "https://*/*"
   ],
   "background": {
     "service_worker": "dist/background.js"

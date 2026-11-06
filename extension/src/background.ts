@@ -3,6 +3,7 @@
 // ~/Downloads/hackrecon/pages/<file>.page.json for `hr sync`, and the tab is closed. One load per page per sync.
 // UNVERIFIED in Chrome until step 5's Slack session: the settle timing and the Cloudflare wait are untested.
 import { pageFileName } from "../../pipeline/schema.ts";
+import { DEVPOST_EVENT_URL } from "./autopages.ts";
 
 const SETTLE_POLL_MS = 1000;
 const SETTLE_MAX_MS = 25_000;
@@ -28,6 +29,8 @@ const textState = (tabId: number) =>
   chrome.scripting.executeScript({ target: { tabId }, func: () => ({ title: document.title, chars: document.body?.innerText.length ?? 0 }) }).then((r) => r[0]?.result as { title: string; chars: number });
 
 async function capturePage(url: string): Promise<string> {
+  // Same rule as the content script, checked again here: only an event's own Devpost pages, over https.
+  if (!DEVPOST_EVENT_URL.test(url)) return `${url}: not an event Devpost page; not opened`;
   const tab = await chrome.tabs.create({ url, active: false });
   const tabId = tab.id!;
   try {
@@ -43,6 +46,9 @@ async function capturePage(url: string): Promise<string> {
     }
     if (BOT_CHECK.test(state.title)) return `${url}: still behind a bot check after ${SETTLE_MAX_MS / 1000}s; not saved`;
     if (state.chars < MIN_TEXT) return `${url}: under ${MIN_TEXT} characters of text after ${SETTLE_MAX_MS / 1000}s; not saved`;
+    // After redirects the tab must still be on an event Devpost page (path may differ; host and scheme may not).
+    const at = new URL((await chrome.tabs.get(tabId)).url ?? "about:blank");
+    if (!DEVPOST_EVENT_URL.test(`${at.protocol}//${at.host}/`)) return `${url}: ended up on ${at.host || "a non-web page"}; not saved`;
     await chrome.scripting.executeScript({ target: { tabId }, files: ["dist/page-snap.js"] });
     const [r] = await chrome.scripting.executeScript({ target: { tabId }, func: () => window.__hackreconSnap!() });
     const json = r?.result as string;

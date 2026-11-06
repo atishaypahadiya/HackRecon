@@ -1021,7 +1021,7 @@ async function sync(args: string[]): Promise<number> {
     console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
   }
   const seen = readJsonFile<PublicSeen>(FETCH_LOG_PATH, {});
-  for (const r of results) if (r.status === "fetched") seen[pageKey(r.url)] = new Date().toISOString();
+  for (const r of results) if (r.status === "fetched" && r.hash) (seen[pageKey(r.url)] ??= {})[r.hash] = new Date().toISOString();
   writeJsonFile(FETCH_LOG_PATH, seen);
 
   // Pages the extension read in a background tab during "Sync this event" (Devpost refuses most plain fetches).
