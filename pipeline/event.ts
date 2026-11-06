@@ -52,6 +52,8 @@ export const FIT_CACHE_PATH = "data/fit_cache.json";
 /** The fit eval set: public winners, descriptions and Built With lists (gitignored like all fixtures). */
 export const FIT_EVAL_SET_PATH = "fixtures/fit/eval13.json";
 export const FIT_EVAL_PATH = "review/fit_eval.json";
+/** The fit gate's fixed baseline: per-pair hits of the run it was set from (`hr fit-eval --set-baseline`). */
+export const FIT_BASELINE_PATH = "review/fit_baseline.json";
 /** `hr sync`: what discovery found this sync (URLs, fetch results, sponsor and organizer drafts). */
 export const DISCOVERED_PATH = "data/discovered.json";
 

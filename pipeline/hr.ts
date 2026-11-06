@@ -67,6 +67,7 @@ import {
   CAPTURES_DIR,
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
+  FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
   EVENT_PATH,
@@ -116,7 +117,7 @@ import {
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
-import { formatFitReport, scoreFit, type EvalItem } from "./fiteval.ts";
+import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -171,7 +172,7 @@ const USAGE = `usage:
       ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
-  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6]
+  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
       ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
       Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
@@ -1029,7 +1030,7 @@ interface FitCached {
 async function fitEval(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" } },
+    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" }, "set-baseline": { type: "boolean", default: false } },
   });
   const event = readEvent();
   const canonPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
@@ -1094,7 +1095,27 @@ async function fitEval(args: string[]): Promise<number> {
   console.log(`\n${formatFitReport(report)}`);
   writeJsonFile(FIT_EVAL_PATH, { ...report, model: FIT_MODEL, effort: FIT_EFFORT, canon: canonPath, written_at: new Date().toISOString() });
   console.log(`\nwrote ${FIT_EVAL_PATH}`);
-  return failed.length ? 1 : 0;
+  if (values.limit) {
+    console.log("\nfit gate: not applied to a --limit run (it needs the whole pair set)");
+    return failed.length ? 1 : 0;
+  }
+  if (values["set-baseline"]) {
+    if (failed.length) {
+      console.error("not setting a baseline from a run with failed rankings");
+      return 1;
+    }
+    writeJsonFile(FIT_BASELINE_PATH, { canon: canonPath, model: FIT_MODEL, effort: FIT_EFFORT, written_at: new Date().toISOString(), pair_hits: report.pair_hits });
+    console.log(`wrote ${FIT_BASELINE_PATH} (${report.pair_hits.length} pairs): later runs are gated against it`);
+    return 0;
+  }
+  const base = readJsonFile<{ canon: string; written_at: string; pair_hits: PairHit[] } | null>(FIT_BASELINE_PATH, null);
+  if (!base) {
+    console.log(`\nfit gate: no baseline at ${FIT_BASELINE_PATH}; set it with \`bun run hr fit-eval --fixtures --set-baseline\``);
+    return failed.length ? 1 : 0;
+  }
+  const gate = fitGate(report.pair_hits, base.pair_hits);
+  console.log(`\n${formatFitGate(gate, `${base.canon}, ${base.written_at.slice(0, 10)}`)}`);
+  return failed.length || !gate.passes ? 1 : 0;
 }
 
 function receiptPreview(args: string[]): number {
