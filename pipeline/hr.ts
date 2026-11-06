@@ -101,13 +101,18 @@ import {
   canonRequest,
   canonSystemPrompt,
   checkCanon,
+  assignIds,
   checkJudge,
+  keyed,
+  rematch,
+  REMATCH_THRESHOLD,
   type JudgeVerdict,
+  type Keyed,
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
-import type { Entity } from "./schema.ts";
+import type { Entity, PageSnapshot } from "./schema.ts";
 import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
@@ -685,6 +690,9 @@ interface CanonPage {
   input_hash: string;
   entities: Entity[];
   coverage: CoverageReport;
+  /** D7: ids from the previous extraction with no entity left (or two candidates), shown "no longer on the page". */
+  no_longer_on_page: { id: string; reason: "no match" | "ambiguous"; best: number }[];
+  match_keys: Keyed[];
   usage: Usage;
   cost_usd: number;
   written_at: string;
@@ -720,6 +728,22 @@ function anthropicClient(): Anthropic | null {
     console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
     return null;
   }
+}
+
+/** D7: an entity whose id changed but whose page text still matches keeps its previous id, so done and
+ *  selected marks survive; previous ids with nothing left are kept in no_longer_on_page until they reappear. */
+function carryIds(prev: CanonPage | undefined, next: Entity[], snap: PageSnapshot): { entities: Entity[]; gone: CanonPage["no_longer_on_page"] } {
+  if (!prev?.match_keys) return { entities: next, gone: [] };
+  const m = rematch(prev.match_keys, keyed(next, snap), REMATCH_THRESHOLD);
+  const fix = (v: unknown) => (typeof v === "string" && m.renamed.has(v) ? m.renamed.get(v)! : v);
+  const entities = next.map((e) => ({
+    ...e,
+    id: m.renamed.get(e.id) ?? e.id,
+    fields: Object.fromEntries(Object.entries(e.fields).map(([k, fv]) => [k, k === "track_id" || k === "applies_to" ? { ...fv, value: fix(fv.value) } : fv])),
+  }));
+  const gone = [...m.gone, ...(prev.no_longer_on_page ?? [])].filter((g, i, all) => all.findIndex((x) => x.id === g.id) === i && !entities.some((e) => e.id === g.id));
+  if (m.renamed.size || gone.length) console.log(`D7: ${m.renamed.size} entities kept their previous id; ${gone.length} no longer on the page`);
+  return { entities, gone };
 }
 
 async function canon(args: string[]): Promise<number> {
@@ -772,6 +796,7 @@ async function canon(args: string[]): Promise<number> {
         if (page) out.push(page);
         continue;
       }
+      const { entities, gone } = carryIds(page, r.value.entities, c.snap);
       page = {
         url: p.snapshot.url,
         file: p.file,
@@ -782,14 +807,18 @@ async function canon(args: string[]): Promise<number> {
         model: CANON_MODEL,
         prompt_hash: c.prompt_hash,
         input_hash: c.input_hash,
-        entities: r.value.entities,
-        coverage: coverage(c.snap, r.value.entities),
+        entities,
+        coverage: coverage(c.snap, entities),
+        no_longer_on_page: gone,
+        match_keys: keyed(entities, c.snap),
         usage: r.usage,
         cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)),
         written_at: new Date().toISOString(),
       };
     } else {
-      page = { ...page, coverage: coverage(c.snap, page.entities) };
+      // Same input: ids are re-derived anyway, so a change to the id scheme reaches cached pages (marks follow, D7).
+      const { entities, gone } = carryIds(page, assignIds(page.entities, c.snap), c.snap);
+      page = { ...page, entities, no_longer_on_page: gone, match_keys: keyed(entities, c.snap), coverage: coverage(c.snap, entities) };
       console.log(`cached (${page.entities.length} entities, input unchanged); --force to rerun`);
     }
     out.push(page);
