@@ -60,7 +60,7 @@ export const FIT_EVAL_PATH = "review/fit_eval.json";
 export const FIT_BASELINE_PATH = "review/fit_baseline.json";
 /** `hr sync`: what discovery found this sync (URLs, fetch results, sponsor and organizer drafts). */
 export const DISCOVERED_PATH = "data/discovered.json";
-/** URL key → last cookie-less HTTP 200 from hr sync: what lets an automatic extension capture count as public (ingest.ts). */
+/** URL key → hashes of snapshots hr sync fetched without cookies: an automatic extension capture is public only on an exact match (ingest.ts). */
 export const FETCH_LOG_PATH = "data/fetch_log.json";
 
 // Repo paths (shared by every event).

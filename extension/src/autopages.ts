@@ -1,17 +1,16 @@
 // Which pages "Sync this event" opens in a background tab (v2, user 2026-11-06). DOM-free so it can be tested.
-// From an announcement channel's capture: the event's Devpost root and /rules, always (host-limited by the
-// manifest to *.devpost.com). Schedule candidates only when Slack's restricted-posting flag is set on that
-// capture: a page opened with the user's cookies must come from a post only organizers could make.
+// Only the event's Devpost root and /rules, from an announcement channel's capture. Devpost is the one site the
+// user asked for (its Cloudflare refuses most plain fetches); other pages a post links (schedule sites) are never
+// opened automatically with the user's cookies (security review 2026-11-06).
 import { devpostCanonPages, discoverUrls } from "../../pipeline/discover.ts";
 import type { CaptureFile } from "../../pipeline/schema.ts";
 
 export const ANNOUNCE_NAME = /announce/i;
+/** An event's own Devpost site: https, one label under devpost.com, not Devpost's own subdomains. */
+export const DEVPOST_EVENT_URL = /^https:\/\/(?!(?:www|help|info|secure|api)\.)[a-z0-9-]+\.devpost\.com\/(?:rules)?$/;
 
 export function autoPageTargets(file: Pick<CaptureFile, "channel_name" | "posting_restricted" | "messages">): string[] {
-  const restricted = file.posting_restricted === true;
-  if (!restricted && !ANNOUNCE_NAME.test(file.channel_name)) return [];
+  if (file.posting_restricted !== true && !ANNOUNCE_NAME.test(file.channel_name)) return [];
   const found = discoverUrls(file.messages, new Set([file.channel_name]));
-  const out = found.devpost ? devpostCanonPages(found.devpost.url) : [];
-  if (restricted) out.push(...found.schedule.map((f) => f.url));
-  return out;
+  return found.devpost ? devpostCanonPages(found.devpost.url).filter((u) => DEVPOST_EVENT_URL.test(u)) : [];
 }

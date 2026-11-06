@@ -4,7 +4,8 @@ import { isPublicAddress, needsExtension, parseRobots, PoliteFetcher, robotsAllo
 import type { Entity, Message, PageSnapshot } from "./schema.ts";
 import { decideIngest } from "./ingest.ts";
 import { pageKey } from "./pages.ts";
-import { autoPageTargets } from "../extension/src/autopages.ts";
+import { autoPageTargets, DEVPOST_EVENT_URL } from "../extension/src/autopages.ts";
+import { snapshotHash } from "./pages.ts";
 
 const msg = (o: Partial<Message>): Message => ({
   text: "",
@@ -188,18 +189,22 @@ describe("automatic extension pages (user, 2026-11-06)", () => {
   const root = "https://e.devpost.com/";
   const wanted = new Set([pageKey(root)]);
   test("public only after a cookie-less 200; otherwise authenticated (redacted)", () => {
-    expect(decideIngest(snap(root, "2026-11-06T10:00:00Z"), wanted, undefined, {}).access).toBe("authenticated");
-    const d = decideIngest(snap(root, "2026-11-06T10:00:00Z"), wanted, undefined, { [pageKey(root)]: "2026-11-06T09:00:00Z" });
+    const s = snap(root, "2026-11-06T10:00:00Z");
+    const h = snapshotHash({ ...s, captured_by: "extension" });
+    expect(decideIngest(s, wanted, undefined, {}).access).toBe("authenticated");
+    expect(decideIngest(s, wanted, undefined, { [pageKey(root)]: { otherhash: "2026-11-06T09:00:00Z" } }).access).toBe("authenticated");
+    const d = decideIngest(s, wanted, undefined, { [pageKey(root)]: { [h]: "2026-11-06T09:00:00Z" } });
     expect([d.action, d.access, d.snapshot?.access]).toEqual(["saved", "public", "public"]);
   });
   test("unwanted URLs are ignored; older or identical captures don't replace the current snapshot", () => {
     expect(decideIngest(snap("https://other.devpost.com/", "2026-11-06T10:00:00Z"), wanted, undefined, {}).action).toBe("not_wanted");
     expect(decideIngest(snap(root, "2026-11-06T08:00:00Z", "new text"), wanted, { hash: "x", captured_at: "2026-11-06T09:00:00Z" }, {}).action).toBe("older");
   });
-  test("targets: Devpost root and rules from an announcement capture; schedule only with Slack's restricted flag", () => {
+  test("targets: only the event's Devpost root and rules; schedule sites are never opened automatically", () => {
     const ms = [msg({ ts: "2.0", text: "Devpost https://cal-hacks-13-0.devpost.com and our live site https://hive.example.org" })];
     expect(autoPageTargets({ channel_name: "0-announcements", posting_restricted: null, messages: ms })).toEqual(["https://cal-hacks-13-0.devpost.com/", "https://cal-hacks-13-0.devpost.com/rules"]);
-    expect(autoPageTargets({ channel_name: "0-announcements", posting_restricted: true, messages: ms })).toContain("https://hive.example.org/");
+    expect(autoPageTargets({ channel_name: "0-announcements", posting_restricted: true, messages: ms })).not.toContain("https://hive.example.org/");
+    for (const u of ["http://e.devpost.com/", "https://www.devpost.com/", "https://e.devpost.com.evil.net/", "https://a.b.devpost.com/", "https://e.devpost.com/software/x"]) expect([u, DEVPOST_EVENT_URL.test(u)]).toEqual([u, false]);
     expect(autoPageTargets({ channel_name: "random", posting_restricted: false, messages: ms })).toEqual([]);
   });
 });
