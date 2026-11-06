@@ -41,7 +41,7 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData } from "./board.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData, v1Ids, type BoardData } from "./board.ts";
 import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
@@ -629,6 +629,7 @@ async function board(args: string[]): Promise<number> {
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
     permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
+  data.v1_ids = v1Ids(readJsonFile<BoardData | null>(BOARD_DATA_PATH, null), data.offers);
   writeJsonFile(BOARD_DATA_PATH, data);
   console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
   if (values["build-only"]) return 0;

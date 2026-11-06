@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boardData, eventDeadlines, excerpt, morningOf, permalinkTs, plainText, replayFrames, type BoardOffer } from "./board.ts";
+import { boardData, eventDeadlines, excerpt, morningOf, permalinkTs, plainText, offerIds, replayFrames, v1Ids, type BoardOffer } from "./board.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
 import type { Message } from "./schema.ts";
@@ -74,5 +74,25 @@ describe("boardData", () => {
     expect(d.offers[0]!.excerpt).not.toContain("Grant");
     expect(d.reps).toEqual([{ sponsor: "Acme", channel: "spons-a", posts: 1, offers: 1, candidates: 1, candidate_first: [1792800000] }]);
     expect(d.event_deadlines).toEqual([]);
+  });
+});
+
+describe("offer ids (OV5)", () => {
+  test("first-post ids, ~n for a second offer from the same post", () => {
+    expect(offerIds([{ channel: "spons-acme", ts: "1792446957.154859" }, { channel: "spons-acme", ts: "1792446957.154859" }, { channel: "b", ts: "1.000001" }])).toEqual([
+      "o-spons-acme-1792446957154859",
+      "o-spons-acme-1792446957154859~2",
+      "o-b-1000001",
+    ]);
+  });
+  const post = (channel: string, ts: number) => ({ ts, channel, permalink: "" });
+  const now = [bo({ id: "o-a-2", posts: [post("a", 2), post("a", 3)] }), bo({ id: "o-b-1", posts: [post("b", 1)] })];
+  test("v1 positional ids map by first post; unmatched v1 offers are left out", () => {
+    const v1 = { offers: [bo({ id: "o1", posts: [post("b", 1)] }), bo({ id: "o2", posts: [post("a", 3), post("a", 2)] }), bo({ id: "o3", posts: [post("c", 9)] })] };
+    expect(v1Ids(v1, now)).toEqual({ o1: "o-b-1", o2: "o-a-2" });
+  });
+  test("an existing map is carried forward, dropping ids no longer on the board", () => {
+    expect(v1Ids({ offers: now, v1_ids: { o1: "o-b-1", o9: "o-gone-5" } }, now)).toEqual({ o1: "o-b-1" });
+    expect(v1Ids(null, now)).toEqual({});
   });
 });

@@ -760,7 +760,13 @@ addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { bui
 fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
   D = data; F = D.frames;
   DONE_KEY = `hackrecon:done:${D.event}`;
-  try { done = new Set(JSON.parse(store.get(DONE_KEY) || "[]").filter((id) => D.offers.some((o) => o.id === id))); } catch { done = new Set(); }
+  try {
+    // OV5: marks saved under v1's positional ids (o3) move to first-post ids once, then save in the new form.
+    const saved = JSON.parse(store.get(DONE_KEY) || "[]"), v1 = D.v1_ids || {};
+    const moved = saved.map((id) => (/^o\d+$/.test(id) && v1[id]) || id);
+    done = new Set(moved.filter((id) => D.offers.some((o) => o.id === id)));
+    if (moved.some((id, k) => id !== saved[k])) store.set(DONE_KEY, JSON.stringify([...done]));
+  } catch { done = new Set(); }
   D.posts.forEach((t, k) => postIndex.set(t, k));
   for (const o of D.offers) for (const p of o.posts) if (!offerByTs.has(p.ts)) offerByTs.set(p.ts, o);
   for (let t = D.posts[0]; dayKey(t) <= dayKey(Math.max(D.posts.at(-1), F.at(-1))); t += 86400) if (!dayOf.has(dayKey(t))) { dayOf.set(dayKey(t), days.length); days.push(dayKey(t)); }
