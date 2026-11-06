@@ -1548,6 +1548,20 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - Also possible: [Figma] Best Design, ranked "possible" by the model. Its title names no product, so the cap would have lowered a "likely" anyway.
       - Booths asks Anthropic, Factory, Apify and Figma "What does ‘<track>’ reward?". All 4 targeted tracks appear; targeted, not won.
 
+  - **Project-aware Booths questions (user 2026-11-06), in code from the plan item, no model call.**
+    - **Templates:**
+      - Stated tracks: "We use <stack product> <use>; does that count as ‘<quoted requirement>’?"
+      - Title-only tracks: "…; what does ‘<track title>’ reward beyond that?"
+    - **Where each part comes from:**
+      - <stack product> is the user's stack entry naming a title product, the sponsor or an alias. It's the entry itself when that's little more than the product ("Claude API"), else the product as spelled there ("Figma" from "UI designed in Figma").
+      - <use> is the description's own "to/for …" clause about the product, or else "for <the description's first sentence>", which says only that the product is used in this project.
+    - **Hindsight's description states no use for any tool**, so all five questions use the fallback, e.g. "We use Claude API for a transfer planner for community-college transfer students; what does ‘Claude for Public Benefit’ reward beyond that?".
+    - **Edge cases:**
+      - A title-only track whose products the user doesn't name keeps the plain "What does ‘<track>’ reward?".
+      - A stated track without one gets no question.
+      - cash_only tracks get none.
+    - Each question carries its grounds: the stack entry, the description phrase, and the page's quote or "states no requirements".
+
 ### Fit baseline before Slack requirements (2026-11-06)
 
 `review/fit_baseline.json` is now the complete tiered run above (run 2026-11-06T21:56Z, set with `hr fit-eval --set-baseline` from cache), replacing the T7 baseline. This is the measurement step 1 compares against: Slack sponsor posts merged as requirements or criteria move tracks from title-only to stated, and the next gate run is paired against these 94 pairs.

@@ -1131,7 +1131,7 @@ async function planCli(args: string[]): Promise<number> {
     console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.capped ? " (ranked likely; the title's product isn't in your description or stack)" : ""}${t.label ? `   (${t.label})` : ""}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
     for (const s of t.steps) console.log(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
   }
-  const booths = boothQuestions(r.items);
+  const booths = boothQuestions(r.items, input);
   if (booths.length) console.log("\nBooths: questions for reps");
   for (const b of booths) console.log(`  ${b.sponsor}: ${b.question}\n    ${b.grounds}  ${b.source_url}`);
   if (dog?.targeted?.length) {

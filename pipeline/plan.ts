@@ -29,6 +29,8 @@ export interface PlanTrack {
   reason: string;
   /** Tiered evidence (fit.ts): stated → a requirement or criterion sentence; title / cash_only → the title. */
   evidence: Evidence;
+  /** What the user's words may name for this track: the title's products, the sponsor and its sponsors.json aliases. */
+  product_names: string[];
   /** "requirements not stated" when the page states none (tiers title and cash_only); null on stated tracks. */
   label: string | null;
   /** Verified by checkFit against the track's requirement and criterion lines, or its title. */
@@ -49,11 +51,69 @@ export interface BoothQuestion {
 export const NOT_STATED = "requirements not stated";
 const bare = (name: string) => name.replace(/^\[[^\]]*\]\s*/, "");
 
-/** Booths (user 2026-11-06): each title-tier track in the plan → "What does '<track>' reward?" for its rep. */
-export function boothQuestions(tracks: PlanTrack[]): BoothQuestion[] {
-  return tracks
-    .filter((t) => t.evidence === "title")
-    .map((t) => ({ track_id: t.track_id, sponsor: t.sponsor, question: `What does ‘${bare(t.name)}’ reward?`, grounds: `Devpost states no requirements or judging criteria for ${t.name}`, source_url: t.source_url }));
+const sentences = (s: string) => s.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
+const unstop = (s: string) => s.replace(/[\s.!?;:,]+$/, "");
+
+/** The project in the user's words: the description's first sentence, without a leading "<Name>:" label. */
+export function projectLead(idea: string): string {
+  const first = sentences(idea)[0] ?? idea;
+  return unstop(first.replace(/^[^:\s][^:]{0,40}:\s+(?=\S)/, (m) => (m.trim().split(/\s+/).length <= 3 ? "" : m)));
+}
+
+/** A stack entry naming one of the track's products, in the user's words: the entry when it is little more than
+ *  the product ("Claude API" for Claude), else the product as the entry spells it ("Figma" from "UI designed in Figma"). */
+export function stackProduct(names: string[], stack: string[] | null): { phrase: string; entry: string } | null {
+  for (const entry of stack ?? [])
+    for (const n of names) {
+      if (!productMentioned(n, entry)) continue;
+      const short = entry.split(/\s+/).length <= n.split(/\s+/).length + 1;
+      const at = entry.toLowerCase().indexOf(n.toLowerCase());
+      return { phrase: short || at < 0 ? entry : entry.slice(at, at + n.length), entry };
+    }
+  return null;
+}
+
+/** What the description itself says the product does: "uses Apify to scrape course catalogs" → "to scrape course
+ *  catalogs". Null when it says nothing, so the question never states a use the user didn't write. */
+export function statedUse(names: string[], idea: string): string | null {
+  for (const s of sentences(idea))
+    for (const n of names) {
+      const m = new RegExp(`(?<![a-z0-9])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])(?:\\s+\\w+){0,2}?\\s+((?:to|for)\\s+[^.;!?]+)`, "i").exec(s);
+      if (m) return unstop(m[1]!);
+    }
+  return null;
+}
+
+/**
+ * Booths (user 2026-11-06), built in code from the plan item; no model call. Facts come only from the user's
+ * description and stack, and the page:
+ *   "We use <stack product> <use>; does that count as '<quoted requirement>'?"     (stated tracks)
+ *   "We use <stack product> <use>; what does '<track title>' reward beyond that?"  (title-only tracks)
+ * <use> is the description's own "to/for …" clause about the product when it has one, else "for <the project>"
+ * (its first sentence), which says only that the product is used in this project. A title-only track whose
+ * products the user doesn't name gets the plain "What does '<track>' reward?"; a stated track without one gets no
+ * question (its requirement is already on the page). cash_only tracks get none.
+ */
+export function boothQuestions(tracks: PlanTrack[], input: PlanInput): BoothQuestion[] {
+  const lead = projectLead(input.idea);
+  const out: BoothQuestion[] = [];
+  for (const t of tracks) {
+    if (t.evidence === "cash_only") continue;
+    const sp = stackProduct(t.product_names, input.stack);
+    const named = sp ? null : t.product_names.find((n) => productMentioned(n, input.idea));
+    const product = sp?.phrase ?? named;
+    const base = { track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url };
+    const page = t.evidence === "stated" ? `the page's requirement “${unstop(t.quote)}”` : `Devpost states no requirements or judging criteria for ${t.name}`;
+    if (!product) {
+      if (t.evidence === "title") out.push({ ...base, question: `What does ‘${bare(t.name)}’ reward?`, grounds: page });
+      continue;
+    }
+    const use = statedUse(t.product_names, input.idea);
+    const ask = t.evidence === "stated" ? `does that count as ‘${unstop(t.quote)}’?` : `what does ‘${bare(t.name)}’ reward beyond that?`;
+    const said = [sp ? `your stack lists “${sp.entry}”` : `your description names ${product}`, use ? `your description says “${use}”` : `your description: “${lead}”`];
+    out.push({ ...base, question: `We use ${product} ${use ?? `for ${lead}`}; ${ask}`, grounds: `${said.join("; ")}; ${page}` });
+  }
+  return out;
 }
 
 export interface PlanSection<T> {
@@ -139,7 +199,8 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
     const card = cardOf.get(r.track_id);
     const evidence = card?.evidence ?? "cash_only";
     const { fit, capped } = capLikely(r, card, input);
-    return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit, capped, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
+    const product_names = [...new Set([...(card?.products ?? []), t.sponsor, ...(aliases[t.sponsor] ?? [])])].filter((n) => n && n !== "event");
+    return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit, capped, product_names, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
   });
   items.sort((a, b) => (a.fit === b.fit ? 0 : a.fit === "likely" ? -1 : 1));
   return { items, from, ms: Math.round(now() - t0), usage };
