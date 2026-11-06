@@ -272,6 +272,22 @@ Like v1, every number is agreement with Opus, said so on every report, plus a ha
 
 The judge never sees the producer's reasoning, only the source and the output (v1 rule: blind to Haiku). Disagreements land in `hr label` for the user to settle, and the user's label wins.
 
+### Canon results, Cal Hacks 13.0 Devpost (step 3, 2026-11-06)
+
+Input: fixture snapshots built from the public overview and rules pages (`hr pages --from-html`, `captured_by: "fixture"`), not extension captures, so the output goes to `data/canon.fixtures.json` and never reaches a board. Re-run on extension captures before step 4 ships.
+
+- **Page total changed.** The overview now says "$204,408+ in prizes"; the $159,822 above was measured 2026-10-28. Devpost computes the total as Σ over prize blocks of the block's "$X in cash" line × its "N winners" line: that sum is exactly $204,408 [measured]. It overstates some sponsors' own text (Hyphenate: $16,000 × 5 winners = $80,000 vs "8000$, 5000$, 3000$ for the top 3 teams").
+- **Three runs** (run 1 → prompt fixes → run 2 → run 3), $1.43–1.54 per extraction pass and $0.17 per judge pass at list price:
+
+| Run | Entities (overview + rules) | prize_total | prize_blocks | Unattached figures | Opus judge |
+|---|---|---|---|---|---|
+| 1 | 148 + 3 | PASS | PASS (52/52) | 8 (after a comma fix in the money pattern) | 2 missing (Meta Round 2 condition, SpaceXSI raffle) |
+| 2 | 149 + 3 | PASS | PASS | 4 | 2 missing (Tiger Data and SpaceXSI judging basis) |
+| 3 | 154 + 3 | PASS | PASS | 5 | **0 missing, 0 misplaced** |
+
+- **Coverage checks as implemented** (`pipeline/coverage.ts`): (1) the page total = Σ track `cash_value_usd` × `winners`; (2) every prize block has a track named from its heading and at least one prize; (3) every $-amount and date is in a verified quote from its block or listed "unattached", a listing, not a failure. These differ from D15's wording; see Unresolved decisions.
+- **D7 ids.** Ids that included a model-chosen name kept 100 of 148 across two extractions of the same snapshot. Ids now come only from page-fixed parts: a track by its heading path; a prize by its track and stated place (by stated amount when several prizes share one place); a rule by its path and the first words of its verbatim text; a criterion by its path and name. Across the three runs every recurring id is kept (148/148, 149/149, rules 3/3); later runs only add entities. The tolerant-match threshold (0.8) is therefore uncalibrated: an unchanged snapshot never needs it. Calibrate it on the first re-capture whose snapshot hash changes.
+
 ## Build order and exit gates
 
 | Step | Builds | Exit gate | Est. |
@@ -1332,6 +1348,11 @@ Synthesized from this review's findings. Each task derives from a specific findi
 
 ## Unresolved decisions
 None in this review. D16's label precondition was resolved by D23 (won tracks only, 90 public 13.0 winners). Facts to fill: next event and platform (D18).
+
+Open since step 3 (2026-11-06), for the user: D15's coverage wording vs what the page allows.
+- D15 (1) says "sum of extracted prize amounts must reconcile with the page's stated total". Read literally on run 3: 37 of 80 prizes state a dollar amount, summing to $58,890 vs the page's $204,408. The gap comes from the page, not the extraction: Devpost's total is its own cash field × winner count. Implemented instead: Σ cash × winners from each track's quoted "$X in cash" and "N winners" lines, which reconciles exactly and fails on any dropped line.
+- D15 (2) says "count of prize headings / prize blocks … must equal the extracted prize count". Literally: 52 blocks vs 80 prizes, because a block can hold several places (Fetch.ai: 1st, 2nd, 3rd, Special Recognition). Implemented instead: each of the 52 blocks has a track and at least one prize.
+- D15 (3) is implemented as written (attached or listed); a listed figure doesn't fail.
 
 ## Completion summary
 - Step 0: Scope Challenge — scope reduced per recommendation (`hr init` deferred, D1; smaller module arrangement, D2)
