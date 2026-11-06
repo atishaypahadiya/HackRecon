@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fitHash, fitRequest, fitSystemPrompt, trackCards } from "./fit.ts";
-import { boothQuestions, capLikely, NOT_STATED, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
+import { boothQuestions, capLikely, NOT_STATED, projectLead, stackProduct, statedUse, parseStack, planTracks, type FitCache, type PlanTrack } from "./plan.ts";
 import type { TrackCard } from "./fit.ts";
 import type { Entity } from "./schema.ts";
 
@@ -29,11 +29,39 @@ describe("Plan tracks", () => {
     expect([r.from, r.items.map((t) => [t.track_id, t.fit]), r.items[0]!.source_url]).toEqual(["cache", [["t1", "likely"], ["t2", "possible"]], "https://e.devpost.com/"]);
     expect(r.items.map((t) => t.steps.map((s) => [s.id, s.step_kind, s.quote]))).toEqual([[["s1", "opt_in", "Sign up on the Acme portal"], ["s2", "supplemental_form", "Fill in the Acme form"]], []]);
   });
-  test("title-tier tracks carry 'requirements not stated' and get a rep question in Booths; stated and cash_only don't", () => {
-    const t = (track_id: string, name: string, evidence: PlanTrack["evidence"]): PlanTrack => ({ track_id, name, sponsor: "Fig", evidence, label: evidence === "stated" ? null : NOT_STATED, fit: "possible", capped: false, reason: "", quote: name, source_url: "https://e.devpost.com/", steps: [] });
-    expect(boothQuestions([t("a", "[Fig] Best Design", "title"), t("b", "[Fig] Most Creative", "stated"), t("c", "[Mana] Best Use of Mana", "cash_only")])).toEqual([
-      { track_id: "a", sponsor: "Fig", question: "What does ‘Best Design’ reward?", grounds: "Devpost states no requirements or judging criteria for [Fig] Best Design", source_url: "https://e.devpost.com/" },
+  const H = { idea: "Hindsight: a transfer planner for community-college transfer students. It shows which transferred credits count, what's left, an every-term plan to graduation with schedule and free time, campus opportunities, and an Ask assistant.", stack: ["web app on Vercel", "Python FastAPI backend", "Claude API", "Apify", "Factory Droid SDK", "UI designed in Figma"] };
+  const t = (track_id: string, name: string, evidence: PlanTrack["evidence"], product_names: string[], quote = name): PlanTrack => ({ track_id, name, sponsor: product_names[0] ?? "S", evidence, label: evidence === "stated" ? null : NOT_STATED, fit: "possible", capped: false, product_names, reason: "", quote, source_url: "https://e.devpost.com/", steps: [] });
+  test("Booths questions are built from the plan item: the user's stack entry, their description, the page's quote or title", () => {
+    const q = boothQuestions(
+      [
+        t("actor", "[Apify] Best Actor sponsored by Apify", "stated", ["Apify"], "Project must be using Apify in a meaningful way."),
+        t("claude", "[Anthropic] Claude for Public Benefit", "title", ["Claude", "Anthropic"]),
+        t("figma", "[Figma] Best Design", "title", ["Figma"]),
+        t("mana", "[Mana] Best Use of Mana", "title", ["Mana"]),
+        t("conv", "[Convex] Best use of Convex", "stated", ["Convex"], "Build it on Convex"),
+        t("visa", "[Visa] Best use of Reimagining Shopping sponsored by Visa", "cash_only", ["Visa"]),
+      ],
+      H,
+    );
+    expect(q.map((b) => [b.track_id, b.question])).toEqual([
+      ["actor", "We use Apify for a transfer planner for community-college transfer students; does that count as ‘Project must be using Apify in a meaningful way’?"],
+      ["claude", "We use Claude API for a transfer planner for community-college transfer students; what does ‘Claude for Public Benefit’ reward beyond that?"],
+      ["figma", "We use Figma for a transfer planner for community-college transfer students; what does ‘Best Design’ reward beyond that?"],
+      ["mana", "What does ‘Best Use of Mana’ reward?"],
     ]);
+    expect(q[2]!.grounds).toBe("your stack lists “UI designed in Figma”; your description: “a transfer planner for community-college transfer students”; Devpost states no requirements or judging criteria for [Figma] Best Design");
+  });
+  test("a use is stated only when the description states it; the user's words, never invented", () => {
+    const idea = "Catalog: a course planner. It uses Apify to scrape course catalogs every night.";
+    expect(statedUse(["Apify"], idea)).toBe("to scrape course catalogs every night");
+    expect(statedUse(["Apify"], H.idea)).toBeNull();
+    expect(projectLead(H.idea)).toBe("a transfer planner for community-college transfer students");
+    expect(projectLead("An app that helps nurses: triage at a glance.")).toBe("An app that helps nurses: triage at a glance");
+    const [b] = boothQuestions([t("actor", "[Apify] Best Actor sponsored by Apify", "stated", ["Apify"], "Project must be using Apify in a meaningful way.")], { idea, stack: null });
+    expect(b!.question).toBe("We use Apify to scrape course catalogs every night; does that count as ‘Project must be using Apify in a meaningful way’?");
+    expect(b!.grounds).toContain("your description names Apify; your description says “to scrape course catalogs every night”");
+    expect(stackProduct(["Claude"], ["Claude API"])).toEqual({ phrase: "Claude API", entry: "Claude API" });
+    expect(stackProduct(["Mana"], ["manage state with Redux"])).toBeNull();
   });
   test("label rule: a title-only 'likely' stays only when the user names a product the title names (user 2026-11-06)", () => {
     const card = (name: string, evidence: TrackCard["evidence"], products: string[]): TrackCard => ({ id: "t", sponsor: "S", name, evidence, products, lines: [], context: [] });
