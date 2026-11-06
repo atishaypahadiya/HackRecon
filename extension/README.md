@@ -1,6 +1,6 @@
 # HackRecon capture extension
 
-Captures the Slack channel open in the current tab, as the web client renders it, into `<channel_id>.json` (schema: `pipeline/schema.ts`, `CaptureFile`). It only scrolls the visible message pane. It makes no Slack API calls, opens no profile cards, and sends nothing anywhere.
+Captures the Slack channel open in the current tab, as the web client renders it, into `<channel_id>.json` (schema: `pipeline/schema.ts`, `CaptureFile`). It also captures any other page open in the tab (Devpost, an event site) into `<host>-<path>.page.json` (`PageSnapshot`). It only scrolls the visible message pane. It makes no Slack API calls, opens no profile cards, and sends nothing anywhere.
 
 ## Build and load
 
@@ -16,16 +16,25 @@ In Chrome, open `chrome://extensions`, turn on Developer mode, click **Load unpa
 1. Open the channel at `app.slack.com/client/...`.
 2. Click the extension icon, then **Capture this channel**.
 3. The overlay shows progress. It jumps to the newest message, then scrolls up one step every 1.5 s. It stops at the channel-start header (`stop_reason: channel_start`), or after 5 steps with no new messages (`no_new_keys`). **Stop and download** ends it early (`user_stopped`).
-4. `<channel_id>.json` lands in Downloads. Move it to `captures/` (gitignored).
+4. `<channel_id>.json` lands in Downloads. Move it to `events/<slug>/captures/` (gitignored).
 
-Leave the tab visible while it runs. Do channels in `config/sponsors.json` order, the locked 25 first.
+Leave the tab visible while it runs. Do channels in `events/<slug>/config/sponsors.json` order, the locked 25 first.
+
+## Capture a page
+
+1. Open the page (e.g. the hackathon's Devpost overview, then its rules page).
+2. Click the extension icon and answer **Can anyone open this page without logging in?** Pick "No" for anything you only see logged in (Hive, a sponsor portal). That answer decides whether the text is redacted before any model sees it; a file with no answer is treated as logged-in.
+3. Click **Capture this page**. It reads the page once, as rendered, and downloads `<host>-<path>.page.json`. No requests, no scrolling.
+4. Move it to `events/<slug>/captures/pages/` and run `bun run hr pages` to check it against `canon_pages` in `config/event.json`.
+
+Content inside an iframe or a PDF isn't captured; the snapshot says so (`no_text`).
 
 ## Check it against the export, right away
 
 ```bash
-bun run hr compare captures/                     # every capture
+bun run hr compare                              # every capture in events/current/captures/
 bun run hr compare ~/Downloads/C0C7TCNCR1N.json  # one file
-bun run hr compare captures/ --json captures/compare.json
+bun run hr compare --json events/current/captures/compare.json
 ```
 
 Per channel you get:

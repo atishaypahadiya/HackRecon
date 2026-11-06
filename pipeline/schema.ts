@@ -136,6 +136,79 @@ export function parseCaptureFile(v: unknown, where = "capture"): CaptureFile {
   return o as unknown as CaptureFile;
 }
 
+// Page snapshots (v2 D3, D11, D12): a public or logged-in page's text, captured by the extension's
+// "Capture this page" and saved as <host>-<path>.page.json under events/<slug>/captures/pages/.
+export const PAGE_SCHEMA_VERSION = 1;
+/** Who could open the page: anyone ("public") or only a logged-in user ("authenticated"). Set by the user
+ *  in the popup; decides redaction (D12), never the domain. A missing flag is treated as authenticated. */
+export const PAGE_ACCESS = ["public", "authenticated"] as const;
+export type PageAccess = (typeof PAGE_ACCESS)[number];
+
+export interface PageBlock {
+  /** Position in reading order. */
+  i: number;
+  /** Texts of the enclosing h1–h6 headings, outermost first. */
+  path: string[];
+  /** Set on heading blocks: 1–6. */
+  heading?: number;
+  text: string;
+  /** id of the nearest element with one (e.g. Devpost's prize_106857): what entity ids anchor to (D7). */
+  anchor?: string;
+}
+export interface PageLink {
+  text: string;
+  href: string;
+  /** The block the link sits in (or follows). */
+  block: number;
+}
+export interface PageSnapshot {
+  schema_version: typeof PAGE_SCHEMA_VERSION;
+  kind: "page";
+  url: string;
+  title: string;
+  captured_at: string;
+  /** "extension" from the popup; "fixture" when a test built it from saved HTML (never canon on a board). */
+  captured_by: "extension" | "fixture";
+  access: PageAccess | null;
+  blocks: PageBlock[];
+  links: PageLink[];
+  embeds: { iframes: number; pdfs: number };
+  /** Set when the page gave no text blocks, e.g. the content is in an iframe or a PDF. */
+  no_text?: string;
+}
+
+/** The file a snapshot downloads as: <host>-<path>.page.json, e.g. cal-hacks-13-0.devpost.com-rules.page.json. */
+export function pageFileName(url: string): string {
+  const u = new URL(url);
+  const path = u.pathname.replace(/^\/+|\/+$/g, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  return `${u.hostname}${path ? `-${path}` : ""}.page.json`;
+}
+
+/** Throws with a path-qualified reason if `v` isn't a PageSnapshot. */
+export function parsePageSnapshot(v: unknown, where = "page"): PageSnapshot {
+  const o = obj(v, where);
+  if (o.schema_version !== PAGE_SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${PAGE_SCHEMA_VERSION}`);
+  if (o.kind !== "page") fail(`${where}.kind`, 'expected "page"');
+  for (const k of ["url", "title", "captured_at"]) str(o[k], `${where}.${k}`);
+  if (o.captured_by !== "extension" && o.captured_by !== "fixture") fail(`${where}.captured_by`, 'expected "extension" or "fixture"');
+  if (o.access !== null && !PAGE_ACCESS.includes(o.access as PageAccess)) fail(`${where}.access`, `expected ${PAGE_ACCESS.join("|")} or null`);
+  arr(o.blocks, `${where}.blocks`).forEach((b, i) => {
+    const x = obj(b, `${where}.blocks[${i}]`);
+    if (x.i !== i) fail(`${where}.blocks[${i}].i`, `expected ${i}`);
+    str(x.text, `${where}.blocks[${i}].text`);
+    arr(x.path, `${where}.blocks[${i}].path`).forEach((t, j) => str(t, `${where}.blocks[${i}].path[${j}]`));
+  });
+  arr(o.links, `${where}.links`).forEach((l, i) => {
+    const x = obj(l, `${where}.links[${i}]`);
+    str(x.text, `${where}.links[${i}].text`);
+    str(x.href, `${where}.links[${i}].href`);
+  });
+  const e = obj(o.embeds, `${where}.embeds`);
+  num(e.iframes, `${where}.embeds.iframes`);
+  num(e.pdfs, `${where}.embeds.pdfs`);
+  return o as unknown as PageSnapshot;
+}
+
 function checkMessage(v: unknown, where: string, channelId: string): void {
   const m = obj(v, where);
   for (const k of ["channel_name", "author_name", "text", "permalink", "captured_at", "run_id"]) str(m[k], `${where}.${k}`);

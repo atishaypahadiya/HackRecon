@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HackRecon capture",
   "version": "0.1.0",
-  "description": "Captures the Slack channel open in this tab, as rendered, into <channel_id>.json.",
+  "description": "Captures the Slack channel open in this tab into <channel_id>.json, or the page open in this tab into <host>-<path>.page.json, as rendered.",
   "permissions": ["activeTab", "scripting"],
   "action": { "default_popup": "popup.html", "default_title": "HackRecon capture" }
 }

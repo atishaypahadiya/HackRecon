@@ -40,6 +40,10 @@ export interface EventConfig {
   hacking_start: string | null;
   hacking_end: string | null;
   schedule: { what: string; at: string; until?: string; superseded_by?: string; source: string }[];
+  /** v2: the public or logged-in pages that make up canon (tracks, prizes, criteria, rules), D3. */
+  canon_pages?: string[];
+  /** v2: pages that hold the schedule (D3); none listed means the schedule is Slack-only. */
+  schedule_pages?: string[];
 }
 
 export function readEvent(path = EVENT_PATH): EventConfig {

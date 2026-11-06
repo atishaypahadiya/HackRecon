@@ -31,5 +31,10 @@
   "unconfirmed": [
     "hacking_start: no announcement in 0-announcements states when hacking began. Fill it in from the event's own schedule, then rerun classify (the cache key covers the prompt, so affected messages reclassify).",
     "hacking_end: not stated as such. The submission deadline (09:30 after the extension) is the closest sourced time, but it is not filled in as the end of hacking."
-  ]
+  ],
+  "canon_pages": [
+    "https://cal-hacks-13-0.devpost.com/",
+    "https://cal-hacks-13-0.devpost.com/rules"
+  ],
+  "schedule_pages": []
 }
