@@ -60,6 +60,10 @@ import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import {
   BOARD_DATA_PATH,
   CACHE_PATH,
+  CANON_FIXTURES_PATH,
+  CANON_JUDGE_FIXTURES_PATH,
+  CANON_JUDGE_PATH,
+  CANON_PATH,
   CAPTURES_DIR,
   EVENT_PATH,
   DEFAULT_EXPORT_DIR,
@@ -82,7 +86,28 @@ import {
   takeEventArg,
   useEvent,
 } from "./event.ts";
-import { loadPages, pageCoverage } from "./pages.ts";
+import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, type LoadedPage } from "./pages.ts";
+import type { EventConfig } from "./classify.ts";
+import {
+  CANON_EFFORT,
+  CANON_JUDGE_SCHEMA,
+  CANON_MAX_TOKENS,
+  CANON_MODEL,
+  CANON_SCHEMA,
+  canonHash,
+  canonInputHash,
+  canonJudgeRequest,
+  canonJudgeSystemPrompt,
+  canonRequest,
+  canonSystemPrompt,
+  checkCanon,
+  checkJudge,
+  type JudgeVerdict,
+} from "./canon.ts";
+import { coverage, type CoverageReport } from "./coverage.ts";
+import { callChecked } from "./model.ts";
+import { buildNameList, compileRedactor } from "./redact.ts";
+import type { Entity } from "./schema.ts";
 import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
@@ -128,6 +153,11 @@ const USAGE = `usage:
       Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
       flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
       --from-html builds a test fixture snapshot from saved HTML into ${PAGE_FIXTURES_DIR} (never canon).
+  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force]
+      Extracts tracks, prizes, judging criteria and rules from each canon page's latest snapshot (one
+      ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
+      checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
+      ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -140,7 +170,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -156,6 +186,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "group") return group(rest);
   if (cmd === "board") return board(rest);
   if (cmd === "pages") return pages(rest);
+  if (cmd === "canon") return canon(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -640,6 +671,186 @@ async function pages(args: string[]): Promise<number> {
   if (!wanted.length) console.log(`${EVENT_PATH} lists no canon_pages or schedule_pages.`);
   for (const u of missing) console.log(`missing: ${u} (in ${EVENT_PATH}, no snapshot yet)`);
   return errors.length ? 1 : 0;
+}
+
+interface CanonPage {
+  url: string;
+  file: string;
+  captured_by: "extension" | "fixture";
+  access: string | null;
+  snapshot_hash: string;
+  redacted: number | null;
+  model: string;
+  prompt_hash: string;
+  input_hash: string;
+  entities: Entity[];
+  coverage: CoverageReport;
+  usage: Usage;
+  cost_usd: number;
+  written_at: string;
+}
+interface CanonJudged {
+  url: string;
+  input_hash: string;
+  verdict: JudgeVerdict;
+  usage: Usage;
+  cost_usd: number;
+  written_at: string;
+}
+
+function canonInput(p: LoadedPage, event: EventConfig) {
+  let snap = p.snapshot;
+  let redacted: number | null = null;
+  if (needsRedaction(snap)) {
+    // D12: logged-in page (or no flag): redact with the captured posters' names, as for Slack.
+    const names = new Set(readMessages().filter((m) => m.author_kind !== "bot").map((m) => m.author_name));
+    const r = redactSnapshot(snap, compileRedactor(buildNameList(names, readSponsors(SPONSORS_PATH))));
+    snap = r.snapshot;
+    redacted = r.replaced;
+  }
+  const system = canonSystemPrompt(event);
+  const request = canonRequest(snap);
+  return { snap, redacted, system, request, prompt_hash: canonHash(system), input_hash: canonInputHash(system, request) };
+}
+
+function anthropicClient(): Anthropic | null {
+  try {
+    return new Anthropic({ maxRetries: 2 });
+  } catch (e) {
+    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
+    return null;
+  }
+}
+
+async function canon(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false } },
+  });
+  const event = readEvent();
+  const dir = values.fixtures ? PAGE_FIXTURES_DIR : PAGES_DIR;
+  const outPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
+  const judgePath = values.fixtures ? CANON_JUDGE_FIXTURES_PATH : CANON_JUDGE_PATH;
+  const { pages: loaded, errors } = loadPages(dir);
+  for (const e of errors) console.error(`unreadable: ${e}`);
+  const { latest, missing } = pageCoverage(loaded, event.canon_pages ?? []);
+  for (const u of missing) console.log(`missing: ${u} has no snapshot in ${dir}`);
+  const todo = [...latest.values()].filter((p) => (event.canon_pages ?? []).some((u) => pageKey(u) === pageKey(p.snapshot.url)));
+  if (!todo.length) {
+    console.error(`no snapshots of ${EVENT_PATH} canon_pages in ${dir}${values.fixtures ? "" : ': use the extension\'s "Capture this page", or --fixtures'}`);
+    return 2;
+  }
+  const prev = new Map(readJsonFile<CanonPage[]>(outPath, []).map((c) => [pageKey(c.url), c]));
+  const out: CanonPage[] = [];
+  let client: Anthropic | null = null;
+  let failed = errors.length > 0 || missing.length > 0;
+  for (const p of todo) {
+    const c = canonInput(p, event);
+    const key = pageKey(p.snapshot.url);
+    console.log(`\n${p.snapshot.url}  ${p.snapshot.captured_by}, ${p.snapshot.access ?? "no access flag"}${c.redacted !== null ? `, redacted (${c.redacted} replaced)` : ""}; ${p.snapshot.blocks.length} blocks, request ${c.request.length} chars, prompt ${c.prompt_hash}, input ${c.input_hash}`);
+    if (values["dry-run"]) {
+      console.log(`--- system prompt (${c.system.length} chars) ---\n${c.system}\n--- request (first 2000 chars) ---\n${c.request.slice(0, 2000)}`);
+      continue;
+    }
+    let page = prev.get(key);
+    if (!page || page.input_hash !== c.input_hash || values.force) {
+      client ??= anthropicClient();
+      if (!client) return 2;
+      const r = await callChecked(client, {
+        model: CANON_MODEL,
+        effort: CANON_EFFORT,
+        max_tokens: CANON_MAX_TOKENS,
+        system: c.system,
+        schema: CANON_SCHEMA,
+        request: c.request,
+        check: (parsed) => checkCanon(parsed, c.snap, p.hash),
+      });
+      console.log(formatUsage(r.calls, r.usage, CANON_MODEL));
+      if ("error" in r) {
+        console.error(`extraction failed after ${r.calls} call(s): ${r.error}. Nothing written for this page.`);
+        failed = true;
+        if (page) out.push(page);
+        continue;
+      }
+      page = {
+        url: p.snapshot.url,
+        file: p.file,
+        captured_by: p.snapshot.captured_by,
+        access: p.snapshot.access,
+        snapshot_hash: p.hash,
+        redacted: c.redacted,
+        model: CANON_MODEL,
+        prompt_hash: c.prompt_hash,
+        input_hash: c.input_hash,
+        entities: r.value.entities,
+        coverage: coverage(c.snap, r.value.entities),
+        usage: r.usage,
+        cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)),
+        written_at: new Date().toISOString(),
+      };
+    } else {
+      page = { ...page, coverage: coverage(c.snap, page.entities) };
+      console.log(`cached (${page.entities.length} entities, input unchanged); --force to rerun`);
+    }
+    out.push(page);
+    const byKind = new Map<string, number>();
+    for (const e of page.entities) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
+    const counts = [...byKind].map(([k, n]) => `${n} ${k}`);
+    console.log(`entities: ${counts.join(", ") || "none"}`);
+    for (const ch of page.coverage.checks) {
+      console.log(`  ${ch.pass === null ? "n/a " : ch.pass ? "PASS" : "FAIL"} ${ch.name}: ${ch.summary}`);
+      for (const d of ch.details.slice(0, ch.pass === false ? 60 : 25)) console.log(`       ${d}`);
+      if (ch.details.length > 25 && ch.pass !== false) console.log(`       … ${ch.details.length - 25} more in ${outPath}`);
+    }
+    if (!page.coverage.pass) failed = true;
+  }
+  if (values["dry-run"]) {
+    console.log("\ndry run: no API call, nothing written");
+    return 0;
+  }
+  for (const [k, c] of prev) if (!out.some((o) => pageKey(o.url) === k)) out.push(c); // pages no longer listed stay until removed by hand
+  writeJsonFile(outPath, out);
+  console.log(`\nwrote ${outPath}: ${out.length} page(s), ${out.reduce((n, p) => n + p.entities.length, 0)} entities`);
+
+  if (values.judge) {
+    const judged = new Map(readJsonFile<CanonJudged[]>(judgePath, []).map((j) => [pageKey(j.url), j]));
+    for (const page of out.filter((o) => todo.some((t) => pageKey(t.snapshot.url) === pageKey(o.url)))) {
+      const p = todo.find((t) => pageKey(t.snapshot.url) === pageKey(page.url))!;
+      const snap = canonInput(p, event).snap;
+      const system = canonJudgeSystemPrompt(event);
+      const request = canonJudgeRequest(snap, page.entities);
+      const input_hash = canonInputHash(system, request);
+      let j = judged.get(pageKey(page.url));
+      if (!j || j.input_hash !== input_hash || values.force) {
+        client ??= anthropicClient();
+        if (!client) return 2;
+        const r = await callChecked(client, {
+          model: CANON_MODEL,
+          effort: CANON_EFFORT,
+          max_tokens: CANON_MAX_TOKENS,
+          system,
+          schema: CANON_JUDGE_SCHEMA,
+          request,
+          check: (parsed) => checkJudge(parsed, snap, page.entities),
+        });
+        console.log(`\njudge ${page.url}: ${formatUsage(r.calls, r.usage, CANON_MODEL)}`);
+        if ("error" in r) {
+          console.error(`judge failed: ${r.error}`);
+          failed = true;
+          continue;
+        }
+        j = { url: page.url, input_hash, verdict: r.value, usage: r.usage, cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)), written_at: new Date().toISOString() };
+        judged.set(pageKey(page.url), j);
+      } else console.log(`\njudge ${page.url}: cached`);
+      const v = j.verdict;
+      console.log(`  ${v.missing.length || v.misplaced.length ? "FAIL" : "PASS"} judge (agreement with Opus): ${v.missing.length} missing, ${v.misplaced.length} misplaced`);
+      for (const m of v.missing) console.log(`       missing ${m.kind} [${m.block}]: ${m.what}`);
+      for (const m of v.misplaced) console.log(`       misplaced ${m.entity_id}: ${m.problem}`);
+      if (v.missing.length || v.misplaced.length) failed = true;
+    }
+    writeJsonFile(judgePath, [...judged.values()]);
+  }
+  return failed ? 1 : 0;
 }
 
 function receiptPreview(args: string[]): number {

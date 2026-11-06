@@ -177,6 +177,57 @@ export interface PageSnapshot {
   no_text?: string;
 }
 
+// Entities (v2 §Entities): what Build, Ship, Now and Meet show. Every value carries the verbatim span it
+// came from; null means not stated, never guessed.
+export const ENTITY_KINDS = ["track", "prize", "criterion", "rule", "schedule_item", "offer", "rep", "booth"] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+export interface SourceRef {
+  kind: "page" | "slack";
+  /** Page URL or Slack permalink. */
+  url: string;
+  /** Verbatim span the value came from, verified to exist in the source (redacted text for logged-in pages, D12). */
+  quote: string;
+  captured_at: string;
+  /** Slack only: the post's own time; merge orders Slack changes by it (D13). */
+  posted_at?: string;
+  author_role?: "organizer" | "sponsor-side" | "other" | "bot";
+  /** Page only. */
+  snapshot_hash?: string;
+  /** Page only: the snapshot block the quote is in. */
+  block?: number;
+}
+
+export interface FieldValue<T> {
+  value: T | null;
+  source: SourceRef;
+}
+
+export interface Change {
+  entity_id: string;
+  field: string;
+  to: FieldValue<unknown>;
+  kind: "set" | "question";
+}
+export interface AppliedChange extends Change {
+  from: FieldValue<unknown>;
+  status: "applied" | "unauthorized" | "question" | "ambiguous";
+}
+
+export interface Entity {
+  /** D7: page entity = kind + canonical URL + heading path of its quote (+ name where a path holds several);
+   *  Slack-origin = kind + first post's permalink. */
+  id: string;
+  kind: EntityKind;
+  /** Sponsor name as the source states it, or "event". */
+  sponsor: string;
+  name: FieldValue<string>;
+  /** Kind-specific. List fields are numbered: requirements[0], requirements[1]. */
+  fields: Record<string, FieldValue<unknown>>;
+  history: AppliedChange[];
+  origin: "page" | "slack";
+}
+
 /** The file a snapshot downloads as: <host>-<path>.page.json, e.g. cal-hacks-13-0.devpost.com-rules.page.json. */
 export function pageFileName(url: string): string {
   const u = new URL(url);
