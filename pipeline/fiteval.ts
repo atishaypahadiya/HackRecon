@@ -40,6 +40,17 @@ export interface FitReport {
   unmatched: { project: string; prize: string }[];
   /** Projects whose run failed (no ranking after retries), per run: counted as misses. */
   failed: { A: string[]; B: string[] };
+  /** Per (project, won track) pair, whether each run had it in its top 3 and top 5: the paired data for McNemar. */
+  pair_hits: PairHit[];
+}
+
+export interface PairHit {
+  /** `slug|prize`: stable across canon re-runs, unlike the track id. */
+  key: string;
+  A3: boolean;
+  B3: boolean;
+  A5: boolean;
+  B5: boolean;
 }
 
 /** Rankings by project slug for runs A and B; a missing ranking counts every pair of that project as a miss. */
@@ -86,7 +97,82 @@ export function scoreFit(items: EvalItem[], cards: TrackCard[], allTrackNames: S
     event_level,
     unmatched,
     failed: { A: slugs.filter((s) => !A.has(s)), B: slugs.filter((s) => !B.has(s)) },
+    pair_hits: pairs.map((p) => ({ key: `${p.slug}|${p.prize}`, A3: hit(A, p), B3: hit(B, p), A5: hit(A, p, FIT_TOP), B5: hit(B, p, FIT_TOP) })),
   };
+}
+
+// Fit gate (user, 2026-11-06) ----------------------------------------------------------------------------------
+// "recall@5 must stay ≥ 67% (baseline 72.3% minus ~1 SE at n = 94) or the change fails. A change counts as an
+// improvement only if a paired McNemar test on the same 94 pairs gives p < 0.05." Gated on run B (description +
+// stack), the configuration Plan uses since D16's stack rule fired. SE at the baseline: √(.723·.277/94) = 4.6 pts.
+export const FIT_GATE_RECALL5 = 67;
+export const MCNEMAR_ALPHA = 0.05;
+
+/** Exact two-sided McNemar (binomial on the discordant pairs, p = 0.5): b = baseline hit → now miss, c = the reverse. */
+export function mcnemarExact(b: number, c: number): number {
+  const n = b + c;
+  if (!n) return 1;
+  let tail = 0;
+  let term = Math.pow(0.5, n); // C(n,0)·0.5^n
+  for (let i = 0; i <= Math.min(b, c); i++) {
+    tail += term;
+    term = (term * (n - i)) / (i + 1);
+  }
+  return Math.min(1, 2 * tail);
+}
+
+export interface PairedResult {
+  k: 3 | 5;
+  baseline: Rate;
+  now: Rate;
+  /** Pairs the baseline had and this run lost / pairs this run gained. */
+  lost: number;
+  gained: number;
+  p: number;
+  improvement: boolean;
+}
+export interface FitGate {
+  /** Same pair keys as the baseline; McNemar is only defined on identical pairs. */
+  same_pairs: boolean;
+  missing: string[];
+  extra: string[];
+  paired: PairedResult[];
+  recall5_B: number;
+  passes: boolean;
+}
+
+export function fitGate(now: PairHit[], baseline: PairHit[]): FitGate {
+  const keys = (h: PairHit[]) => new Set(h.map((x) => x.key));
+  const nk = keys(now);
+  const bk = keys(baseline);
+  const missing = [...bk].filter((k) => !nk.has(k));
+  const extra = [...nk].filter((k) => !bk.has(k));
+  const same_pairs = !missing.length && !extra.length;
+  const byKey = new Map(now.map((x) => [x.key, x]));
+  const paired = ([3, 5] as const).map((k): PairedResult => {
+    const f = k === 3 ? "B3" : "B5";
+    let lost = 0;
+    let gained = 0;
+    for (const b of baseline) {
+      const n = byKey.get(b.key);
+      if (!n) continue;
+      if (b[f] && !n[f]) lost++;
+      if (!b[f] && n[f]) gained++;
+    }
+    const p = mcnemarExact(lost, gained);
+    return { k, baseline: rate(baseline.filter((x) => x[f]).length, baseline.length), now: rate(now.filter((x) => x[f]).length, now.length), lost, gained, p, improvement: same_pairs && gained > lost && p < MCNEMAR_ALPHA };
+  });
+  const recall5_B = pct(rate(now.filter((x) => x.B5).length, now.length));
+  return { same_pairs, missing, extra, paired, recall5_B, passes: recall5_B >= FIT_GATE_RECALL5 };
+}
+
+export function formatFitGate(g: FitGate, baselineWhen: string): string {
+  const L = [`Fit gate (run B; baseline ${baselineWhen}): recall@5 ≥ ${FIT_GATE_RECALL5}%, improvement = paired exact McNemar p < ${MCNEMAR_ALPHA} on the same pairs`];
+  if (!g.same_pairs) L.push(`  pairs differ from the baseline (${g.missing.length} missing, ${g.extra.length} new): McNemar not computed; no improvement can be claimed`);
+  for (const r of g.paired)
+    L.push(`  recall@${r.k}  baseline ${fmt(r.baseline)} → now ${fmt(r.now)}; lost ${r.lost}, gained ${r.gained}${g.same_pairs ? `, p = ${r.p.toFixed(3)}` : ""}${r.improvement ? "  IMPROVEMENT" : ""}`);
+  L.push(`  ${g.passes ? "PASS" : "FAIL"}: recall@5 ${g.recall5_B.toFixed(1)}% ${g.passes ? "≥" : "<"} ${FIT_GATE_RECALL5}%`);
+  return L.join("\n");
 }
 
 export function formatFitReport(r: FitReport): string {

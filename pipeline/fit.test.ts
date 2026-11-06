@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fitGate, mcnemarExact } from "./fiteval.ts";
 import type { EventConfig } from "./classify.ts";
 import { checkFit, isEventLevel, isToolGated, trackCards, type Ranked, type TrackCard } from "./fit.ts";
 import { scoreFit, type EvalItem } from "./fiteval.ts";
@@ -75,5 +76,25 @@ describe("scoreFit", () => {
     const r = scoreFit(items, cards, names, ev, new Map(), new Map([["p1", rk("t:acme")]]));
     expect(r.recall3.A).toEqual({ hits: 0, n: 3 });
     expect(r.failed.A).toEqual(["p1", "p2"]);
+  });
+});
+
+describe("fit gate (user, 2026-11-06)", () => {
+  const h = (key: string, B5: boolean, B3 = false) => ({ key, A3: false, B3, A5: false, B5 });
+  test("exact McNemar matches the binomial tail", () => {
+    expect(mcnemarExact(0, 0)).toBe(1);
+    expect(mcnemarExact(0, 6)).toBeCloseTo(0.03125, 6); // 2 · 0.5^6
+    expect(mcnemarExact(1, 6)).toBeCloseTo(0.125, 6); // 2 · (1 + 7) / 128
+    expect(mcnemarExact(5, 5)).toBe(1);
+  });
+  test("recall@5 below 67% fails; an improvement needs the same pairs and p < 0.05", () => {
+    const base = Array.from({ length: 10 }, (_, i) => h(`p${i}`, i < 7));
+    expect(fitGate(base.map((x, i) => ({ ...x, B5: i < 6 })), base).passes).toBe(false); // 60%
+    expect(fitGate(base, base).passes).toBe(true); // 70%
+    const better = Array.from({ length: 30 }, (_, i) => h(`q${i}`, i >= 10));
+    const g = fitGate(better.map((x) => ({ ...x, B5: true })), better);
+    expect([g.paired[1]!.gained, g.paired[1]!.lost, g.paired[1]!.improvement]).toEqual([10, 0, true]);
+    const moved = fitGate([...better.slice(1), h("new", true)], better);
+    expect([moved.same_pairs, moved.paired.every((r) => !r.improvement)]).toEqual([false, true]);
   });
 });
