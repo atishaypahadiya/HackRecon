@@ -1505,6 +1505,27 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - Reverting needs no API call: run 3's extraction is still in data/canon_extractions.json under the old prompt hash.
       - Decision for the user: where requirement sentences come from (Slack sponsor posts in step 1, sponsor pages the prize blocks link), or how tracks with none appear in Plan.
 
+  - **Tiered evidence (user 2026-11-06), on v2.** The strict version is kept on `exp/strict-quotes` (9dc4efa), not merged.
+    - **Tiers**, computed in `trackCards` from canon, never by the model:
+      - (1) **stated**: a requirement or criterion sentence. Quote + reason.
+      - (2) **title**: no such sentence, but the block says more than an amount. The title is the evidence, Plan labels it "requirements not stated", and Booths asks the rep "What does ‘<track>’ reward?".
+      - (3) **cash_only**: the block restates only amounts or winner counts. Title as evidence, ranked last, never "likely".
+    - `checkFit` enforces each tier's quote rule, the never-likely rule and the last place, so the eval scores the order Plan shows.
+    - Kept from the strict version: the reason rule (stated facts + the quoted line or title, as a condition), the eligibility lint, entry steps, and the name-only check on stated tracks.
+    - Step 1 upgrades tiers with no extra code: a Slack sponsor post merged as a requirement or criterion makes the track stated (tested).
+    - **Mana fix:**
+      - `checkCanon` now runs the gating coverage checks on its own answer and sends failures back. The first run fixed Mana and then split Meta's no-place block into 3 prizes.
+      - So the prompt now says "a track that names no places gets exactly one prize … whatever its winner count and however many lines its award has", with Meta's and Mana's shapes as examples.
+      - Result (prompt 631eb71c8c39d023, 3 calls, $2.54): prize_total PASS, prize_blocks PASS (52/52 blocks, 80 prizes), 4 entry steps.
+    - **Tiers on Cal Hacks:**
+      - 7 stated, 30 title, 3 cash_only. The cash_only three are Visa, Mana and [Apify] Best Use of Apify, whose block lists only place amounts.
+      - That's 40 sponsor tracks; the other 12 are event-level and aren't ranked.
+    - **Fit eval, same 94 pairs ($2.06, 162 rankings):**
+      - recall@3: A 33/94, B 53/94.
+      - recall@5: A 39/94, B 68/94.
+      - Gate on B: recall@3 55 → 53 (lost 6, gained 4, exact McNemar p = 0.754). recall@5 68 → 68 (lost 4, gained 4, p = 1.000). **PASS, not an improvement.**
+      - The cash_only rule accounts for most losses (Apify Best Use ×3, Mana ×2, Visa ×1 across @3 and @5). Gains: GoDaddy, Apify Best Actor, Notability, Bright Data, Spacetime, Vultr.
+
 ## Design Review (plan-design-review, 2026-11-06): Plan + Ship
 
 Target: §4 Views, Plan (new default tab) and Ship. Mode: Operate. No mockups: the gstack designer has no OpenAI key (`$D setup`), so every pass ran on text against DESIGN.md and the built Claim board. No outside voice (Codex not installed). Dogfood input (user): Hindsight, a transfer planner for community-college transfer students; stack Vercel, FastAPI, Claude API, Apify, Factory Droid SDK, Figma; targeted Anthropic, Factory Droid SDK, Figma and Apify; won no track prizes (https://devpost.com/software/hindsight-68sruh).

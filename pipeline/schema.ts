@@ -185,7 +185,7 @@ export interface PageSnapshot {
 
 // Entities (v2 §Entities): what Build, Ship, Now and Meet show. Every value carries the verbatim span it
 // came from; null means not stated, never guessed.
-export const ENTITY_KINDS = ["track", "prize", "criterion", "rule", "schedule_item", "offer", "rep", "booth"] as const;
+export const ENTITY_KINDS = ["track", "prize", "criterion", "rule", "entry_step", "schedule_item", "offer", "rep", "booth"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 export interface SourceRef {

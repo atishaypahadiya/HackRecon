@@ -122,6 +122,23 @@ describe("checkCanon", () => {
     expect(ids).toEqual(["usd-200", "usd-100"]);
   });
 
+  test("entry steps: track, step_kind and text required, step_kind is an enum; descriptions repeat (user 2026-11-06)", () => {
+    const step = (fields: RawEntity["fields"]): RawEntity => ({ ref: "s1", kind: "entry_step", sponsor: "Acme", name: { value: "Laptop", block: at("Laptop"), quote: "Laptop" }, fields });
+    const text = { field: "text", value: "Laptop for each member", block: at("Laptop"), quote: "Laptop for each member" };
+    const ok = checkCanon({ entities: [...good(), step([{ field: "track", value: "t2", block: 0, quote: "" }, { field: "step_kind", value: "submission_field", block: at("Laptop"), quote: "Laptop" }, text])] }, snap, "h");
+    if ("error" in ok) throw new Error(ok.error);
+    const s = ok.entities.find((e) => e.kind === "entry_step")!;
+    expect([s.fields.track_id?.value, s.fields.step_kind?.value, s.id.startsWith("entry_step:")]).toEqual([ok.entities.find((e) => e.name.value === "[Acme] Best Use of Acme")!.id, "submission_field", true]);
+    const bad = checkCanon({ entities: [...good(), step([{ field: "step_kind", value: "handshake", block: at("Laptop"), quote: "Laptop" }, text])] }, snap, "h") as { error: string };
+    expect(bad.error).toContain('"handshake" is not one of opt_in|supplemental_form|description_mention|submission_field');
+    expect(bad.error).toContain("an entry step needs track, step_kind and text");
+    const raw = good();
+    const d = (q: string) => ({ field: "description", value: q, block: at("1st place"), quote: q });
+    raw[2]!.fields.push(d("1st place"), d("2nd place"));
+    const two = checkCanon({ entities: raw }, snap, "h");
+    if ("error" in two) throw new Error(two.error);
+    expect(Object.keys(two.entities.find((e) => e.name.value === "[Acme] Best Use of Acme")!.fields).filter((k) => k.startsWith("descriptions"))).toEqual(["descriptions[0]", "descriptions[1]"]);
+  });
   test("same heading path and name twice keeps both, numbered in page order", () => {
     const raw = good();
     raw.push({ ...raw[5]!, ref: "c2" });
@@ -156,9 +173,8 @@ describe("coverage (D15)", () => {
   });
 
   test("a dropped winners line opens a gap and names the block", () => {
-    const raw = good();
-    raw[2]!.fields = raw[2]!.fields.filter((f) => f.field !== "winners");
-    const r = coverage(snap, ok(raw));
+    const es = ok(good()).map((e) => (e.name.value === "[Acme] Best Use of Acme" ? { ...e, fields: Object.fromEntries(Object.entries(e.fields).filter(([k]) => k !== "winners")) } : e));
+    const r = coverage(snap, es);
     const total = r.checks.find((c) => c.name === "prize_total")!;
     expect(total.pass).toBe(false);
     expect(total.summary).toContain("gap $300");
@@ -167,17 +183,27 @@ describe("coverage (D15)", () => {
   });
 
   test("a prize block with no track fails prize_blocks", () => {
-    const raw = good().filter((e) => e.ref !== "t1" && e.ref !== "p1");
-    const c = coverage(snap, ok(raw)).checks.find((c) => c.name === "prize_blocks")!;
+    const all = ok(good());
+    const t1 = all.find((e) => e.name.value === "Mini Hacks Overall" && e.kind === "track")!.id;
+    const es = all.filter((e) => e.id !== t1 && e.fields.track_id?.value !== t1);
+    const c = coverage(snap, es).checks.find((c) => c.name === "prize_blocks")!;
     expect(c.pass).toBe(false);
     expect(c.details).toEqual(["Mini Hacks Overall (prize_1): no track"]);
   });
 
   test("figures outside every quote are listed unattached", () => {
-    const raw = good().filter((e) => e.ref !== "p3");
-    const c = coverage(snap, ok(raw)).checks.find((c) => c.name === "figures")!;
+    const es = ok(good()).filter((e) => !(e.kind === "prize" && e.fields.place?.value === "2nd place"));
+    const c = coverage(snap, es).checks.find((c) => c.name === "figures")!;
     expect(c.details.some((d) => d.includes("$100") && d.includes("prize block prize_2"))).toBe(true);
     expect(c.details.some((d) => d.includes("$1,100"))).toBe(true); // the total line itself is no entity's quote
+  });
+
+  test("checkCanon sends a failed gating check back to the model (Mana, Cal Hacks 2026-11-06: 1 place, 0 prizes)", () => {
+    expect(err(good().filter((e) => e.ref !== "p1"))).toContain("prize_blocks");
+    expect(err(good().filter((e) => e.ref !== "p1"))).toContain("Mini Hacks Overall (prize_1): 1 stated place, 0 prizes extracted");
+    const raw = good();
+    raw[2]!.fields = raw[2]!.fields.filter((f) => f.field !== "winners");
+    expect(err(raw)).toContain("prize_total");
   });
 
   test("a page with no total or prize blocks: checks don't apply", () => {
