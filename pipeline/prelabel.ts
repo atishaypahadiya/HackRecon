@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { OUTPUT_RETRIES, scheduleLines, type ClassifyInput, type EventConfig } from "./classify.ts";
 import { HAND_LABELER, LABEL_COLUMNS, labelerOf, labelProblems, OPUS_LABELER, type LabelColumn, type LabelRow } from "./labels.ts";
-export { RULES_PATH, rulesSection } from "./labels.ts";
+export { rulesSection } from "./labels.ts";
 import { AMOUNT_BASES, DEADLINE_STATUSES } from "./schema.ts";
 import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
 
@@ -17,9 +17,7 @@ export const JUDGE_MODEL = "claude-opus-5-5" as const;
 export const JUDGE_EFFORT = "high" as const;
 /** Thinking counts toward max_tokens; the JSON itself is small. */
 export const JUDGE_MAX_TOKENS = 16000;
-export const JUDGE_CACHE_PATH = "review/prelabel_cache.json";
 /** Which prompt the judge's labels in the sheet came from (read by `hr gate`). */
-export const JUDGE_RUN_PATH = "review/prelabel_run.json";
 
 export type Labels = Record<LabelColumn, string>;
 

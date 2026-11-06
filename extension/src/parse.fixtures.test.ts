@@ -1,4 +1,4 @@
-// Real Slack DOM samples (fixtures/slack-dom/*.html, gitignored: they hold workspace data),
+// Real Cal Hacks Slack DOM samples (events/calhacks-13/fixtures/slack-dom/*.html, gitignored: they hold workspace data),
 // checked against the slackdump export rather than hand-typed expectations.
 // How to save samples: extension/README.md.
 import { describe, expect, test } from "bun:test";
@@ -10,7 +10,6 @@ import { parseRows } from "./parse.ts";
 import { channelFromPermalink, tsFromAttr, tsFromPermalink } from "./permalink.ts";
 import { SEL } from "./selectors.ts";
 import {
-  DEFAULT_EXPORT_DIR,
   expectedAuthorNames,
   isTopLevel,
   loadExport,
@@ -19,12 +18,13 @@ import {
   rowClass,
   type ExportMessage,
 } from "../../pipeline/export.ts";
+import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
-const DIR = join(import.meta.dir, "../../fixtures/slack-dom");
+const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
 const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html")).sort() : [];
 
-test("fixtures/slack-dom has samples", () => {
+test("calhacks-13 fixtures/slack-dom has samples", () => {
   if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "Saving DOM samples"`);
 });
 

@@ -1,0 +1,870 @@
+{
+ "event": "Cal Hacks 13.0",
+ "timezone": "America/Los_Angeles",
+ "channels": 25,
+ "post_count": 977,
+ "posts": "18a0fda8382c",
+ "frames": [
+  1791644400,
+  1791730800,
+  1791817200,
+  1791903600,
+  1791990000,
+  1792076400,
+  1792162800,
+  1792249200,
+  1792335600,
+  1792422000,
+  1792446957.154859,
+  1792508400,
+  1792522831.984929,
+  1792528380.692499,
+  1792541621.077769,
+  1792592203.773199,
+  1792594800,
+  1792597872.529089,
+  1792652472.670929,
+  1792681200,
+  1792686910.485229,
+  1792701277.628089,
+  1792720334.095409,
+  1792767600,
+  1792792808.144379,
+  1792795022.826229,
+  1792798374.858629,
+  1792804485.718739,
+  1792807200,
+  1792815540.425759,
+  1792825835.372839,
+  1792845799.603489,
+  1792854000,
+  1792874371.871139,
+  1792881211.901109,
+  1792940400,
+  1792966173.762669,
+  1793026800,
+  1793113200
+ ],
+ "offers": [
+  {
+   "id": "o1",
+   "sponsor": "Cartesia",
+   "title": "1ff68f694849",
+   "value_short": "5353fda2c359",
+   "claim_short": "ad56c87ece8f",
+   "amount_text": "0673115dbca6",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "5be66c57dda4",
+   "promo_code": "26d646267b50",
+   "claim_how": "e097a548094e",
+   "first": 1792446957.154859,
+   "excerpt": "764e9e0328b2",
+   "posts": [
+    {
+     "ts": 1792446957.154859,
+     "channel": "spons-cartesia",
+     "permalink": "77c96d3b0bb5"
+    },
+    {
+     "ts": 1792800135.285719,
+     "channel": "spons-cartesia",
+     "permalink": "fea91f266e69"
+    },
+    {
+     "ts": 1792816505.849089,
+     "channel": "spons-cartesia",
+     "permalink": "b4a82474af8d"
+    },
+    {
+     "ts": 1792882762.278609,
+     "channel": "spons-cartesia",
+     "permalink": "f1476400f29b"
+    }
+   ]
+  },
+  {
+   "id": "o2",
+   "sponsor": "Anthropic",
+   "title": "1fc6267e0d47",
+   "value_short": "87e3f129ab3e",
+   "claim_short": "f7fcc448d164",
+   "amount_text": "f304a630884e",
+   "usd": 50,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "08c25d8762c2",
+   "promo_code": "",
+   "claim_how": "7c1a54cbd543",
+   "first": 1792522831.984929,
+   "excerpt": "460b613639e5",
+   "posts": [
+    {
+     "ts": 1792522831.984929,
+     "channel": "cohost-anthropic",
+     "permalink": "d019e0a0d158"
+    },
+    {
+     "ts": 1792788066.867129,
+     "channel": "cohost-anthropic",
+     "permalink": "302f5193ed27"
+    }
+   ]
+  },
+  {
+   "id": "o3",
+   "sponsor": "Apify",
+   "title": "69fa436f3a17",
+   "value_short": "b6bc76113dbc",
+   "claim_short": "d0bc4582a3d3",
+   "amount_text": "6b458fb4c260",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "113481d0b89d",
+   "promo_code": "33971cef785f",
+   "claim_how": "cc5042732ef7",
+   "first": 1792528380.692499,
+   "excerpt": "0dacff5b5a12",
+   "posts": [
+    {
+     "ts": 1792528380.692499,
+     "channel": "spons-apify",
+     "permalink": "f7431455a37e"
+    },
+    {
+     "ts": 1792782371.643769,
+     "channel": "spons-apify",
+     "permalink": "85fb928bdc02"
+    },
+    {
+     "ts": 1792941871.388179,
+     "channel": "spons-apify",
+     "permalink": "8d972e217d63"
+    },
+    {
+     "ts": 1792966173.762669,
+     "channel": "spons-apify",
+     "permalink": "066121e92d4b"
+    }
+   ]
+  },
+  {
+   "id": "o4",
+   "sponsor": "Apify",
+   "title": "97d09c2d4bb8",
+   "value_short": "09e17179b71c",
+   "claim_short": "f0fd4727fff3",
+   "amount_text": "38c5c3f4f2ec",
+   "usd": null,
+   "limit": 1793398140,
+   "limit_unclear": false,
+   "claim_url": "31ca50430211",
+   "promo_code": "",
+   "claim_how": "459b6e96b5a9",
+   "first": 1792966173.762669,
+   "excerpt": "1a81f0e699c5",
+   "posts": [
+    {
+     "ts": 1792966173.762669,
+     "channel": "spons-apify",
+     "permalink": "066121e92d4b"
+    }
+   ]
+  },
+  {
+   "id": "o5",
+   "sponsor": "Bitdeer",
+   "title": "6f532bd081ce",
+   "value_short": "b810e9b7d11d",
+   "claim_short": "b9e14279db5e",
+   "amount_text": "6af28ce90d00",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "8ceda5c86653",
+   "promo_code": "",
+   "claim_how": "38ad379e9f68",
+   "first": 1792541621.077769,
+   "excerpt": "dd7dd1392a08",
+   "posts": [
+    {
+     "ts": 1792541621.077769,
+     "channel": "spons-bitdeer",
+     "permalink": "e49af74f2503"
+    },
+    {
+     "ts": 1792871187.777149,
+     "channel": "spons-bitdeer",
+     "permalink": "3d93475be4d3"
+    },
+    {
+     "ts": 1792872410.114049,
+     "channel": "0-announcements",
+     "permalink": "3871ac3bf113"
+    }
+   ]
+  },
+  {
+   "id": "o6",
+   "sponsor": "Wajo AI",
+   "title": "7f25d93a313f",
+   "value_short": "6c83df7e4994",
+   "claim_short": "5e2b8e96503d",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": true,
+   "claim_url": "6f464e9292b6",
+   "promo_code": "98a7dd2f707a",
+   "claim_how": "68c841c9fc40",
+   "first": 1792592203.773199,
+   "excerpt": "0b3a186fe9e8",
+   "posts": [
+    {
+     "ts": 1792592203.773199,
+     "channel": "spons-wajo-ai",
+     "permalink": "a902cb7804b0"
+    },
+    {
+     "ts": 1792621476.305939,
+     "channel": "spons-wajo-ai",
+     "permalink": "49ac189f3c41"
+    }
+   ]
+  },
+  {
+   "id": "o7",
+   "sponsor": "SpacetimeDB",
+   "title": "697884326b1b",
+   "value_short": "8ead1178d8d7",
+   "claim_short": "",
+   "amount_text": "c3d735c6b92b",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "8267708c393d",
+   "promo_code": "",
+   "claim_how": "",
+   "first": 1792597872.529089,
+   "excerpt": "0110ac330c8a",
+   "posts": [
+    {
+     "ts": 1792597872.529089,
+     "channel": "cohost-spacetime",
+     "permalink": "4333169d36fc"
+    }
+   ]
+  },
+  {
+   "id": "o8",
+   "sponsor": "SpacetimeDB",
+   "title": "2fa0d3069213",
+   "value_short": "92379594e5d7",
+   "claim_short": "c456afb97119",
+   "amount_text": "92379594e5d7",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "14abbcf3ed14",
+   "promo_code": "774f4ec5d2b6",
+   "claim_how": "314e52ed16cf",
+   "first": 1792825835.372839,
+   "excerpt": "43425dbf39b8",
+   "posts": [
+    {
+     "ts": 1792825835.372839,
+     "channel": "cohost-spacetime",
+     "permalink": "51e011867c80"
+    },
+    {
+     "ts": 1792945800.364919,
+     "channel": "cohost-spacetime",
+     "permalink": "62fde035ccfd"
+    }
+   ]
+  },
+  {
+   "id": "o9",
+   "sponsor": "CREAO AI",
+   "title": "7d41e1959c01",
+   "value_short": "6b7ea9b844b5",
+   "claim_short": "5e949f41e499",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "7da60ff6803b",
+   "promo_code": "",
+   "claim_how": "fa74a2618131",
+   "first": 1792652472.670929,
+   "excerpt": "99945bce4c2e",
+   "posts": [
+    {
+     "ts": 1792652472.670929,
+     "channel": "spons-creao-ai",
+     "permalink": "88a8fafb1fee"
+    }
+   ]
+  },
+  {
+   "id": "o10",
+   "sponsor": "CRS Credit API",
+   "title": "67be16330001",
+   "value_short": "bbb31186dd35",
+   "claim_short": "26d4e9c5927b",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "f75099e009fb",
+   "promo_code": "",
+   "claim_how": "71b14b3691aa",
+   "first": 1792686910.485229,
+   "excerpt": "ce6a6e1bdde3",
+   "posts": [
+    {
+     "ts": 1792686910.485229,
+     "channel": "spons-crs-credit-api",
+     "permalink": "d63a9608f64a"
+    }
+   ]
+  },
+  {
+   "id": "o11",
+   "sponsor": "Bright Data",
+   "title": "1ebe2e3e8857",
+   "value_short": "e883c82c323b",
+   "claim_short": "81046a4ce8a6",
+   "amount_text": "2a1c2edea778",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "e9d0f87f6487",
+   "promo_code": "da1cc901064e",
+   "claim_how": "9c61aad5aa3d",
+   "first": 1792701277.628089,
+   "excerpt": "a764f9771d79",
+   "posts": [
+    {
+     "ts": 1792701277.628089,
+     "channel": "spons-bright-data",
+     "permalink": "ad790d857f95"
+    },
+    {
+     "ts": 1792778412.337339,
+     "channel": "spons-bright-data",
+     "permalink": "93ac0e9d321d"
+    },
+    {
+     "ts": 1792861451.204039,
+     "channel": "0-announcements",
+     "permalink": "309c1dc0a037"
+    },
+    {
+     "ts": 1792885930.192369,
+     "channel": "spons-bright-data",
+     "permalink": "04b06c21f012"
+    }
+   ]
+  },
+  {
+   "id": "o12",
+   "sponsor": "Figma",
+   "title": "203630b792f6",
+   "value_short": "e6bf4d8a74b0",
+   "claim_short": "eea2745e2867",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "09b528173675",
+   "promo_code": "",
+   "claim_how": "85bf81bc9f6d",
+   "first": 1792720334.095409,
+   "excerpt": "735cba04c313",
+   "posts": [
+    {
+     "ts": 1792720334.095409,
+     "channel": "spons-figma",
+     "permalink": "220c79abe6f0"
+    },
+    {
+     "ts": 1792791684.436319,
+     "channel": "spons-figma",
+     "permalink": "bf7c733d0b2b"
+    },
+    {
+     "ts": 1792864088.969629,
+     "channel": "spons-figma",
+     "permalink": "4d2e44f6802f"
+    }
+   ]
+  },
+  {
+   "id": "o13",
+   "sponsor": "Factory",
+   "title": "860c8aa93b4b",
+   "value_short": "5952ff0a4b38",
+   "claim_short": "56eb5e8b010f",
+   "amount_text": "37dbb3deabb2",
+   "usd": 20,
+   "limit": 1792807200,
+   "limit_unclear": false,
+   "claim_url": "ea3c649be168",
+   "promo_code": "",
+   "claim_how": "e8e5d5048a27",
+   "first": 1792792808.144379,
+   "excerpt": "208d9d1ff484",
+   "posts": [
+    {
+     "ts": 1792792808.144379,
+     "channel": "spons-factory-ai",
+     "permalink": "1f3c16176bd7"
+    },
+    {
+     "ts": 1792800699.020179,
+     "channel": "spons-factory-ai",
+     "permalink": "01ba2ee491ea"
+    },
+    {
+     "ts": 1792803765.678909,
+     "channel": "spons-factory-ai",
+     "permalink": "71c1729e3436"
+    },
+    {
+     "ts": 1792804676.570039,
+     "channel": "spons-factory-ai",
+     "permalink": "72c73edaf29e"
+    },
+    {
+     "ts": 1792872006.674189,
+     "channel": "spons-factory-ai",
+     "permalink": "59ecdf2693c3"
+    }
+   ]
+  },
+  {
+   "id": "o14",
+   "sponsor": "Microsoft",
+   "title": "6ebbfac57016",
+   "value_short": "8680a9dd7b07",
+   "claim_short": "5e2b8e96503d",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "c109242f3317",
+   "promo_code": "",
+   "claim_how": "bc837557c757",
+   "first": 1792795022.826229,
+   "excerpt": "f1aaaeab3a82",
+   "posts": [
+    {
+     "ts": 1792795022.826229,
+     "channel": "spons-microsoft",
+     "permalink": "9ab59704083d"
+    }
+   ]
+  },
+  {
+   "id": "o15",
+   "sponsor": "Mana",
+   "title": "cca2dd43bf2e",
+   "value_short": "9db92f4c3f8c",
+   "claim_short": "61e8d44ad423",
+   "amount_text": "a8d8ff9ff013",
+   "usd": 150,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "92909504b02f",
+   "promo_code": "",
+   "claim_how": "68dbd77679d3",
+   "first": 1792798374.858629,
+   "excerpt": "ea0c92435060",
+   "posts": [
+    {
+     "ts": 1792798374.858629,
+     "channel": "spons-mana",
+     "permalink": "895618deebd8"
+    },
+    {
+     "ts": 1792869435.503479,
+     "channel": "spons-mana",
+     "permalink": "117699106d7b"
+    }
+   ]
+  },
+  {
+   "id": "o16",
+   "sponsor": "Fetch.ai",
+   "title": "62c66fa94e0a",
+   "value_short": "e1df4e22a359",
+   "claim_short": "371111bf402b",
+   "amount_text": "00e9ef6d7248",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "9689d68f64ac",
+   "promo_code": "72b8fb56b3af",
+   "claim_how": "177b5ee44eef",
+   "first": 1792804485.718739,
+   "excerpt": "e81da7622cfe",
+   "posts": [
+    {
+     "ts": 1792804485.718739,
+     "channel": "spons-fetch-ai",
+     "permalink": "aceef717f878"
+    }
+   ]
+  },
+  {
+   "id": "o17",
+   "sponsor": "Moss",
+   "title": "925f703bdbaa",
+   "value_short": "d67822eadfe9",
+   "claim_short": "ad56c87ece8f",
+   "amount_text": "d67822eadfe9",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "439b8b0ff811",
+   "promo_code": "98a7dd2f707a",
+   "claim_how": "3f6a84642534",
+   "first": 1792815540.425759,
+   "excerpt": "e890ab93ec0b",
+   "posts": [
+    {
+     "ts": 1792815540.425759,
+     "channel": "spons-moss",
+     "permalink": "9657585f6ffb"
+    },
+    {
+     "ts": 1792865006.057489,
+     "channel": "spons-moss",
+     "permalink": "3a79332fad39"
+    }
+   ]
+  },
+  {
+   "id": "o18",
+   "sponsor": "RunPod",
+   "title": "ac8276573059",
+   "value_short": "a7a56ba48dae",
+   "claim_short": "2c24d35a117c",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "",
+   "promo_code": "",
+   "claim_how": "305d73041094",
+   "first": 1792845799.603489,
+   "excerpt": "e59d75fe8248",
+   "posts": [
+    {
+     "ts": 1792845799.603489,
+     "channel": "spons-runpod",
+     "permalink": "1dc4a386176c"
+    }
+   ]
+  },
+  {
+   "id": "o19",
+   "sponsor": "Convex",
+   "title": "bdc18618411b",
+   "value_short": "ecc4873a1694",
+   "claim_short": "f1c283a2a09b",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "",
+   "promo_code": "",
+   "claim_how": "d0533c3df7ef",
+   "first": 1792874371.871139,
+   "excerpt": "58a4067f5de8",
+   "posts": [
+    {
+     "ts": 1792874371.871139,
+     "channel": "spons-convex",
+     "permalink": "98f3a1d60794"
+    }
+   ]
+  },
+  {
+   "id": "o20",
+   "sponsor": "Convex",
+   "title": "4aa0ba289436",
+   "value_short": "dac7319591a2",
+   "claim_short": "c0086f23dcdd",
+   "amount_text": "",
+   "usd": null,
+   "limit": null,
+   "limit_unclear": false,
+   "claim_url": "",
+   "promo_code": "",
+   "claim_how": "0553392909ac",
+   "first": 1792881211.901109,
+   "excerpt": "27ee71232cce",
+   "posts": [
+    {
+     "ts": 1792881211.901109,
+     "channel": "spons-convex",
+     "permalink": "a313b2427b92"
+    }
+   ]
+  }
+ ],
+ "reps": [
+  {
+   "sponsor": "SpacetimeDB",
+   "channel": "cohost-spacetime",
+   "posts": 56,
+   "offers": 2,
+   "candidates": 1,
+   "candidate_first": [
+    1792945800.364919
+   ]
+  },
+  {
+   "sponsor": "Apify",
+   "channel": "spons-apify",
+   "posts": 71,
+   "offers": 2,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Convex",
+   "channel": "spons-convex",
+   "posts": 53,
+   "offers": 2,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Fetch.ai",
+   "channel": "spons-fetch-ai",
+   "posts": 47,
+   "offers": 1,
+   "candidates": 3,
+   "candidate_first": [
+    1792770712.228019,
+    1792887137.235049,
+    1792925188.607769
+   ]
+  },
+  {
+   "sponsor": "Bright Data",
+   "channel": "spons-bright-data",
+   "posts": 26,
+   "offers": 1,
+   "candidates": 3,
+   "candidate_first": [
+    1792701277.628089,
+    1792809581.026199,
+    1792875864.990289
+   ]
+  },
+  {
+   "sponsor": "Figma",
+   "channel": "spons-figma",
+   "posts": 41,
+   "offers": 1,
+   "candidates": 2,
+   "candidate_first": [
+    1792720334.095409,
+    1792971047.469069
+   ]
+  },
+  {
+   "sponsor": "Anthropic",
+   "channel": "cohost-anthropic",
+   "posts": 93,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792522831.984929
+   ]
+  },
+  {
+   "sponsor": "Cartesia",
+   "channel": "spons-cartesia",
+   "posts": 73,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792800135.285719
+   ]
+  },
+  {
+   "sponsor": "Microsoft",
+   "channel": "spons-microsoft",
+   "posts": 56,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792523153.884999
+   ]
+  },
+  {
+   "sponsor": "Mana",
+   "channel": "spons-mana",
+   "posts": 39,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792917993.617549
+   ]
+  },
+  {
+   "sponsor": "Factory",
+   "channel": "spons-factory-ai",
+   "posts": 32,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792792808.144379
+   ]
+  },
+  {
+   "sponsor": "Wajo AI",
+   "channel": "spons-wajo-ai",
+   "posts": 32,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792621476.305939
+   ]
+  },
+  {
+   "sponsor": "Moss",
+   "channel": "spons-moss",
+   "posts": 31,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792815540.425759
+   ]
+  },
+  {
+   "sponsor": "CREAO AI",
+   "channel": "spons-creao-ai",
+   "posts": 17,
+   "offers": 1,
+   "candidates": 1,
+   "candidate_first": [
+    1792652360.990209
+   ]
+  },
+  {
+   "sponsor": "CRS Credit API",
+   "channel": "spons-crs-credit-api",
+   "posts": 26,
+   "offers": 1,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Bitdeer",
+   "channel": "spons-bitdeer",
+   "posts": 20,
+   "offers": 1,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "RunPod",
+   "channel": "spons-runpod",
+   "posts": 9,
+   "offers": 1,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Hyphenate",
+   "channel": "cohost-hyphenate",
+   "posts": 45,
+   "offers": 0,
+   "candidates": 2,
+   "candidate_first": [
+    1792609139.116729,
+    1792720530.395139
+   ]
+  },
+  {
+   "sponsor": "Capital One",
+   "channel": "spons-capital-one",
+   "posts": 15,
+   "offers": 0,
+   "candidates": 2,
+   "candidate_first": [
+    1792802652.433309,
+    1792803915.844019
+   ]
+  },
+  {
+   "sponsor": "Annapurna Labs",
+   "channel": "cohost-annapurna-labs",
+   "posts": 5,
+   "offers": 0,
+   "candidates": 1,
+   "candidate_first": [
+    1792801732.699849
+   ]
+  },
+  {
+   "sponsor": "Supercell",
+   "channel": "spons-supercell",
+   "posts": 71,
+   "offers": 0,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Notability",
+   "channel": "spons-notability",
+   "posts": 13,
+   "offers": 0,
+   "candidates": 0,
+   "candidate_first": []
+  },
+  {
+   "sponsor": "Armadin",
+   "channel": "spons-armadin",
+   "posts": 6,
+   "offers": 0,
+   "candidates": 0,
+   "candidate_first": []
+  }
+ ],
+ "event_deadlines": [
+  {
+   "what": "Devpost submission deadline extended",
+   "at": 1792945800,
+   "until": null,
+   "posted": 1792943981.782739,
+   "source": "1d862795a788"
+  },
+  {
+   "what": "Arrive with the whole team at the Palace of Fine Arts",
+   "at": 1792945800,
+   "until": null,
+   "posted": 1792918203.114859,
+   "source": "e2e163637d11"
+  },
+  {
+   "what": "Judging window (teams must be at their table)",
+   "at": 1792949400,
+   "until": 1792956600,
+   "posted": 1792918203.114859,
+   "source": "e2e163637d11"
+  }
+ ],
+ "basis": {
+  "grouping": "01c5c99984ba0c49",
+  "model": "claude-opus-5-5"
+ }
+}

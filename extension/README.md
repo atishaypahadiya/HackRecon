@@ -39,7 +39,7 @@ Posters the export can't name are listed as "no name in export". These are the S
 
 The last line lists the locked-25 channels that don't pass yet. Exit code 1 means some channel failed keyed recall: fix it and re-capture (day-2 morning rule).
 
-## Saving DOM samples (`fixtures/slack-dom/`, gitignored)
+## Saving DOM samples (`events/<slug>/fixtures/slack-dom/`, gitignored)
 
 Every Slack selector lives in `src/selectors.ts`. They were verified on 2026-10-27 against samples from spons-moss, spons-capital-one and spons-factory-ai. The few with no matching element in those samples (inline titles, APP badges) are marked UNVERIFIED. `src/parse.fixtures.test.ts` checks the parser against each sample using the export as the answer key:
 - kept vs skipped rows
@@ -57,7 +57,7 @@ To save one: scroll a channel to the spot you want, open DevTools → Console, a
 copy(document.body.outerHTML)
 ```
 
-Then in a terminal: `pbpaste > fixtures/slack-dom/<channel>-<case>.html`. Cover each of these at least once (the coverage tests name any that are missing):
+Then in a terminal: `pbpaste > events/<slug>/fixtures/slack-dom/<channel>-<case>.html`. Cover each of these at least once (the coverage tests name any that are missing):
 
 | Case | Where to find one | File name |
 |---|---|---|

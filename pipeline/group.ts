@@ -15,7 +15,6 @@ export const GROUP_MODEL = JUDGE_MODEL;
 export const GROUP_EFFORT = JUDGE_EFFORT;
 /** One request holds every credit post; thinking counts toward max_tokens, so it streams. */
 export const GROUP_MAX_TOKENS = 48000;
-export const GROUP_PATH = "review/offers.json";
 
 export interface Offer {
   sponsor: string;
