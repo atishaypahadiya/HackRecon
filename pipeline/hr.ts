@@ -64,6 +64,7 @@ import {
   CANON_JUDGE_FIXTURES_PATH,
   CANON_JUDGE_PATH,
   CANON_PATH,
+  CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
@@ -768,6 +769,14 @@ function carryIds(prev: CanonPage | undefined, next: Entity[], snap: PageSnapsho
   return { entities, gone };
 }
 
+interface StoredExtraction {
+  entities: Entity[];
+  usage: CanonPage["usage"];
+  written_at: string;
+  /** The output file the extraction was first written to. */
+  from: string;
+}
+
 async function canon(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
@@ -787,6 +796,10 @@ async function canon(args: string[]): Promise<number> {
     return 2;
   }
   const prev = new Map(readJsonFile<CanonPage[]>(outPath, []).map((c) => [pageKey(c.url), c]));
+  const store = readJsonFile<Record<string, StoredExtraction>>(CANON_STORE_PATH, {});
+  // Seed from pages already extracted (either output file), so text extracted once is never extracted again.
+  for (const path of [CANON_FIXTURES_PATH, CANON_PATH])
+    for (const pg of readJsonFile<CanonPage[]>(path, [])) store[`${pg.prompt_hash}|${pg.input_hash}`] ??= { entities: pg.entities, usage: pg.usage, written_at: pg.written_at, from: path };
   const out: CanonPage[] = [];
   let client: Anthropic | null = null;
   let failed = errors.length > 0 || missing.length > 0;
@@ -799,7 +812,30 @@ async function canon(args: string[]): Promise<number> {
       continue;
     }
     let page = prev.get(key);
-    if (!page || page.input_hash !== c.input_hash || values.force) {
+    const stored = store[`${c.prompt_hash}|${c.input_hash}`];
+    // The store wins over this file's own copy: one input has one extraction, whichever file asks.
+    if (stored && !values.force) {
+      const { entities, gone } = carryIds(page, assignIds(stored.entities, c.snap), c.snap);
+      page = {
+        url: p.snapshot.url,
+        file: p.file,
+        captured_by: p.snapshot.captured_by,
+        access: p.snapshot.access,
+        snapshot_hash: p.hash,
+        redacted: c.redacted,
+        model: CANON_MODEL,
+        prompt_hash: c.prompt_hash,
+        input_hash: c.input_hash,
+        entities,
+        coverage: coverage(c.snap, entities),
+        no_longer_on_page: gone,
+        match_keys: keyed(entities, c.snap),
+        usage: stored.usage,
+        cost_usd: 0,
+        written_at: stored.written_at,
+      };
+      console.log(`stored extraction (${entities.length} entities, same prompt and input as ${stored.from} at ${stored.written_at.slice(0, 19)}); --force to re-extract`);
+    } else if (!page || page.input_hash !== c.input_hash || values.force) {
       client ??= anthropicClient();
       if (!client) return 2;
       const r = await callChecked(client, {
@@ -837,6 +873,7 @@ async function canon(args: string[]): Promise<number> {
         cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)),
         written_at: new Date().toISOString(),
       };
+      store[`${c.prompt_hash}|${c.input_hash}`] = { entities: page.entities, usage: r.usage, written_at: page.written_at, from: outPath };
     } else {
       // Same input: ids are re-derived anyway, so a change to the id scheme reaches cached pages (marks follow, D7).
       const { entities, gone } = carryIds(page, assignIds(page.entities, c.snap), c.snap);
@@ -859,6 +896,7 @@ async function canon(args: string[]): Promise<number> {
     console.log("\ndry run: no API call, nothing written");
     return 0;
   }
+  writeJsonFile(CANON_STORE_PATH, store);
   for (const [k, c] of prev) if (!out.some((o) => pageKey(o.url) === k)) out.push(c); // pages no longer listed stay until removed by hand
   writeJsonFile(outPath, out);
   console.log(`\nwrote ${outPath}: ${out.length} page(s), ${out.reduce((n, p) => n + p.entities.length, 0)} entities`);
