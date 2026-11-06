@@ -209,13 +209,32 @@ export class PoliteFetcher {
   robotsFor(origin: string): Promise<Robots> {
     let r = this.robots.get(origin);
     if (!r) {
-      this.robotsRequests++;
-      r = this.fetcher(`${origin}/robots.txt`, { headers: this.headers(), redirect: "follow", credentials: "omit", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-        .then(async (res): Promise<Robots> => (res.ok ? parseRobots(await res.text()) : res.status >= 400 && res.status < 500 ? "none" : "deny"))
-        .catch((): Robots => "deny");
+      r = this.fetchRobots(origin).catch((): Robots => "deny");
       this.robots.set(origin, r);
     }
     return r;
+  }
+
+  /** robots.txt with the same hop rules as pages: each hop is address-checked and stays on the site, at most
+   *  MAX_REDIRECTS. A failed check means "deny": nothing is fetched from that host this sync. */
+  private async fetchRobots(origin: string): Promise<Robots> {
+    const start = new URL(`${origin}/robots.txt`);
+    let at = start;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (await publicTarget(at, this.resolve)) return "deny";
+      this.robotsRequests++;
+      const res = await this.fetcher(at.href, { headers: this.headers(), redirect: "manual", credentials: "omit", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) return "deny";
+        const next = new URL(loc, at);
+        if (!sameSite(start, next)) return "deny";
+        at = next;
+        continue;
+      }
+      return res.ok ? parseRobots(await res.text()) : res.status >= 400 && res.status < 500 ? "none" : "deny";
+    }
+    return "deny";
   }
 
   /** Fetches a URL at most once per sync, however many times it is asked for. `want` is the content type. */

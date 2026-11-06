@@ -108,7 +108,7 @@ describe("PoliteFetcher", () => {
         const r = routes[url];
         return r ? r() : new Response("nf", { status: 404 });
       },
-      async (host) => (host === "intranet.corp" ? ["10.0.0.5"] : host === "meta.ok.example" ? ["169.254.169.254"] : ["93.184.216.34"]),
+      async (host) => (host === "intranet.corp" ? ["10.0.0.5"] : host === "meta.ok.example" || host === "meta.r2.example" ? ["169.254.169.254"] : ["93.184.216.34"]),
     );
     return { f, calls };
   };
@@ -157,6 +157,19 @@ describe("PoliteFetcher", () => {
     for (const ip of ["64:ff9b::808:808", "2002:0808:0808::1", "::ffff:8.8.8.8", "1.1.1.1"]) expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
     expect(sameSite(new URL("https://a.co.uk/"), new URL("https://b.co.uk/"))).toBe(false);
     expect(sameSite(new URL("http://devpost.com/"), new URL("https://x.devpost.com/"))).toBe(true);
+  });
+  test("robots.txt redirects are checked like pages: off-site or private means deny", async () => {
+    const { f, calls } = mk({
+      "https://r1.example/robots.txt": () => new Response(null, { status: 301, headers: { location: "https://evil.net/robots.txt" } }),
+      "https://r2.example/robots.txt": () => new Response(null, { status: 301, headers: { location: "https://meta.r2.example/robots.txt" } }),
+      "https://r3.example/robots.txt": () => new Response(null, { status: 301, headers: { location: "https://www.r3.example/robots.txt" } }),
+      "https://www.r3.example/robots.txt": () => new Response("User-agent: *\nDisallow: /x\n"),
+    });
+    expect(await f.robotsFor("https://r1.example")).toBe("deny");
+    expect(await f.robotsFor("https://r2.example")).toBe("deny");
+    expect(robotsAllows(await f.robotsFor("https://r3.example"), "/x")).toBe(false);
+    expect(robotsAllows(await f.robotsFor("https://r3.example"), "/y")).toBe(true);
+    expect(calls.some((c) => c.url.includes("evil.net") || c.url.includes("meta.r2"))).toBe(false);
   });
   test("a page with no text or a short login form needs the extension", () => {
     const snap = (blocks: PageSnapshot["blocks"], no_text?: string) => ({ blocks, no_text }) as PageSnapshot;
