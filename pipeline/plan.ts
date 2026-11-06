@@ -23,6 +23,8 @@ export interface PlanInput {
   idea: string;
   /** null when the user left it empty. */
   stack: StackItem[] | null;
+  /** A public GitHub repo for the gap check; the ranker never sees it, so rankings keep their cache keys. */
+  repo?: string | null;
 }
 
 /** What the ranker sees: the names, with "(used for: …)" only where the user gave one. A stack without any used_for
@@ -268,7 +270,7 @@ export const PLAN_LIMITS = { idea: 2000, items: 20, name: 80, used_for: 160 } as
 
 /** POST /plan's body → PlanInput, or why not. Lengths are capped so one request stays one ranking. */
 export function parsePlanBody(body: unknown): PlanInput | { error: string } {
-  const b = body as { idea?: unknown; stack?: unknown };
+  const b = body as { idea?: unknown; stack?: unknown; repo?: unknown };
   const idea = typeof b?.idea === "string" ? b.idea.trim() : "";
   if (!idea) return { error: "describe your project first" };
   if (idea.length > PLAN_LIMITS.idea) return { error: `the description is over ${PLAN_LIMITS.idea} characters` };
@@ -284,7 +286,9 @@ export function parsePlanBody(body: unknown): PlanInput | { error: string } {
     if (name.length > PLAN_LIMITS.name || used.length > PLAN_LIMITS.used_for) return { error: `a stack item is over ${PLAN_LIMITS.name} characters, or its use over ${PLAN_LIMITS.used_for}` };
     stack.push({ name, used_for: used || null });
   }
-  return { idea, stack: stack.length ? stack : null };
+  const repo = typeof b.repo === "string" ? b.repo.trim() : "";
+  if (repo && !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?(?:\.git)?\/?$/.test(repo)) return { error: "the repo link must be a public https://github.com/<owner>/<repo> link" };
+  return { idea, stack: stack.length ? stack : null, ...(repo ? { repo } : {}) };
 }
 
 export interface PlanDeadline {

@@ -231,6 +231,8 @@
   .pf textarea { min-height: 72px; resize: vertical; field-sizing: content; }
   .pf textarea:hover, .pf input:hover { border-color: rgba(21,23,28,.24); }
   .pf ::placeholder { color: var(--muted); opacity: 1; }
+  .pf .opt { font-weight: 500; }
+  .pf .hint { display: block; margin-top: 6px; }
   .si { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 44px; gap: 8px; margin-top: 8px; }
   .si:first-child { margin-top: 0; }
   .rm { width: 44px; height: 44px; border-radius: var(--r-chip); font-size: 22px; line-height: 1; color: var(--muted); }
@@ -248,6 +250,7 @@
   .pmain:hover .pn { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
   .pn { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
   .pr { display: block; margin-top: 4px; max-width: 75ch; }
+  .pg { font-weight: 600; }
   .also { margin: 6px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
   .also + .prows .prow:first-child { border-top: 0; }
   .pmeta a, .bq .pmeta a { color: var(--text); text-underline-offset: 3px; position: relative; }
@@ -855,7 +858,7 @@ addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { bui
 /* ---------- Plan (v2): the default tab ---------- */
 // Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
 const TOKEN = document.querySelector('meta[name="hr-token"]').content;
-const P = { meta: null, input: null, res: null, busy: false, failed: false, seq: 0, steps: new Set() };
+const P = { meta: null, input: null, res: null, gaps: null, busy: false, failed: false, seq: 0, steps: new Set() };
 const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
 const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
 // ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
@@ -896,7 +899,7 @@ function paintInput(editing) {
   const box = $("pi-body");
   if (!editing && P.input) {
     const names = (P.input.stack || []).map((x) => x.name).join(", ");
-    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>`;
+    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>`;
     $("pi-edit").onclick = () => { paintInput(true); $("pi-idea").focus(); };
     return;
   }
@@ -904,6 +907,7 @@ function paintInput(editing) {
   box.innerHTML = `<form class="pf" id="pf" novalidate>
     <div><label class="l" for="pi-idea">Your project</label><textarea id="pi-idea" maxlength="2000" placeholder="What are you building, and for whom?">${esc(P.input?.idea || "")}</textarea></div>
     <div><span class="l" id="pi-sl">Stack</span><div id="pi-stack" role="group" aria-labelledby="pi-sl">${stack.map(stackRow).join("")}</div><button type="button" class="add" id="pi-add">Add to stack</button></div>
+    <div><label class="l" for="pi-repo">Repo link <span class="opt">(optional)</span></label><input id="pi-repo" type="url" inputmode="url" value="${esc(P.input?.repo || "")}" placeholder="https://github.com/you/project" autocomplete="off" maxlength="200"><span class="cap hint">Read to check each likely track's stated requirements against your code. Public GitHub only.</span></div>
     <div class="go-row"><button class="jump" type="submit">Make my plan</button><span class="cap" id="pi-cap">${esc(beforeLine())}</span></div>
   </form>`;
   $("pi-add").onclick = () => { $("pi-stack").insertAdjacentHTML("beforeend", stackRow()); $("pi-stack").lastElementChild.querySelector(".nm").focus(); };
@@ -942,7 +946,9 @@ function paintInput(editing) {
     const idea = $("pi-idea").value.trim();
     if (!idea) { $("pi-cap").textContent = "Describe your project first."; $("pi-idea").focus(); return; }
     const items = [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value.trim(), used_for: r.querySelector(".uf").value.trim() })).filter((x) => x.name);
-    P.input = { idea, stack: items.length ? items : null };
+    const repo = $("pi-repo").value.trim();
+    if (repo && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) { $("pi-cap").textContent = "The repo link must be a public https://github.com/<owner>/<repo> link."; $("pi-repo").focus(); return; }
+    P.input = { idea, stack: items.length ? items : null, ...(repo ? { repo } : {}) };
     store.set(planKey(), JSON.stringify(P.input));
     paintInput(false);
     runPlan();
@@ -977,9 +983,22 @@ async function runPlan() {
     P.res = j;
   } catch { if (seq !== P.seq) return; P.failed = true; P.res = null; }
   P.busy = false;
+  P.gaps = null;
   paintResults();
   if (P.res) $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, ${plural(P.res.booths.length, "booth question")}.`;
+  if (!P.res) return;
+  // Gaps come second: the tracks show first, then each likely track's stated requirements are checked against
+  // what the user gave (description, stack). The answer cites both sides; it never says whether a track is open to them.
+  try {
+    const r = await fetch("/plan/gaps", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input) });
+    const j = await r.json();
+    if (seq !== P.seq) return;
+    P.gaps = r.ok && !j.error ? j : { error: true };
+  } catch { if (seq !== P.seq) return; P.gaps = { error: true }; }
+  paintResults();
+  if (P.gaps.gaps?.length) $("say").textContent = `${plural(P.gaps.gaps.length, "gap")} between a stated requirement and your project.`;
 }
+const gapsOf = (id) => P.gaps?.gaps?.filter((g) => g.track_id === id) ?? [];
 
 const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
 const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : host(u))} ↗</a>` : "");
@@ -987,7 +1006,8 @@ function trackRow(t) {
   const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
   const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
-  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span></button>${steps}<div class="pmeta m">${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
+  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg">Gap: ${esc(g.gap)}</span>`).join("");
+  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
 }
 function paintResults() {
   const show = !!P.input;
@@ -1019,6 +1039,9 @@ function openTrack(id, from) {
   $("dr-title").innerHTML = `${esc(t.name)}<span class="cap">${esc([fit, t.label].filter(Boolean).join(" · "))}</span>`;
   const parts = [
     `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
+    gapsOf(t.track_id).length
+      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">The page's ${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
+      : t.fit === "likely" && t.evidence === "stated" && P.gaps && !P.gaps.error ? `<h3>Gaps</h3><div class="item"><p class="note">None found: nothing in your description, stack${P.input.repo ? " or repo" : ""} differs from this track's stated requirements. That doesn't say they're met.</p></div>` : "",
     t.steps.length ? `<h3>Entry steps</h3><div class="item">${t.steps.map((s) => `${stepBox(s)}<q>${esc(s.quote)}</q>`).join("")}</div>` : "",
     d.requirements.length ? `<h3>Requirements</h3><div class="item">${list(d.requirements.map(esc))}</div>` : "",
     d.criteria.length ? `<h3>Judging criteria</h3><div class="item">${list(d.criteria.map((c) => esc(c.description ? `${c.name}: ${c.description}` : c.name)))}</div>` : "",

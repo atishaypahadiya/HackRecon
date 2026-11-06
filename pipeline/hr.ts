@@ -71,6 +71,7 @@ import {
   CAPTURES_DIR,
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
+  GAPS_CACHE_PATH,
   FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
@@ -122,7 +123,9 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
-import { boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache } from "./plan.ts";
+import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
+import { checkoutRepo, repoFacts } from "./repo.ts";
+import { boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -687,6 +690,38 @@ async function board(args: string[]): Promise<number> {
         console.log(`plan: tracks in ${r.ms} ms (${r.from})`);
         return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothQuestions(r.items, input), from: r.from, ms: r.ms });
       }
+      if (req.method === "POST" && path === "/plan/gaps") {
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 16_000) return json({ error: "request too large" }, 413);
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const input = parsePlanBody(body);
+        if ("error" in input) return json(input, 400);
+        const { entities, event, aliases } = planContext();
+        // The ranking was just made by POST /plan, so it comes from the cache; the board sends no track list to trust.
+        const r = await planTracks(anthropicClient(), input, entities, event, readJsonFile<FitCache>(FIT_CACHE_PATH, {}), aliases);
+        if ("error" in r) return json({ error: "couldn't rank tracks" }, 503);
+        const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+        let lines: ProjectFact[] = [];
+        if (input.repo) {
+          const repo = checkoutRepo(input.repo);
+          if ("error" in repo) console.error(`plan: ${repo.error}`);
+          else lines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
+        }
+        const g = await planGaps(anthropicClient(), r.items, entities, input, lines, gcache);
+        if ("error" in g) {
+          console.error(`plan: couldn't check requirements: ${g.error}`);
+          return json({ error: "couldn't check requirements" }, 503);
+        }
+        if (g.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
+        console.log(`plan: gaps in ${g.ms} ms (${g.from})`);
+        return json({ gaps: g.gaps, checked: g.checked, repo_lines: g.facts.repo });
+      }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
       if (path === "/plan/meta") {
         const { entities, event } = planContext();
@@ -1135,8 +1170,9 @@ interface FitCached {
 }
 
 async function planCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" } } });
-  const dog = values.from ? readJsonFile<{ idea: string; stack: string; targeted?: string[] } | null>(values.from, null) : null;
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" } } });
+  // A fixture's stack is the CLI string or a list of {name, used_for} (a used-for may hold commas).
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; targeted?: string[]; repo?: string } | null>(values.from, null) : null;
   if (values.from && !dog) {
     console.error(`${values.from} not found`);
     return 2;
@@ -1146,7 +1182,7 @@ async function planCli(args: string[]): Promise<number> {
     console.error("--idea or --from is required");
     return 2;
   }
-  const input = { idea, stack: parseStack(values.stack ?? dog?.stack) };
+  const input: PlanInput = { idea, stack: values.stack !== undefined || typeof dog?.stack !== "object" ? parseStack(values.stack ?? (dog?.stack as string | undefined)) : dog.stack.length ? dog.stack : null };
   const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
   const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
@@ -1169,6 +1205,30 @@ async function planCli(args: string[]): Promise<number> {
   if (dog?.targeted?.length) {
     const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
     console.log(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
+  }
+
+  // Gaps: likely tracks' stated requirements and entry steps against the project, and the repo when linked.
+  const repoUrl = values.repo ?? dog?.repo;
+  if (repoUrl) input.repo = repoUrl;
+  let repoLines: ProjectFact[] = [];
+  if (repoUrl) {
+    const repo = checkoutRepo(repoUrl);
+    if ("error" in repo) console.error(`repo: ${repo.error}; checking against the description and stack only`);
+    else repoLines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
+    if (!("error" in repo)) console.log(`\nrepo ${repo.url} @ ${repo.sha.slice(0, 7)}: ${repoLines.length} lines naming the likely tracks' products`);
+  }
+  const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+  const g = await planGaps(anthropicClient(), r.items, entities, input, repoLines, gcache);
+  if ("error" in g) {
+    console.error(`couldn't check requirements: ${g.error}`);
+    return 1;
+  }
+  writeJsonFile(GAPS_CACHE_PATH, gcache);
+  console.log(`\nGaps (${g.from}, ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines`);
+  if (!g.gaps.length) console.log("  none found: no project fact given differs from a stated requirement. That says nothing about whether the requirements are met.");
+  for (const x of g.gaps) {
+    console.log(`  ${x.track}\n    ${x.gap}\n    page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
+    for (const p of x.project) console.log(`    ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
   }
   return 0;
 }

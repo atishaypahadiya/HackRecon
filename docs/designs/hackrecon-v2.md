@@ -1587,7 +1587,30 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
     - **Next for you:** the next schedule item after the hacking start. Cal Hacks' config has no start, so an item shows only within 24 h of it. `?now=` checks it: Oct 25 08:00 shows "Sun 9:30 AM · Devpost submission deadline extended · in 1 h 30 min"; Oct 20 and today hide it.
     - **States (D4):** before typing, "52 tracks on Devpost; your plan appears once you describe your project"; "Matching…" with aria-busy; on failure, "Couldn't rank tracks just now; trying again on the next change". An empty description gives "Describe your project first." A polite live region announces the result.
     - **Hindsight in the browser** (headless gstack browser, 1440 / 390 / 360, no console errors, no horizontal scroll at 360): the same 4 likely + 1 possible as `hr plan`, in 5 s uncached. A step ticked in the drawer ticks the row too and survives a reload. Closing the drawer puts focus back on what opened it; this also fixed Claim's drawer, which left focus on the page.
-    - **Hindsight's used-for values:** only "Figma: UI design" is in the fixture. The other three came through as unfilled placeholders and are waiting on the user.
+    - **Hindsight's used-for values:** drafted from the Hindsight repo (db92f7d) and its Devpost write-up, each from a named call site, and saved after the user confirmed all three (2026-11-06). The fixture's stack is now a list of {name, used_for}, since a used-for can contain commas.
+  - **Gaps (user 2026-11-06).** For each likely track, the stated requirements and entry steps are checked against the project, and unmet ones are flagged with facts from both sides, each with its source. Never a verdict on eligibility.
+    - **Inputs** (`pipeline/gaps.ts`):
+      - Requirements: the likely tracks' canon requirement sentences and entry-step quotes, each once per track. Title-tier tracks state none, so they have nothing to check.
+      - Project facts: the description's sentences, each stack line ("Apify: scrape …"), and, when a repo is linked, its lines naming a likely track's products (`pipeline/repo.ts`). Repo lines are found in code: README first, then code. Lockfiles, tests, env files, secret-looking lines and symlinks are skipped, with at most 4 lines per file and 24 per product. Each keeps its path:line and a link at the commit.
+    - **One Sonnet call** (medium effort, cached in data/gaps_cache.json) proposes gaps by id. `checkGaps` rejects:
+      - an unknown id;
+      - a project quote that isn't in its fact;
+      - a gap citing no project fact, since a requirement the project doesn't mention isn't a gap;
+      - a sentence using the eligibility lint's words or any verdict/advice word (counts, meets, fails, should, …).
+      The requirement's quote comes from canon, not from the model.
+    - **Repo:** public `https://github.com/<owner>/<repo>` links only, cloned shallow into `~/.cache/hackrecon/repos`. Nothing in the clone is run.
+      - The first version cloned into the event's data/ folder, and `bun test` then picked up Hindsight's three TypeScript test files. All three failed while loading (their dependencies aren't installed), so none of their code ran.
+      - Fixed twice over: clones now live outside the project, and bunfig.toml ignores `**/data/**`, `**/node_modules/**` and `events/**` for tests.
+    - **Hindsight** (`hr plan --from fixtures/dogfood/hindsight.json`, repo db92f7d, 115 repo lines; 2,670 ms, $0.02):
+      - One gap on [Apify] Best Actor: "Best Actor asks for building an actor; the repository's apps/actor README says its own Actor is not used and Radar runs Apify's existing Cheerio Scraper."
+      - It cites the page's "We have a Best Actor award for building an actor for this event.", `apps/actor/README.md:7` "Not used: Radar runs Apify's Cheerio Scraper (DECISIONS.md D-002)." and `README.md:142` "Apify's existing Cheerio Scraper Actor fetches curated calendars and listings."
+      - Without the repo the same check finds none: the description and stack don't say how Apify is run. The "none found" line says that doesn't mean the requirements are met.
+    - **Ranking moved with the used-fors:** the new stack lines changed the ranker's request (a new cache key). Likely is unchanged; the possible Figma track is now [Figma] Best Use Case instead of Best Design.
+    - **Board:**
+      - The input has an optional "Repo link" field.
+      - After the tracks show, `POST /plan/gaps` (same Origin + token guard) re-ranks from the cache rather than trusting a track list from the page, then checks gaps.
+      - A row shows "Gap: …". The drawer's Gaps section lists the sentence, the page's quote and each project quote with its source (repo lines link to GitHub at the commit).
+      - Checked in the headless browser at 1440 and 360.
 
 ### Fit baseline before Slack requirements (2026-11-06)
 

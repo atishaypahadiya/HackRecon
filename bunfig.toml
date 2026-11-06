@@ -1,0 +1,3 @@
+# Only this project's tests: never a cloned repo's or a dependency's (pipeline/repo.ts keeps clones outside the tree too).
+[test]
+pathIgnorePatterns = ["**/data/**", "**/node_modules/**", "events/**"]
