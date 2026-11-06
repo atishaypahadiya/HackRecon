@@ -122,7 +122,7 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
-import { boothQuestions, parseStack, planTracks, type FitCache } from "./plan.ts";
+import { boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -655,14 +655,45 @@ async function board(args: string[]): Promise<number> {
   console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
   if (values["build-only"]) return 0;
   const headers = { "Cache-Control": "no-store" };
+  // D6: the one POST route answers only the board's own page: same Origin, and this run's token from the page.
+  const token = crypto.randomUUID();
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...headers, "Content-Type": "application/json" } });
+  const planContext = () => ({ entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) });
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: Number(values.port),
-    fetch(req) {
+    async fetch(req) {
       const path = new URL(req.url).pathname;
+      if (req.method === "POST" && path === "/plan") {
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 16_000) return json({ error: "request too large" }, 413);
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const input = parsePlanBody(body);
+        if ("error" in input) return json(input, 400);
+        const { entities, event, aliases } = planContext();
+        const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
+        const r = await planTracks(anthropicClient(), input, entities, event, cache, aliases);
+        if ("error" in r) {
+          console.error(`plan: couldn't rank tracks: ${r.error}`);
+          return json({ error: "couldn't rank tracks" }, 503);
+        }
+        if (r.from === "model") writeJsonFile(FIT_CACHE_PATH, cache);
+        console.log(`plan: tracks in ${r.ms} ms (${r.from})`);
+        return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothQuestions(r.items, input), from: r.from, ms: r.ms });
+      }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+      if (path === "/plan/meta") {
+        const { entities, event } = planContext();
+        return json(planMeta(entities, event));
+      }
       if (path === "/")
-        return new Response(readFileSync(BOARD_PAGE, "utf8"), {
+        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`), {
           headers: {
             ...headers,
             "Content-Type": "text/html; charset=utf-8",

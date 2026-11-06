@@ -245,7 +245,7 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
         - (2) the description's own "to/for …" clause;
         - (3) a stack entry that already says its use, "<thing> <past participle> in|with|on <product>": "We designed the UI in Figma; what does ‘Best Design’ reward beyond that?";
         - (4) "We use <product> for <the description's first sentence>".
-    - **Not built yet:** the input fields render when step 4's P1 builds the Plan tab in board/. This is the spec they follow.
+    - **Built in P1 (2026-11-06):** the board's Plan input has these fields; see Step 4 progress.
   - **Layout (design review D2, user 2026-11-06).** Once filled, the project input collapses to one line (description · stack, then Edit). Under it, a single **"Next for you"** line, not a tile: the next time-bound item from the plan (a session, booth hours, a claim window or a deadline), e.g. "Sat 2:00 · Apify workshop, Gate 4 · in 40 min". It's hidden before the event starts and when nothing is upcoming. Then on desktop, Tracks 8 col | Credits 4 col, and Sessions | Booths and reps | People, 4 col each. Tablet: Tracks 12; Credits 12; the band 12 (three columns). Phone order: input, Next for you, Tracks, the band (Sessions, Booths, People), Credits. Tracks lead because the other four sections are matched to the targeted tracks.
     ```
     [ Hindsight: transfer planner…  ·  Vercel, FastAPI, Claude API…        Edit ]
@@ -1572,6 +1572,23 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - cash_only tracks get none.
     - Each question carries its grounds: the stack entry, the description phrase, and the page's quote or "states no requirements".
 
+  - **P1, the Plan tab in the board (2026-11-06).** Plan is the default tab; Claim is the v1 board, unchanged apart from the drawer focus fix below.
+    - **Server (`hr board`):**
+      - `GET /plan/meta` gives the track count, the timezone, the hacking start and the times Next for you can show (from canon, built by `planMeta`). The times are the event config's live schedule items (Slack-sourced, so they carry the 9:30 extension); canon's rule deadlines are used only when there's no schedule.
+      - `POST /plan` is the board's one write route (D6). It needs the board's own Origin plus this run's token, which the server writes into the served page's `hr-token` meta tag; otherwise it returns 403.
+      - Bodies over 16 kB are refused. `parsePlanBody` caps the description at 2,000 characters, 20 items, 80-character names and 160-character uses.
+      - It runs `planTracks` (same ranker, cache and label cap as `hr plan`), adds each track's drawer detail (`trackDetail`: requirements, criteria, other block text, prizes, verbatim) and the code-built Booths questions.
+    - **Input:**
+      - A description field plus one row per stack item: a name ("a tool, API or service") and the optional use ("what it does in your project").
+      - Pasting "Apify: pull catalogs, Vercel" into a name field splits it into rows at the first ": ", as the CLI does. Enter moves name → use → next item.
+      - After submit it collapses to "first sentence · stack names" with Edit. It's saved in localStorage per event and re-run on load (from the fit cache).
+    - **Tracks** (one tile, rows are buttons, D3/D7): name, reason, the entry-step checkboxes on likely rows, then mono metadata: fit word, "requirements not stated" on title-tier tracks, and a devpost ↗ link. The "Also possible" line comes before the possible rows (D12). A row opens the drawer: why it fits (quote, or the title-as-evidence note), entry steps with their quotes, requirements, judging criteria, other text, prizes and the Devpost link. Step ticks are stored by entry_step id, so Ship can read the same ones.
+    - **Booths** sit in the plain band (D8), one heading per sponsor, each question with Copy and its source. Sessions, People and Credits aren't built and are left out, not shown empty. Until they exist, Booths spans the band and Tracks spans 12 columns (the spec's 8 | 4 needs Credits).
+    - **Next for you:** the next schedule item after the hacking start. Cal Hacks' config has no start, so an item shows only within 24 h of it. `?now=` checks it: Oct 25 08:00 shows "Sun 9:30 AM · Devpost submission deadline extended · in 1 h 30 min"; Oct 20 and today hide it.
+    - **States (D4):** before typing, "52 tracks on Devpost; your plan appears once you describe your project"; "Matching…" with aria-busy; on failure, "Couldn't rank tracks just now; trying again on the next change". An empty description gives "Describe your project first." A polite live region announces the result.
+    - **Hindsight in the browser** (headless gstack browser, 1440 / 390 / 360, no console errors, no horizontal scroll at 360): the same 4 likely + 1 possible as `hr plan`, in 5 s uncached. A step ticked in the drawer ticks the row too and survives a reload. Closing the drawer puts focus back on what opened it; this also fixed Claim's drawer, which left focus on the page.
+    - **Hindsight's used-for values:** only "Figma: UI design" is in the fixture. The other three came through as unfilled placeholders and are waiting on the user.
+
 ### Fit baseline before Slack requirements (2026-11-06)
 
 `review/fit_baseline.json` is now the complete tiered run above (run 2026-11-06T21:56Z, set with `hr fit-eval --set-baseline` from cache), replacing the T7 baseline. This is the measurement step 1 compares against: Slack sponsor posts merged as requirements or criteria move tracks from title-only to stated, and the next gate run is paired against these 94 pairs.
@@ -1650,7 +1667,7 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
 **What already exists, reused:** tile, drawer (440 px right sheet, 88vh bottom sheet), code chip, ghost Claim button, mono metadata, the done fade at 42%, the 12-col grid, breakpoints, the focus ring, and Meet's copy-only opener pattern for questions and pitches.
 
 **Implementation tasks (step 4):**
-- [ ] **P1** Plan layout and rows (D2, D3, D7, D8, D12) in `board/`. Verify: /design-review at 1440, 390, 360.
+- [ ] **P1** Plan layout and rows (D2, D3, D7, D8, D12) in `board/`. Verify: /design-review at 1440, 390, 360. *Built 2026-11-06 and checked with /browse at those widths (Step 4 progress); the /design-review pass is still to run.*
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
