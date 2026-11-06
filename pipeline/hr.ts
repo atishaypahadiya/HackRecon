@@ -65,6 +65,7 @@ import {
   CANON_JUDGE_PATH,
   CANON_PATH,
   CAPTURES_DIR,
+  DISCOVERED_PATH,
   FIT_CACHE_PATH,
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
@@ -89,7 +90,7 @@ import {
   takeEventArg,
   useEvent,
 } from "./event.ts";
-import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, type LoadedPage } from "./pages.ts";
+import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
 import type { EventConfig } from "./classify.ts";
 import {
   CANON_EFFORT,
@@ -116,6 +117,8 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { formatFitReport, scoreFit, type EvalItem } from "./fiteval.ts";
+import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
+import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, PageSnapshot } from "./schema.ts";
 import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
@@ -172,6 +175,12 @@ const USAGE = `usage:
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
       ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
       Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
+  bun run hr sync [--no-canon] [--offline]
+      After a Slack capture: finds the event's Devpost and schedule pages in announcement posts (restricted-posting
+      channels, else authority_channels, else channels named *announce*; Devpost search by event name as fallback),
+      fetches every public page (one request per URL per sync, User-Agent "${USER_AGENT}", robots.txt respected)
+      into ${PAGES_DIR}, runs canon on changed pages, and drafts sponsors.json and organizers. Config you wrote wins
+      over a draft; drafts and the run report go to ${DISCOVERED_PATH}. --offline skips the network.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -184,7 +193,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -202,6 +211,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "pages") return pages(rest);
   if (cmd === "canon") return canon(rest);
   if (cmd === "fit-eval") return fitEval(rest);
+  if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -692,7 +702,7 @@ async function pages(args: string[]): Promise<number> {
 interface CanonPage {
   url: string;
   file: string;
-  captured_by: "extension" | "fixture";
+  captured_by: PageSnapshot["captured_by"];
   access: string | null;
   snapshot_hash: string;
   redacted: number | null;
@@ -891,6 +901,114 @@ async function canon(args: string[]): Promise<number> {
     writeJsonFile(judgePath, [...judged.values()]);
   }
   return failed ? 1 : 0;
+}
+
+async function sync(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "no-canon": { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
+  const event = readEvent();
+  const messages = readMessages();
+  const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
+  const channels = [...new Set([...caps.map((c) => c.channel_name), ...messages.map((m) => m.channel_name)])].sort();
+  // Announcement channels: Slack's restricted-posting flag first (a signal hackers can't set, D19), then config, then names.
+  const flagged = caps.filter((c) => c.posting_restricted === true).map((c) => c.channel_name);
+  const unknown = caps.filter((c) => c.posting_restricted == null).length;
+  const [annSource, ann] = flagged.length
+    ? ["Slack restricted-posting notice", flagged]
+    : event.authority_channels?.length
+      ? ["event.json authority_channels", event.authority_channels]
+      : ["channel name contains \"announce\" (no capture carries the restricted-posting flag yet: unverified)", channels.filter((c) => /announce/i.test(c))];
+  const announcement = new Set(ann);
+  console.log(`announcement channels (${annSource}): ${[...announcement].join(", ") || "none"}${unknown ? `; ${unknown} of ${caps.length} captures predate or lack the restricted-posting flag` : ""}`);
+
+  const found = discoverUrls(messages, announcement);
+  const fetcher = new PoliteFetcher();
+  let devpostRoot = found.devpost?.url ?? null;
+  let devpostWhy = found.devpost?.why ?? "";
+  if (!devpostRoot && !values.offline) {
+    const r = await fetcher.get(`https://devpost.com/api/hackathons?search=${encodeURIComponent(event.event)}`, "json");
+    if (r.status === "fetched" && r.html) {
+      const pick = pickDevpostHit(event.event, ((JSON.parse(r.html) as { hackathons?: DevpostHit[] }).hackathons ?? []));
+      devpostRoot = pick.hit ? new URL(pick.hit.url).origin + "/" : null;
+      devpostWhy = pick.why;
+    } else devpostWhy = `Devpost search failed: ${r.detail}`;
+  }
+  console.log(`devpost: ${devpostRoot ?? "not found"}${devpostWhy ? ` (${devpostWhy})` : ""}${found.devpost_other.length ? `; also linked: ${found.devpost_other.map((f) => f.url).join(", ")}` : ""}`);
+  const canonPages = event.canon_pages?.length ? event.canon_pages : devpostRoot ? devpostCanonPages(devpostRoot) : [];
+  const schedulePages = event.schedule_pages?.length ? event.schedule_pages : found.schedule.map((f) => f.url);
+  if (event.canon_pages?.length && devpostRoot && !event.canon_pages.some((u) => pageKey(u) === pageKey(devpostRoot!))) console.log(`note: event.json canon_pages doesn't include the discovered ${devpostRoot}; keeping event.json`);
+  for (const f of found.schedule) console.log(`schedule candidate: ${f.url} (${f.why}, ${f.posts.length} post${f.posts.length === 1 ? "" : "s"})`);
+
+  // Fetch: every public page, once each this sync.
+  type Fetched = FetchResult & { saved?: string; hash?: string; changed?: boolean; role: string };
+  const results: Fetched[] = [];
+  if (!values.offline) {
+    const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
+    const { parseHTML } = await import("linkedom");
+    for (const [role, list] of [["canon", canonPages], ["schedule", schedulePages]] as const)
+      for (const url of list) {
+        const r: Fetched = { ...(await fetcher.get(url)), role };
+        if (r.status === "fetched" && r.html) {
+          const { document } = parseHTML(r.html);
+          const snap = snapshotPage(document as unknown as Document, { url, captured_at: new Date().toISOString(), access: "public", captured_by: "fetch" });
+          const why = needsExtension(snap, r.html);
+          if (why) Object.assign(r, { status: "needs_extension", detail: why });
+          else {
+            const hash = snapshotHash(snap);
+            const prev = latest.get(pageKey(url));
+            r.hash = hash;
+            r.changed = !prev || prev.hash !== hash;
+            // Same text from another path (a fixture or the extension): rewrite so provenance says "fetch".
+            if (r.changed || prev!.snapshot.captured_by !== "fetch") writeJsonFile((r.saved = `${PAGES_DIR}/${pageFileName(url)}`), snap);
+          }
+        }
+        delete r.html;
+        results.push(r);
+        console.log(`${r.status.padEnd(17)} ${url}  ${r.detail}${r.hash ? `; hash ${r.hash}${r.changed ? ", changed: saved" : r.saved ? ", same text, now saved as fetched" : ", unchanged"}` : ""}`);
+      }
+    const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
+    console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
+  }
+
+  // Drafts. Config the user wrote wins: a draft only fills a missing file, else it's compared and reported.
+  const canonEntities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
+  const draft = sponsorsDraft(canonEntities, channels, announcement);
+  let sponsorReport: ReturnType<typeof compareSponsors> | null = null;
+  if (!existsSync(SPONSORS_PATH)) {
+    writeJsonFile(SPONSORS_PATH, draft.sponsors);
+    console.log(`wrote ${SPONSORS_PATH} (draft: ${Object.keys(draft.sponsors).length} channels; check it)`);
+  } else {
+    sponsorReport = compareSponsors(draft.sponsors, readSponsors(SPONSORS_PATH));
+    console.log(`sponsors draft vs ${SPONSORS_PATH}: ${sponsorReport.matched}/${sponsorReport.n} channels agree on sponsor and kind`);
+    for (const r of sponsorReport.rows.filter((r) => !r.match)) console.log(`  ${r.channel}: yours ${r.hand}, draft ${r.draft}`);
+  }
+  if (draft.tags_without_channel.length) console.log(`Devpost sponsors with no channel: ${draft.tags_without_channel.join(", ")}`);
+  if (draft.channels_without_tag.length) console.log(`sponsor channels with no Devpost prize: ${draft.channels_without_tag.join(", ")}`);
+  const proposals = organizersFromRestricted(messages, announcement);
+  const known = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
+  const newOnes = proposals.filter((p) => !known.has(p.id));
+  console.log(`organizers from restricted-posting channels: ${proposals.length} posters; ${proposals.length - newOnes.length} already in ${ORGANIZERS_PATH}${known.size ? ` (${known.size} listed)` : ""}${newOnes.length ? `, ${newOnes.length} new (in ${DISCOVERED_PATH}, not applied)` : ""}`);
+  if (!existsSync(ORGANIZERS_PATH) && proposals.length && annSource.startsWith("Slack")) {
+    writeJsonFile(ORGANIZERS_PATH, proposals.map((p) => ({ id: p.id, name: p.name, why: ["restricted-posting channel"] })));
+    console.log(`wrote ${ORGANIZERS_PATH} from the restricted-posting channels (confirm once)`);
+  }
+  writeJsonFile(DISCOVERED_PATH, {
+    synced_at: new Date().toISOString(),
+    announcement: { source: annSource, channels: [...announcement] },
+    devpost: { root: devpostRoot, why: devpostWhy, other: found.devpost_other },
+    canon_pages: canonPages,
+    schedule: found.schedule,
+    fetch: results,
+    sponsors: { draft: draft.sponsors, tags_without_channel: draft.tags_without_channel, channels_without_tag: draft.channels_without_tag, vs_config: sponsorReport },
+    organizers: { proposals: newOnes, known_matched: proposals.length - newOnes.length },
+  });
+  console.log(`wrote ${DISCOVERED_PATH}`);
+  const stuck = results.filter((r) => r.status !== "fetched");
+  for (const r of stuck.filter((r) => r.status === "needs_extension")) console.log(`open in the browser and use "Capture this page": ${r.url}`);
+  const have = new Set(loadPages(PAGES_DIR).pages.map((p) => pageKey(p.snapshot.url)));
+  const lost = results.filter((r) => r.role === "canon" && r.status !== "fetched" && !have.has(pageKey(r.url)));
+  for (const r of lost) console.error(`no snapshot at all for canon page ${r.url}`);
+  if (values["no-canon"] || values.offline || !results.some((r) => r.changed)) return lost.length ? 1 : 0;
+  return canon(["--judge"]);
 }
 
 interface FitCached {

@@ -4,7 +4,7 @@
 import { SCHEMA_VERSION, messageId, type CaptureFile, type Message, type StopReason } from "../../pipeline/schema.ts";
 import { Accumulator, STEP_WAIT_MS, StopRule } from "./accumulate.ts";
 import { parseRows } from "./parse.ts";
-import { SEL } from "./selectors.ts";
+import { SEL, TEXT } from "./selectors.ts";
 
 const MAX_STEPS = 3000;
 const STEP_FRACTION = 0.8;
@@ -19,6 +19,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function channelIdFromUrl(): string | null {
   return /\/client\/[A-Z0-9]+\/([CG][A-Z0-9]+)/.exec(location.pathname)?.[1] ?? null;
+}
+
+/** true: Slack shows a "who can post" notice; false: a composer and no notice; null: neither found. */
+function postingRestricted(): boolean | null {
+  const footer = document.querySelector(SEL.footer);
+  if (!footer) return null;
+  if (TEXT.postingRestricted.test(footer.textContent ?? "")) return true;
+  return document.querySelector(SEL.composer) ? false : null;
 }
 
 function channelName(): string {
@@ -123,6 +131,7 @@ async function capture(): Promise<void> {
     system_rows_skipped: systemRowsSkipped,
     non_posts_skipped: nonPostsSkipped,
     unresolved_authors: unresolvedAuthors,
+    posting_restricted: postingRestricted(),
     messages: messages.map((m): Message => {
       const out: Message = {
         id: messageId(channelId, m.ts),

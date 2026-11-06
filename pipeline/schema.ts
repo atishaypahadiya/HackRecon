@@ -115,6 +115,10 @@ export interface CaptureFile {
   non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice", number>>;
   /** ts of messages whose grouped author never resolved to a rendered header. */
   unresolved_authors: Ts[];
+  /** v2 (D19, discovery): Slack shows the composer replaced by a "who can post" notice. null: no composer
+   *  region found, so unknown. Optional: v1 captures predate it. Selector unverified until a DOM sample of a
+   *  restricted channel is saved in fixtures/slack-dom/. */
+  posting_restricted?: boolean | null;
   messages: Message[];
 }
 
@@ -167,8 +171,10 @@ export interface PageSnapshot {
   url: string;
   title: string;
   captured_at: string;
-  /** "extension" from the popup; "fixture" when a test built it from saved HTML (never canon on a board). */
-  captured_by: "extension" | "fixture";
+  /** "fetch" from `hr sync` (public pages, D11 reversed 2026-11-06); "extension" from the popup (pages that
+   *  need the user's login); "fixture" when built from saved HTML. Provenance only: canon reads whatever is in
+   *  captures/pages, and access alone decides redaction (D12). */
+  captured_by: "fetch" | "extension" | "fixture";
   access: PageAccess | null;
   blocks: PageBlock[];
   links: PageLink[];
@@ -241,7 +247,7 @@ export function parsePageSnapshot(v: unknown, where = "page"): PageSnapshot {
   if (o.schema_version !== PAGE_SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${PAGE_SCHEMA_VERSION}`);
   if (o.kind !== "page") fail(`${where}.kind`, 'expected "page"');
   for (const k of ["url", "title", "captured_at"]) str(o[k], `${where}.${k}`);
-  if (o.captured_by !== "extension" && o.captured_by !== "fixture") fail(`${where}.captured_by`, 'expected "extension" or "fixture"');
+  if (!["fetch", "extension", "fixture"].includes(o.captured_by as string)) fail(`${where}.captured_by`, 'expected "fetch", "extension" or "fixture"');
   if (o.access !== null && !PAGE_ACCESS.includes(o.access as PageAccess)) fail(`${where}.access`, `expected ${PAGE_ACCESS.join("|")} or null`);
   arr(o.blocks, `${where}.blocks`).forEach((b, i) => {
     const x = obj(b, `${where}.blocks[${i}]`);

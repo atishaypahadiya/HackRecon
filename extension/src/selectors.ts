@@ -40,6 +40,10 @@ export const SEL = {
   channelStart: '.p-message_pane__foreword',
   /** Channel name in the header, for channel_name. */
   channelName: '[data-qa="channel_name"]',
+  /** The area under the message list where the composer, or Slack's "who can post" notice, sits.
+   *  UNVERIFIED: no DOM sample of a restricted channel yet (D19); posting_restricted is null when absent. */
+  footer: '[data-qa="message_pane"] ~ footer, .p-workspace__primary_view_footer, [data-qa="message_input"]',
+  composer: '[data-qa="message_input"], .ql-editor[contenteditable="true"]',
 } as const;
 
 /** Sender IDs that are bots even without a badge. */
@@ -50,6 +54,8 @@ export const TEXT = {
   channelStart: /\bThis is the very beginning of the\b|\bthe very beginning of #/i,
   /** Join/leave/rename/topic/purpose rows (export subtypes channel_join, channel_name, channel_topic, channel_purpose),
    *  and deleted-parent tombstones (subtype tombstone). */
+  /** Slack's notice in place of the composer in a channel only some members can post in. UNVERIFIED wording. */
+  postingRestricted: /\bonly (?:certain|specific|some|select(?:ed)?) (?:people|members)\b[^.]*\bpost\b|\bposting (?:in this channel )?(?:is|has been) (?:restricted|limited)\b|\bonly (?:workspace )?(?:admins|owners)\b[^.]*\bpost\b/i,
   system:
     /\b(?:joined|left) (?:#|the channel)|\brenamed the channel|\b(?:set|changed|cleared) the channel (?:topic|description|purpose)|\bwas added to (?:#|the channel)|^This message was deleted\.?$/i,
 } as const;
