@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 // hr: HackRecon pipeline CLI. Subcommands land here as tasks ship (compare first).
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { decideIngest, type IngestDecision, type PublicSeen } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
@@ -67,6 +70,7 @@ import {
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
+  FETCH_LOG_PATH,
   FIT_CACHE_PATH,
   FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
@@ -123,7 +127,7 @@ import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestric
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, PageSnapshot } from "./schema.ts";
-import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
+import { PAGE_ACCESS, pageFileName, parsePageSnapshot, type Item, type PageAccess } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -1016,6 +1020,37 @@ async function sync(args: string[]): Promise<number> {
     const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
     console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
   }
+  const seen = readJsonFile<PublicSeen>(FETCH_LOG_PATH, {});
+  for (const r of results) if (r.status === "fetched") seen[pageKey(r.url)] = new Date().toISOString();
+  writeJsonFile(FETCH_LOG_PATH, seen);
+
+  // Pages the extension read in a background tab during "Sync this event" (Devpost refuses most plain fetches).
+  const inbox = join(homedir(), "Downloads", "hackrecon", "pages");
+  const ingested: (IngestDecision & { file: string })[] = [];
+  if (existsSync(inbox)) {
+    const wantedKeys = new Set([...canonPages, ...schedulePages].map(pageKey));
+    const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
+    mkdirSync(join(inbox, "ingested"), { recursive: true });
+    for (const f of readdirSync(inbox).filter((f) => f.endsWith(".page.json"))) {
+      const path = join(inbox, f);
+      let snap: PageSnapshot;
+      try {
+        snap = parsePageSnapshot(JSON.parse(readFileSync(path, "utf8")), f);
+      } catch (e) {
+        console.error(`extension page ${f}: unreadable (${(e as Error).message}); left in place`);
+        continue;
+      }
+      const cur = latest.get(pageKey(snap.url));
+      const d = decideIngest(snap, wantedKeys, cur && { hash: cur.hash, captured_at: cur.snapshot.captured_at }, seen);
+      if (d.snapshot) {
+        writeJsonFile(`${PAGES_DIR}/${pageFileName(snap.url)}`, d.snapshot);
+        results.push({ url: snap.url, status: "fetched", detail: `from the extension: ${d.detail}`, requests: 0, role: canonPages.some((u) => pageKey(u) === pageKey(snap.url)) ? "canon" : "schedule", hash: snapshotHash(d.snapshot), changed: true });
+      }
+      renameSync(path, join(inbox, "ingested", `${Date.now()}-${f}`));
+      ingested.push({ ...d, file: f, snapshot: undefined });
+      console.log(`extension page   ${snap.url}  ${d.action}: ${d.detail}`);
+    }
+  }
 
   // Drafts. Config the user wrote wins: a draft only fills a missing file, else it's compared and reported.
   const canonEntities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
@@ -1046,12 +1081,13 @@ async function sync(args: string[]): Promise<number> {
     canon_pages: canonPages,
     schedule: found.schedule,
     fetch: results,
+    extension_pages: ingested,
     sponsors: { draft: draft.sponsors, tags_without_channel: draft.tags_without_channel, channels_without_tag: draft.channels_without_tag, vs_config: sponsorReport },
     organizers: { proposals: newOnes, known_matched: proposals.length - newOnes.length },
   });
   console.log(`wrote ${DISCOVERED_PATH}`);
   const stuck = results.filter((r) => r.status !== "fetched");
-  for (const r of stuck.filter((r) => r.status === "needs_extension")) console.log(`open in the browser and use "Capture this page": ${r.url}`);
+  for (const r of stuck.filter((r) => r.status === "needs_extension" || r.status === "refused")) console.log(`the extension reads it in a background tab on the next "Sync this event": ${r.url}`);
   const have = new Set(loadPages(PAGES_DIR).pages.map((p) => pageKey(p.snapshot.url)));
   const lost = results.filter((r) => r.role === "canon" && r.status !== "fetched" && !have.has(pageKey(r.url)));
   for (const r of lost) console.error(`no snapshot at all for canon page ${r.url}`);
