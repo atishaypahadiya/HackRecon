@@ -235,6 +235,57 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
   3. **Sessions to attend,** in time order: workshops and talks from the schedule that bear on the stack or a targeted track.
   4. **Booths and reps to visit,** each with a grounded question to ask, drawn from an ambiguous requirement, a judging criterion, or an unmet entry step.
   5. **People to pitch:** reps of targeted tracks, each with a one-line pitch that uses only facts from the user's description and the rep's own posts.
+  - **Layout (design review D2, user 2026-11-06).** Once filled, the project input collapses to one line (description · stack, then Edit). Under it, a single **"Next for you"** line, not a tile: the next time-bound item from the plan (a session, booth hours, a claim window or a deadline), e.g. "Sat 2:00 · Apify workshop, Gate 4 · in 40 min". It's hidden before the event starts and when nothing is upcoming. Then on desktop, Tracks 8 col | Credits 4 col, and Sessions | Booths and reps | People, 4 col each. Tablet: Tracks 12; Credits 12; the band 12 (three columns). Phone order: input, Next for you, Tracks, the band (Sessions, Booths, People), Credits. Tracks lead because the other four sections are matched to the targeted tracks.
+    ```
+    [ Hindsight: transfer planner…  ·  Vercel, FastAPI, Claude API…        Edit ]
+    Sat 2:00 · Apify workshop, Gate 4 · in 40 min
+    +--------------------------------------+ +------------------+
+    | Tracks to target                     | | Credits to claim |
+    +--------------------------------------+ +------------------+
+    +------------------+ +------------------+ +------------------+
+    | Sessions         | | Booths and reps  | | People to pitch  |
+    +------------------+ +------------------+ +------------------+
+    ```
+  - **Containers (D7, user 2026-11-06; a Plan exception to DESIGN.md's tile rule).** Only Tracks and Credits are tiles, and on Plan a tile is a container, not a button: each row is the button and opens its own drawer, so no control sits inside another. Sessions, Booths and reps, and People are plain sections (a heading plus rows, no card border or card background), so Plan reads as two anchored blocks plus a list, not five stacked cards. **D8 (user):** the three plain sections sit side by side in one borderless band under the two tiles: 90% white, no border, 16px radius, 20px padding, column gaps and no dividers. It reads as one list, and every word stays on a measured surface (the field never carries text). On phone the band's sections stack in plan order (Sessions, Booths, People), each with its heading, still one band. Phone is <600px, DESIGN.md's single breakpoint set (D10).
+  - **Tabs on phone (D10, user 2026-11-06).** First, fit all five at <600px by cutting the tabs' horizontal padding to about 10px, keeping the 44px tap height. Estimated about 270px at 15/600 against 328px available at 360px; not measured, so /design-review checks it at 360 and 390. Only if they still overflow at 360px (the smallest common Android width) does the bar scroll sideways: no scrollbar, a right-edge fade only while tabs are off-screen, the active tab kept in view. Ship is never off-screen within 24 h of the submission deadline: in that window, a scrolling bar pins Ship at its right end.
+  - **Screen readers (D11, user 2026-11-06).** Landmarks: a header holding the tablist, and main holding Plan; each section has an h2 and carries `aria-busy` while matching. One polite live region announces "Plan ready: 4 tracks, 2 credits, 3 sessions" once every section settles, then one combined "N updates" per sync (debounced, never one per item). The Next for you line is an assertive region only under D5's urgent rule (within 60 minutes, a deadline moved earlier, a cancellation). With `prefers-reduced-motion`, streamed sections appear without fades.
+  - **Likely and possible (D12, user 2026-11-06).** The Tracks tile lists likely fits first, then a muted mono "Also possible" line, then possible fits in the same row format. Both levels need verified quotes. A possible track shows its entry-step checkboxes at rest only once the user marks it targeted. Why: the ranker returns up to FIT_TOP = 5. On the T7 set with the stack, recall@3 is 58.5% (55/94) and recall@5 is 72.3% (68/94). Showing the whole list catches 13 more won pairs of 94 than the top 3 alone.
+  - **A row (D3, user 2026-11-06).** At rest: the item's name, one project-specific reason line, then mono metadata (fit word or time, source ↗). If a track's entry step asks for more than ticking the track on Devpost (an opt-in, a supplemental form, a specific line in the description), that step shows at rest too, as a compact one-line checkbox under the reason ("☐ Fill the supplemental form"). It's the same item as in Ship's checklist, so ticking it in either place ticks both. Plain "tick the track" steps stay in the drawer. Copy-only items (a booth question, a pitch) show their text at rest, since the text is what you take. The row opens the drawer, which holds the verified quote, the remaining entry steps, and the track's full requirements and criteria.
+    ```
+    [Anthropic] Claude for Public Benefit                      likely fits
+    Your Ask assistant runs on Claude for students navigating transfer rules
+    ☐ Say which track in your description                     devpost ↗
+    ```
+  - **States (D4, user 2026-11-06).** One rule for every empty or failed state, verbatim: "never instruct the user to fetch, capture or configure anything. States say what HackRecon knows and what it's doing about it." Login-gated sources are read by the extension on the next sync if the user is logged in, and Plan doesn't tell them to.
+
+    | Section | Before you type | Working | Failed | Nothing verified | Partial / stale |
+    |---|---|---|---|---|---|
+    | Input | The input alone, with "52 tracks on Devpost; your plan appears once you describe your project" (count from canon) | — | — | — | — |
+    | Tracks | hidden | title + "Matching…"; streams in first | "Couldn't rank tracks just now; trying again on the next change" | "No track's stated requirements match this description" | metadata reads "Devpost as of Fri 9:14" when the last sync was refused |
+    | Credits | hidden | "Matching…" | as Tracks | "No offer posted so far matches your stack" | — |
+    | Sessions | hidden | "Matching…" | as Tracks | "No schedule found yet. Organizers haven't posted one; HackRecon checks again every sync." | "Schedule as of …" |
+    | Booths and reps | hidden | "Matching…" | as Tracks | "No rep of a targeted track has posted yet" | — |
+    | People | hidden | "Matching…" | as Tracks | same as Booths | — |
+    | Next for you | hidden | hidden | hidden | hidden (before the event, or nothing upcoming) | — |
+
+    A section with no verified items stays on the page with its sentence. It never disappears, so "no suggestion without a quote" stays visible.
+  - **Speed (D4, user).** "20–40 s per fit call is too slow for a type-and-see loop." The five sections run in parallel and each streams in when ready, tracks first. An unchanged description and stack show cached results instantly (cache key = input hash, as D6). Target: under 8 s to the first useful section. Not measured yet: the T7 eval recorded tokens and calls but no timings, and the "20–40 s" in the review question was an estimate, not a measurement. Step 4's exit gate times it on the dogfood input.
+  - **Live updates (D5, user 2026-11-06).** A new item appears at the end of its section, marked with the mono "New". A changed item keeps its place, marked "Changed", with old → new in the drawer. Nothing reorders until the user presses the quiet "Show N updates" line under Next for you, or reopens Plan. Markers clear once Plan has been opened after they arrived. Urgent changes skip the queue: a deadline moved earlier, a claim window or session starting within 60 minutes, or a cancellation. These update the Next for you line at once (it's one line, so the layout doesn't shift) and mark the affected row in place.
+  - **After the submission deadline (D6, user 2026-11-06).** Plan turns into Judging. Next for you shows the judging slot ("Sun 10:30 · Be at your table, judging until 12:30", from the quoted logistics post). Tracks shows only the tracks the user entered, each with a short **"Pitch to the criteria"** outline: each quoted judging criterion → the matching fact from the project description. A criterion with no matching fact reads "nothing in your description yet", never an invented fact. People shows the reps of those tracks; nothing says they judge unless a source quote says so. Only items whose own limit has passed close. Credits still open move to **"Still claimable after the event"** with their limits. Once results are posted (a canon or announcement change naming winners), Plan shows **"Follow up"**: reps of the tracks entered, and credits still open.
+  - **Journey (Pass 3).**
+
+    | Step | User does | User feels | Plan specifies |
+    |---|---|---|---|
+    | 1 | Opens HackRecon after one Sync | "Is this about my event?" | Event name in the tab bar; the input names the track count from canon (D4 states) |
+    | 2 | Types the project line and stack | Committing an idea, a bit exposed | One line plus stack; the plan streams in, tracks first, with an 8 s target (D4) |
+    | 3 | Scans Tracks | "Which of these can I actually win?" | Name + a reason about *their* project at rest; "likely fits", never "eligible" (D3, rules) |
+    | 4 | Ticks hard entry steps, copies a code | Progress, nothing missed | Entry-step checkboxes shared with Ship (D3); code chip copies and marks done (DESIGN.md) |
+    | 5 | Walks to a booth | Wants a non-generic question | The question at rest, grounded in a quoted requirement or criterion; copy-only |
+    | 6 | Mid-event, something changes | "Did I miss something?" | Urgent changes update Next for you at once; the rest is queued behind "Show N updates" (D5) |
+    | 7 | Submits | Relief, then nerves | Judging view: slot, pitch-to-criteria outline per entered track (D6) |
+    | 8 | Results posted | Win, or (Hindsight) no track prizes | Follow up: reps of entered tracks and credits still open, without consolation copy (D6) |
+
+    5 seconds: event name, your project, the next thing to do. 5 minutes: tracks with reasons, entry steps ticked. After the event: what is still open, and who to follow up with.
   - Rules (user, verbatim): "no suggestion without a verified source quote; never claims eligibility; updates live with 'new' markers; never sends anything." Mechanism: every item's quote is checked against its source entity or post (the same check as fit's); fit language is "likely fits", never "eligible"; an item whose source changed or appeared since the user last opened Plan carries "New"; questions and pitches are copy-only, like Meet's openers.
   - The description and stack go to the ranker as in D6 (POST /fit, Origin + per-run token, cached by input hash). Credits, sessions, booths and pitches use the same endpoint with their own verified outputs.
   - Eval (user): tracks by the Devpost-winners eval (D23 baseline above); credits, sessions and booths by the Opus judge on relevance, with n beside each rate. Dogfood on the user's real Cal Hacks project.
@@ -259,6 +310,12 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
   - the submission deadline, merged with any Slack extension;
   - judging logistics (be at your table 10:30–12:30).
   - Each item has its source and a done check. Items added by a Slack change are marked as such.
+  - **Layout (design review D13, user 2026-11-06).** Top line: the deadline countdown, "Submissions close Sun 9:30 · in 5 h 12 min", from canon merged with any Slack extension. When canon and Slack differ, the line shows the merge: "Sun 9:30 · Devpost said 9:00", with sources on demand. Below it, one 12-col tile with three groups, each heading carrying a mono "N of M done":
+    1. **Required to submit.** The first item is always "Submit on Devpost, not just save a draft". It's sourced from an organizer post saying so when one exists. At Cal Hacks that's #0-announcements, 1792945574.409879: "There are still 113 draft submissions as of now! Please make sure you fully click through to Submit by 9:30 AM." Without such a post it is HackRecon's standing item, marked as such. The submission rules follow.
+    2. **For the tracks you entered:** entry steps and requirements per track. These are the same items as Plan's D3 checkboxes, so ticking either place ticks both.
+    3. **Judging:** logistics such as "Be at your table 10:30–12:30".
+    - Each item: a native checkbox (DESIGN.md), the quoted line, source ↗. Slack-added items say "added in #0-announcements".
+    - **Last hour:** under 60 minutes to the deadline, Ship collapses to the countdown plus the unticked Required items only. The other groups fold to one line each and expand on click.
 
 ### 5. Per-event config and generalize
 
@@ -324,6 +381,8 @@ Input: fixture snapshots built from the public overview and rules pages (`hr pag
 
 **Stack rule result: Build asks for the stack.** B − A = 21.3 points over 94 pairs (bar 10); the "Best Use of X" gap is 32.8 points (bar 20), so both branches fire. The per-prize table is in `review/fit_eval.json` (gitignored). Prizes neither run finds: Notability (0/5), Bitdeer (0/2), and Nessie, Moss, Gemini, Solana, Vultr (0/1 each). The 12 event-level wins are listed, not scored. No fit threshold is set yet: the doc's rule is "threshold after the first run", and that call is the user's.
 
+**recall@5 (design review D12, 2026-11-06).** `hr fit-eval` also prints recall@5, the whole ranked list Plan shows as likely + "Also possible". Re-scored from the T7 cache (0 API calls, same 162 rankings on `data/canon.fixtures.json`): A 41.5% (39/94), B 72.3% (68/94). **Baseline (user): recall@3 B = 58.5% (55/94)** is the number later runs are compared against. The fit cards from the re-run canon (`data/canon.json`) miss the cache for all 162 rankings, so a run on it is a new measurement, not this baseline.
+
 ### Offer ids (OV5, 2026-11-06)
 
 Claim board offers are now `o-<channel>-<first post ts>` (e.g. `o-spons-cartesia-1792446957154859`) instead of `o1…o20`. `board.json` carries `v1_ids`, built once by matching the v1 board.json's offers on their first post (20/20 matched) and carried forward on later builds; the board moves saved done marks through it on first load. D14 compares every offer field exactly after translating ids back through that map, so the only allowed difference is the id itself (12/12 pass).
@@ -338,7 +397,7 @@ Claim board offers are now `o-<channel>-<first post ts>` (e.g. `o-spons-cartesia
 | **Page half (D18)** | | | |
 | 2 Page sources | Page snapshot action with access flag (D12), outline h1–h6, normalized hash; Devpost snapshot for Cal Hacks, Hive if it still opens (D3) | Snapshots captured; iframe/PDF reported | 1 d [estimated] |
 | 3 Canon entities + eval | Entity schema, page extraction + verify, coverage checks (D15), Opus judge, source-anchored ids (D7), offer ids (OV5); fit eval on the 94 sponsor-track pairs (D23) | D15 gates; D23 baseline reported | 2–3 d [estimated] |
-| 4 Plan + Ship | Discovery and fetch (`hr sync`, done 2026-11-06). Plan (default tab: tracks with entry steps, credits, sessions, booths and reps with questions, people to pitch; POST /fit, D4/D6) and Ship from canon. Sections 3–5 use what exists before step 6 (event.json's sourced schedule, v1's reps and their first posts) and grow when Now and Meet land. /plan-design-review before, /design-review after | Plan and Ship at 1440 and 390; every Plan item's quote 100% verified; tracks recall@3 as D23; credits, sessions, booths relevance by the Opus judge with n; dogfooded on the user's project | 2.5–3.5 d [estimated] |
+| 4 Plan + Ship | Discovery and fetch (`hr sync`, done 2026-11-06). Plan (default tab: tracks with entry steps, credits, sessions, booths and reps with questions, people to pitch; POST /fit, D4/D6) and Ship from canon. Sections 3–5 use what exists before step 6 (event.json's sourced schedule, v1's reps and their first posts) and grow when Now and Meet land. /plan-design-review before, /design-review after | Plan and Ship at 1440, 390 and 360 (five tabs fit or scroll per D10); every Plan item's quote 100% verified; tracks recall@3 and @5 against the 58.5% baseline; credits, sessions, booths relevance by the Opus judge with n; time to the first section measured on the dogfood input (target < 8 s, D4); dogfooded on Hindsight (`fixtures/dogfood/`, gitignored) | 2.5–3.5 d [estimated] |
 | **Slack live half (D18)** | | | |
 | 5 Live sources + link | "Sync this event" (one click: channels, threads, sidebar, posting flags; DOM sample of a restricted channel), incremental capture, live thread selection (D17, D20), kind classifier, link pass | Link eval with n printed (OV9); posting flag backed by a fixture | 2–3 d [estimated] |
 | 6 Merge + Now + Meet | `merge()`, authority (D8, D19), "N asked" (D9), Now and Meet views; /design-review after | Unit tests over every Merge rule; Cal Hacks deadline shows page 09:00 / Slack 09:30 | 2–3 d [estimated] |
@@ -1410,6 +1469,41 @@ Open since step 3 (2026-11-06), for the user: D15's coverage wording vs what the
 - Parallelization: 2 lanes, 2 parallel / 6 sequential
 - Lake Score: 2/16 = answers picking a 10/10 option / answers scored for Completeness
 
+## Design Review (plan-design-review, 2026-11-06): Plan + Ship
+
+Target: §4 Views, Plan (new default tab) and Ship. Mode: Operate. No mockups: the gstack designer has no OpenAI key (`$D setup`), so every pass ran on text against DESIGN.md and the built Claim board. No outside voice (Codex not installed). Dogfood input (user): Hindsight, a transfer planner for community-college transfer students; stack Vercel, FastAPI, Claude API, Apify, Factory Droid SDK, Figma; targeted Anthropic, Factory Droid SDK, Figma and Apify; won no track prizes (https://devpost.com/software/hindsight-68sruh).
+
+| Pass | Before | After | What moved it |
+|---|---|---|---|
+| 1 Information architecture | 4 | 9 | D2 layout + Next for you; D3 row at rest vs drawer |
+| 2 States | 2 | 9 | D4 state table (no instructions to the user) + streaming; D5 live updates and the urgent bypass |
+| 3 Journey | 5 | 9 | Storyboard; D6 Judging, still-claimable, Follow up |
+| 4 AI-slop risk | 6 | 9 | D7 rows are buttons, only two tiles; D8 one borderless band. Hard rejection #7 (stacked cards) cleared |
+| 5 Design system | 7 | 9 | D9 tabs and checkbox in DESIGN.md |
+| 6 Responsive + a11y | 5 | 9 | D10 one breakpoint set, tabs fit or scroll, Ship pinned near the deadline; D11 announcements |
+| 7 Unresolved | n/a | 2 resolved | D12 likely + Also possible (recall@5 added); D13 Ship layout + last hour |
+
+Overall 4.8 → 9.0 (mean of passes 1–6). Each pass stops at 9, not 10, because none is checked against pixels yet; /design-review after step 4 closes that.
+
+Litmus (Pass 4): product unmistakable on the first screen, YES (event name, your project, Next for you). One anchor, YES (Tracks). Scannable by headings, YES. One job per section, YES. Cards necessary, YES after D7 (two). Motion, none beyond done fades. Premium without shadows, YES (DESIGN.md has none on tiles).
+
+Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes only, as DESIGN.md already does, because codes are retyped on phones. **One bordered container type**: two tiles, since Tracks and Credits are the anchors (D7). **The "New" marker**, a mono status word, not a pill, because live updates need it (user rule). The gradient field carries no text (D8). No tags or pills, eyebrows, section numbering, ALL CAPS, dividers or Instrument Serif.
+
+**NOT in scope (design):** a dark theme (DESIGN.md: light for venue halls); mockups (no key; /design-review renders the real page instead); Now and Meet layouts (step 6); the 13px "small" type step (DESIGN.md's open question, unchanged).
+
+**What already exists, reused:** tile, drawer (440 px right sheet, 88vh bottom sheet), code chip, ghost Claim button, mono metadata, the done fade at 42%, the 12-col grid, breakpoints, the focus ring, and Meet's copy-only opener pattern for questions and pitches.
+
+**Implementation tasks (step 4):**
+- [ ] **P1** Plan layout and rows (D2, D3, D7, D8, D12) in `board/`. Verify: /design-review at 1440, 390, 360.
+- [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
+- [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
+- [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
+- [ ] **P5** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
+- [ ] **P6** Ship layout, the drafts item, the merge line, last-hour mode (D13). Verify: frames at 61 and 59 min before the deadline.
+- [ ] **P7** Eval: recall@3/@5 (done in fiteval.ts); credits, sessions, booths relevance by the Opus judge with n; Hindsight dogfood saved to `fixtures/dogfood/hindsight.json` (gitignored).
+
+TODOS: none deferred from this review. Every approved fix is a step 4 task above.
+
 ## GSTACK REVIEW REPORT
 
 | Review | Trigger | Why | Runs | Status | Findings |
@@ -1417,10 +1511,10 @@ Open since step 3 (2026-11-06), for the user: D15's coverage wording vs what the
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
 | Outside Review | Claude Plan subagent (native fallback, Codex not installed), in `/plan-eng-review` | Independent 2nd opinion | 1 | completed (native; not outside coverage) | 22 findings (2 critical, 5 high, 7 medium, 7 low, 1 strategic); resolved via D18–D21 |
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ISSUES OPEN (all mapped to approved tasks) | 48 issues, 0 critical gaps |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR (PLAN) | Plan + Ship: 4.8 → 9.0/10; 12 decisions (D2–D13), 0 unresolved; no mockups (no OpenAI key) |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | — |
 
 - **OUTSIDE COVERAGE:** codex-plan-review phase: Codex not installed; native Claude Plan subagent completed in 156 s with 22 findings (in-host, outside_status unavailable). No external-provider coverage.
-- **VERDICT:** No review CLEAR yet. Eng review complete with 23 decisions (D1–D23) approved and every finding mapped to T1–T11; status is ISSUES OPEN because findings are counted even when resolved. Views are UI scope: /plan-design-review recommended before step 4.
+- **VERDICT:** No review CLEAR yet. Eng review complete with 23 decisions (D1–D23) approved and every finding mapped to T1–T11; status is ISSUES OPEN because findings are counted even when resolved. Design review of Plan + Ship CLEAR (PLAN) on 2026-11-06 with 12 decisions; /design-review runs after step 4 is built.
 
 NO UNRESOLVED DECISIONS

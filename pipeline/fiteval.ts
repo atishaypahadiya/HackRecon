@@ -2,7 +2,7 @@
 // tracks are the targets; the ranker sees only the project's one-line description (run A) or the description
 // plus its public Built With list (run B). Pure scoring here; `hr fit-eval` runs the model.
 import type { EventConfig } from "./classify.ts";
-import { isToolGated, type Ranked, type TrackCard } from "./fit.ts";
+import { FIT_TOP, isToolGated, type Ranked, type TrackCard } from "./fit.ts";
 
 export interface EvalItem {
   slug: string;
@@ -27,6 +27,8 @@ export interface FitReport {
   pairs: number;
   projects: number;
   recall3: { A: Rate; B: Rate };
+  /** Same pairs, top FIT_TOP (5): what Plan shows as likely + "Also possible" (design review D12). */
+  recall5: { A: Rate; B: Rate };
   best_use: { A: Rate; B: Rate; prizes: number };
   any_hit: { A: Rate; B: Rate };
   per_prize: { prize: string; tool_gated: boolean; A: Rate; B: Rate }[];
@@ -53,14 +55,15 @@ export function scoreFit(items: EvalItem[], cards: TrackCard[], allTrackNames: S
       else if (allTrackNames.has(prize)) event_level.push({ project: it.slug, prize });
       else unmatched.push({ project: it.slug, prize });
     }
-  const top3 = (run: Map<string, Ranked[]>, slug: string) => new Set((run.get(slug) ?? []).slice(0, 3).map((r) => r.track_id));
-  const hit = (run: Map<string, Ranked[]>, p: (typeof pairs)[number]) => top3(run, p.slug).has(p.id);
-  const count = (run: Map<string, Ranked[]>, ps: typeof pairs) => rate(ps.filter((p) => hit(run, p)).length, ps.length);
+  const topK = (run: Map<string, Ranked[]>, slug: string, k: number) => new Set((run.get(slug) ?? []).slice(0, k).map((r) => r.track_id));
+  const hit = (run: Map<string, Ranked[]>, p: (typeof pairs)[number], k = 3) => topK(run, p.slug, k).has(p.id);
+  const count = (run: Map<string, Ranked[]>, ps: typeof pairs, k = 3) => rate(ps.filter((p) => hit(run, p, k)).length, ps.length);
   const best = pairs.filter((p) => BEST_USE.test(p.prize));
   const slugs = [...new Set(pairs.map((p) => p.slug))];
   const anyHit = (run: Map<string, Ranked[]>) => rate(slugs.filter((s) => pairs.some((p) => p.slug === s && hit(run, p))).length, slugs.length);
   const prizes = [...new Set(best.map((p) => p.prize))].sort();
   const recall3 = { A: count(A, pairs), B: count(B, pairs) };
+  const recall5 = { A: count(A, pairs, FIT_TOP), B: count(B, pairs, FIT_TOP) };
   const best_use = { A: count(A, best), B: count(B, best), prizes: prizes.length };
   const gap = { all: pct(recall3.B) - pct(recall3.A), best_use: pct(best_use.B) - pct(best_use.A) };
   // User rule (2026-11-06): ask for the stack if B beats A by >= 10 points overall or >= 20 pooled on "Best Use of X".
@@ -70,6 +73,7 @@ export function scoreFit(items: EvalItem[], cards: TrackCard[], allTrackNames: S
     pairs: pairs.length,
     projects: slugs.length,
     recall3,
+    recall5,
     best_use,
     any_hit: { A: anyHit(A), B: anyHit(B) },
     per_prize: prizes.map((prize) => {
@@ -92,6 +96,7 @@ export function formatFitReport(r: FitReport): string {
     `recall@3 over (project, won sponsor track) pairs`,
     `  run A (description only)            ${fmt(r.recall3.A)}   ← headline`,
     `  run B (description + Built With)    ${fmt(r.recall3.B)}`,
+    `recall@5 (the whole ranked list: likely + "Also possible")  A ${fmt(r.recall5.A)}   B ${fmt(r.recall5.B)}`,
     `  "Best Use of X" pairs (${r.best_use.prizes} prizes)  A ${fmt(r.best_use.A)}   B ${fmt(r.best_use.B)}`,
     `any-hit per project (a won track in the top 3)  A ${fmt(r.any_hit.A)}   B ${fmt(r.any_hit.B)}`,
     ``,
