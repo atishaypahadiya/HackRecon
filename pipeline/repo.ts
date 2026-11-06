@@ -1,15 +1,18 @@
-// A linked project repository, read as data for Plan's gap check (user 2026-11-06). Public GitHub only: a shallow
-// clone into ~/.cache/hackrecon/repos, outside this project, so no tool here (bun test, tsc, the bundler) ever picks
-// up its files: a clone inside the tree once had `bun test` load Hindsight's own test files. Nothing in it is run,
-// and its text reaches the model only as quoted lines with their path. Which lines: those naming a checked track's products, found in code, not by a model.
+// A linked project repository, read as data (Plan's gap check, P1b's prefill; user 2026-11-06). Public GitHub only.
+// The clone lives in ~/.cache/hackrecon/repos, outside this project, so no tool here (bun test, tsc, the bundler)
+// picks up its files: a clone inside the tree once had `bun test` load Hindsight's own test files. It is a partial
+// clone with no working tree: depth 1, blobs over 300 kB left on the server, nothing checked out. So nothing from it
+// is ever on disk as a file to run, and a symlink is only a blob holding a path, which is skipped. Text is read from
+// git's object store and reaches a model only as quoted lines with their path.
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ProjectFact } from "./gaps.ts";
 
 export const REPOS_DIR = join(homedir(), ".cache", "hackrecon", "repos");
-const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
+// http:// and www. links are read over https: the same repo, and git never talks to GitHub unencrypted.
+const GITHUB = /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/;
 /** Skipped: dependencies, build output, lockfiles, tests (they restate code), env files and binary-ish assets. */
 const SKIP = /(^|\/)(node_modules|dist|build|vendor|\.venv|__pycache__|tests?|__tests__|fixtures)\/|\.(lock|min\.js|map|png|jpe?g|gif|svg|ico|pdf|woff2?|ttf|zip)$|(^|\/)(package-lock\.json|uv\.lock|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?)$|(^|\/)\.env|\.test\.|_test\.|\.spec\./i;
 const SECRET = /(?:key|token|secret|password|passwd)\s*[:=]/i;
@@ -28,20 +31,24 @@ export function parseRepoUrl(url: string): { owner: string; name: string } | nul
   return m ? { owner: m[1]!, name: m[2]! } : null;
 }
 
-const git = (args: string[], cwd?: string) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" }, timeout: 120_000 }).trim();
+// GIT_NO_LAZY_FETCH: a read never fetches a blob the partial clone left out.
+const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1", GIT_NO_LAZY_FETCH: "1" };
+const git = (args: string[], cwd?: string, input?: string) => execFileSync("git", args, { cwd, input, encoding: "utf8", stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"], env, timeout: 120_000, maxBuffer: 256 * 1024 * 1024 }).trim();
+export const BLOB_LIMIT = 300_000;
 const remote = (p: { owner: string; name: string }) => `https://github.com/${p.owner}/${p.name}.git`;
 
-/** Clone once (depth 1, no tags, LFS skipped) and reuse the checkout. With `latest`, first move it to the default
- *  branch's newest commit (Ship's recheck): fetch depth 1 and reset this cache clone to it. */
+/** Clone once (partial, no checkout) and reuse it. With `latest`, first move it to the default branch's newest commit
+ *  (Ship's recheck): fetch that commit the same way and point HEAD at it. */
 export function checkoutRepo(url: string, opts: { latest?: boolean } = {}): Repo | { error: string } {
   const p = parseRepoUrl(url);
   if (!p) return { error: "only public https://github.com/<owner>/<repo> links are read" };
   const dir = join(REPOS_DIR, `${p.owner}__${p.name}`);
   try {
-    if (!existsSync(join(dir, ".git"))) git(["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", remote(p), dir]);
+    const filter = `--filter=blob:limit=${BLOB_LIMIT}`;
+    if (!existsSync(join(dir, ".git"))) git(["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", "--no-checkout", filter, remote(p), dir]);
     else if (opts.latest) {
-      git(["fetch", "--quiet", "--depth", "1", "--no-tags", "origin", "HEAD"], dir);
-      git(["reset", "--quiet", "--hard", "FETCH_HEAD"], dir);
+      git(["fetch", "--quiet", "--depth", "1", "--no-tags", filter, "origin", "HEAD"], dir);
+      git(["update-ref", "HEAD", "FETCH_HEAD"], dir);
     }
     return { url: `https://github.com/${p.owner}/${p.name}`, dir, sha: git(["rev-parse", "HEAD"], dir) };
   } catch (e) {
@@ -65,16 +72,16 @@ const rank = (path: string) => (/(^|\/)readme\.md$/i.test(path) ? (path.includes
 
 /** Lines naming any of the terms (whole word, any case): root README first, then other READMEs, code, the rest;
  *  at most PER_FILE lines a file and PER_TERM a term. Each keeps its path:line and a link at the commit. */
-export function repoFacts(repo: Repo, terms: string[], files = listFiles(repo.dir)): ProjectFact[] {
+export function repoFacts(repo: Repo, terms: string[], texts = repoTexts(repo)): ProjectFact[] {
   const out: ProjectFact[] = [];
   const seen = new Set<string>();
-  const ordered = files.filter((f) => !SKIP.test(f)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const ordered = [...texts.keys()].filter((f) => !SKIP.test(f)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   for (const term of [...new Set(terms.map((t) => t.trim()).filter((t) => t.length > 2))]) {
     const re = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
     let n = 0;
     for (const f of ordered) {
       if (n >= PER_TERM) break;
-      const text = readText(join(repo.dir, f));
+      const text = texts.get(f);
       if (!text || !re.test(text)) continue;
       let k = 0;
       for (const [i, line] of text.split("\n").entries()) {
@@ -93,18 +100,37 @@ export function repoFacts(repo: Repo, terms: string[], files = listFiles(repo.di
   return out;
 }
 
-function listFiles(dir: string): string[] {
-  return execFileSync("git", ["ls-files"], { cwd: dir, encoding: "utf8" }).split("\n").filter(Boolean);
-}
-
-function readText(path: string): string | null {
-  try {
-    // lstat: a symlink in someone else's repo can point anywhere on this machine, so it's never followed.
-    const st = lstatSync(path);
-    if (!st.isFile() || st.size > 300_000) return null;
-    const s = readFileSync(path, "utf8");
-    return s.includes("\0") ? null : s;
-  } catch {
-    return null;
+/** Every text file at HEAD as path → content, from git's objects: regular files (mode 100644/100755) only, so
+ *  symlinks and submodules are skipped; blobs the partial clone left on the server (over BLOB_LIMIT) and binary
+ *  blobs (a NUL byte) are skipped. Cached per commit for this process. */
+const textsCache = new Map<string, Map<string, string>>();
+export function repoTexts(repo: Repo): Map<string, string> {
+  const hit = textsCache.get(`${repo.dir}@${repo.sha}`);
+  if (hit) return hit;
+  const missing = new Set(
+    git(["rev-list", "--objects", "--missing=print", "HEAD"], repo.dir)
+      .split("\n")
+      .filter((l) => l.startsWith("?"))
+      .map((l) => l.slice(1).trim()),
+  );
+  const entries = git(["ls-tree", "-r", "HEAD"], repo.dir)
+    .split("\n")
+    .map((l) => /^(\d{6}) blob ([0-9a-f]{40})\t(.+)$/.exec(l))
+    .filter((m): m is RegExpExecArray => !!m && (m[1] === "100644" || m[1] === "100755") && !missing.has(m[2]!));
+  const out = new Map<string, string>();
+  if (entries.length) {
+    // One cat-file --batch for every blob: "<sha> blob <size>\n<content>\n" each, in order.
+    const raw = execFileSync("git", ["cat-file", "--batch"], { cwd: repo.dir, input: entries.map((m) => m[2]).join("\n") + "\n", env, maxBuffer: 512 * 1024 * 1024, timeout: 120_000 });
+    let at = 0;
+    for (const m of entries) {
+      const nl = raw.indexOf(10, at);
+      const size = Number(raw.subarray(at, nl).toString("utf8").split(" ")[2]);
+      const body = raw.subarray(nl + 1, nl + 1 + size);
+      at = nl + 1 + size + 1;
+      if (size > BLOB_LIMIT || body.includes(0)) continue;
+      out.set(m[3]!, body.toString("utf8"));
+    }
   }
+  textsCache.set(`${repo.dir}@${repo.sha}`, out);
+  return out;
 }

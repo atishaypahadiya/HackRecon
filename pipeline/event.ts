@@ -55,6 +55,10 @@ export const CANON_JUDGE_FIXTURES_PATH = "review/canon_judge.fixtures.json";
 export const FIT_CACHE_PATH = "data/fit_cache.json";
 export const GAPS_CACHE_PATH = "data/gaps_cache.json";
 export const SHIP_GAPS_PATH = "data/ship_gaps.json";
+export const PREFILL_CACHE_PATH = "data/prefill_cache.json";
+/** P1b's eval: the winners' GitHub links, read from their public Devpost project pages ({slug: url}). */
+export const PREFILL_REPOS_PATH = "fixtures/fit/repos13.json";
+export const PREFILL_EVAL_PATH = "review/prefill_eval.json";
 /** The fit eval set: public winners, descriptions and Built With lists (gitignored like all fixtures). */
 export const FIT_EVAL_SET_PATH = "fixtures/fit/eval13.json";
 export const FIT_EVAL_PATH = "review/fit_eval.json";
