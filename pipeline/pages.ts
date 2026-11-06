@@ -71,8 +71,19 @@ export function redactSnapshot(s: PageSnapshot, redact: (text: string) => { text
       .replace(/[\w.%+-]+@[\w-]+(?:\.[\w-]+)+/g, () => (replaced++, "[email]"))
       .replace(/(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?!\d)/g, () => (replaced++, "[phone]"));
   };
+  // The URL and title go into the request too: query strings and fragments (tokens, ids) are dropped, the rest scrubbed.
+  const url = (u: string) => {
+    try {
+      const x = new URL(u);
+      return `${x.protocol}//${x.host}${scrub(decodeURIComponent(x.pathname))}`;
+    } catch {
+      return scrub(u);
+    }
+  };
   const blocks = s.blocks.map((b) => ({ ...b, text: scrub(b.text), path: b.path.map(scrub) }));
-  return { snapshot: { ...s, blocks, links: s.links.map((l) => ({ ...l, text: scrub(l.text) })) }, replaced };
+  const snapshot: PageSnapshot = { ...s, url: url(s.url), title: scrub(s.title), blocks, links: s.links.map((l) => ({ ...l, text: scrub(l.text), href: url(l.href) })) };
+  if (s.no_text) snapshot.no_text = scrub(s.no_text);
+  return { snapshot, replaced };
 }
 
 /** D12: only an explicit "public" skips redaction; the domain never decides. */

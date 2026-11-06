@@ -192,6 +192,11 @@ describe("redaction (D12)", () => {
     expect(r.snapshot.blocks[0]!.text).toBe("Ask [person] at [email] or [phone]");
     expect(r.replaced).toBe(3);
   });
+  test("title, URL and link hrefs are scrubbed too; query and fragment dropped", () => {
+    const s = { ...snap, url: "https://hive.example.com/u/Dana Reyes?token=abc#x", title: "Dana Reyes's schedule", links: [{ text: "Dana Reyes", href: "https://x.com/a?sig=1", block: 0 }] };
+    const r = redactSnapshot(s, (t) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: 0 }));
+    expect([r.snapshot.url, r.snapshot.title, r.snapshot.links[0]]).toEqual(["https://hive.example.com/u/[person]", "[person]'s schedule", { text: "[person]", href: "https://x.com/a", block: 0 }]);
+  });
 });
 
 test("entityId leaves a track's heading as its leaf", () => {
