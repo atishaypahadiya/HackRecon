@@ -3,7 +3,7 @@
  "timezone": "America/Los_Angeles",
  "channels": 25,
  "post_count": 977,
- "posts": "18a0fda8382c",
+ "posts": "0b802709b08468de",
  "frames": [
   1791644400,
   1791730800,
@@ -49,570 +49,570 @@
   {
    "id": "o1",
    "sponsor": "Cartesia",
-   "title": "1ff68f694849",
-   "value_short": "5353fda2c359",
-   "claim_short": "ad56c87ece8f",
-   "amount_text": "0673115dbca6",
+   "title": "0e46e6f7654a91a4",
+   "value_short": "558bc292d561d974",
+   "claim_short": "a609c2793062fc34",
+   "amount_text": "c1b5f91f5784fb21",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "5be66c57dda4",
-   "promo_code": "26d646267b50",
-   "claim_how": "e097a548094e",
+   "claim_url": "39c99128fc47c406",
+   "promo_code": "6f491166c2a0c423",
+   "claim_how": "1860a0b75c7e3b0b",
    "first": 1792446957.154859,
-   "excerpt": "764e9e0328b2",
+   "excerpt": "8253c14e5e642a12",
    "posts": [
     {
      "ts": 1792446957.154859,
      "channel": "spons-cartesia",
-     "permalink": "77c96d3b0bb5"
+     "permalink": "8a8f3d1005723ed5"
     },
     {
      "ts": 1792800135.285719,
      "channel": "spons-cartesia",
-     "permalink": "fea91f266e69"
+     "permalink": "6b452b26b3593b50"
     },
     {
      "ts": 1792816505.849089,
      "channel": "spons-cartesia",
-     "permalink": "b4a82474af8d"
+     "permalink": "4c011df23007fcab"
     },
     {
      "ts": 1792882762.278609,
      "channel": "spons-cartesia",
-     "permalink": "f1476400f29b"
+     "permalink": "996b84267ab333f1"
     }
    ]
   },
   {
    "id": "o2",
    "sponsor": "Anthropic",
-   "title": "1fc6267e0d47",
-   "value_short": "87e3f129ab3e",
-   "claim_short": "f7fcc448d164",
-   "amount_text": "f304a630884e",
+   "title": "7790cea3be772146",
+   "value_short": "e4d6738d5248c3bc",
+   "claim_short": "0894914be637625d",
+   "amount_text": "1403ebe860963862",
    "usd": 50,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "08c25d8762c2",
+   "claim_url": "e5928d8c7f5b94e1",
    "promo_code": "",
-   "claim_how": "7c1a54cbd543",
+   "claim_how": "54c2cf6a3a0043f6",
    "first": 1792522831.984929,
-   "excerpt": "460b613639e5",
+   "excerpt": "a513fb30526551ea",
    "posts": [
     {
      "ts": 1792522831.984929,
      "channel": "cohost-anthropic",
-     "permalink": "d019e0a0d158"
+     "permalink": "32b3853204d7fcaf"
     },
     {
      "ts": 1792788066.867129,
      "channel": "cohost-anthropic",
-     "permalink": "302f5193ed27"
+     "permalink": "0506cc1bef97f750"
     }
    ]
   },
   {
    "id": "o3",
    "sponsor": "Apify",
-   "title": "69fa436f3a17",
-   "value_short": "b6bc76113dbc",
-   "claim_short": "d0bc4582a3d3",
-   "amount_text": "6b458fb4c260",
+   "title": "b4c803b1bbe0be3f",
+   "value_short": "1ce805124175fbbe",
+   "claim_short": "e3ab65f5e1c3aae7",
+   "amount_text": "373b1dfc64f726ee",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "113481d0b89d",
-   "promo_code": "33971cef785f",
-   "claim_how": "cc5042732ef7",
+   "claim_url": "57950880ea16cc8b",
+   "promo_code": "c93d345137ce79af",
+   "claim_how": "b651c8b384d9a4ee",
    "first": 1792528380.692499,
-   "excerpt": "0dacff5b5a12",
+   "excerpt": "b69c99629e3a1460",
    "posts": [
     {
      "ts": 1792528380.692499,
      "channel": "spons-apify",
-     "permalink": "f7431455a37e"
+     "permalink": "ada351c7372f8856"
     },
     {
      "ts": 1792782371.643769,
      "channel": "spons-apify",
-     "permalink": "85fb928bdc02"
+     "permalink": "c760a7d5f88208dd"
     },
     {
      "ts": 1792941871.388179,
      "channel": "spons-apify",
-     "permalink": "8d972e217d63"
+     "permalink": "c13b260cfb6e5b2e"
     },
     {
      "ts": 1792966173.762669,
      "channel": "spons-apify",
-     "permalink": "066121e92d4b"
+     "permalink": "42994be39a5d2690"
     }
    ]
   },
   {
    "id": "o4",
    "sponsor": "Apify",
-   "title": "97d09c2d4bb8",
-   "value_short": "09e17179b71c",
-   "claim_short": "f0fd4727fff3",
-   "amount_text": "38c5c3f4f2ec",
+   "title": "3f72a509d68f0b5e",
+   "value_short": "3f0bc1e90515d4be",
+   "claim_short": "17eb8dd1f2bf20a3",
+   "amount_text": "39bacf20ba30fb55",
    "usd": null,
    "limit": 1793398140,
    "limit_unclear": false,
-   "claim_url": "31ca50430211",
+   "claim_url": "404d527b24c7ac45",
    "promo_code": "",
-   "claim_how": "459b6e96b5a9",
+   "claim_how": "fd377f912cc92335",
    "first": 1792966173.762669,
-   "excerpt": "1a81f0e699c5",
+   "excerpt": "841eff89bf5f6ddf",
    "posts": [
     {
      "ts": 1792966173.762669,
      "channel": "spons-apify",
-     "permalink": "066121e92d4b"
+     "permalink": "42994be39a5d2690"
     }
    ]
   },
   {
    "id": "o5",
    "sponsor": "Bitdeer",
-   "title": "6f532bd081ce",
-   "value_short": "b810e9b7d11d",
-   "claim_short": "b9e14279db5e",
-   "amount_text": "6af28ce90d00",
+   "title": "5357fba5ddaef09d",
+   "value_short": "6719a4034de6b1bb",
+   "claim_short": "e0fed62c9781d1f4",
+   "amount_text": "95d9090e40759656",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "8ceda5c86653",
+   "claim_url": "d56433272b4a4bd7",
    "promo_code": "",
-   "claim_how": "38ad379e9f68",
+   "claim_how": "182ff4a5f15bcc19",
    "first": 1792541621.077769,
-   "excerpt": "dd7dd1392a08",
+   "excerpt": "74144ee33fb6214a",
    "posts": [
     {
      "ts": 1792541621.077769,
      "channel": "spons-bitdeer",
-     "permalink": "e49af74f2503"
+     "permalink": "9964fc3fa718b31d"
     },
     {
      "ts": 1792871187.777149,
      "channel": "spons-bitdeer",
-     "permalink": "3d93475be4d3"
+     "permalink": "1468f9ca628500c0"
     },
     {
      "ts": 1792872410.114049,
      "channel": "0-announcements",
-     "permalink": "3871ac3bf113"
+     "permalink": "ba4b3b78cef0ea09"
     }
    ]
   },
   {
    "id": "o6",
    "sponsor": "Wajo AI",
-   "title": "7f25d93a313f",
-   "value_short": "6c83df7e4994",
-   "claim_short": "5e2b8e96503d",
+   "title": "d22b9744ec8bf539",
+   "value_short": "5febc6a6f73aeff5",
+   "claim_short": "e274951694e4ff73",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": true,
-   "claim_url": "6f464e9292b6",
-   "promo_code": "98a7dd2f707a",
-   "claim_how": "68c841c9fc40",
+   "claim_url": "58b13f4dbc04a0c7",
+   "promo_code": "b6fbc4a39da97d42",
+   "claim_how": "2be8394c7c2588cd",
    "first": 1792592203.773199,
-   "excerpt": "0b3a186fe9e8",
+   "excerpt": "804ea51b02527d9d",
    "posts": [
     {
      "ts": 1792592203.773199,
      "channel": "spons-wajo-ai",
-     "permalink": "a902cb7804b0"
+     "permalink": "b30dc6648fe8f8f5"
     },
     {
      "ts": 1792621476.305939,
      "channel": "spons-wajo-ai",
-     "permalink": "49ac189f3c41"
+     "permalink": "07640e3e70bc3af1"
     }
    ]
   },
   {
    "id": "o7",
    "sponsor": "SpacetimeDB",
-   "title": "697884326b1b",
-   "value_short": "8ead1178d8d7",
+   "title": "2d34b6891ad5fa2d",
+   "value_short": "5526c54f3e5169e1",
    "claim_short": "",
-   "amount_text": "c3d735c6b92b",
+   "amount_text": "f67f5c432bb6e179",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "8267708c393d",
+   "claim_url": "b3d12a945549a4b5",
    "promo_code": "",
    "claim_how": "",
    "first": 1792597872.529089,
-   "excerpt": "0110ac330c8a",
+   "excerpt": "4882bf11eb29e8f9",
    "posts": [
     {
      "ts": 1792597872.529089,
      "channel": "cohost-spacetime",
-     "permalink": "4333169d36fc"
+     "permalink": "2842158cb02bbf14"
     }
    ]
   },
   {
    "id": "o8",
    "sponsor": "SpacetimeDB",
-   "title": "2fa0d3069213",
-   "value_short": "92379594e5d7",
-   "claim_short": "c456afb97119",
-   "amount_text": "92379594e5d7",
+   "title": "c8b466e3db4c700e",
+   "value_short": "c382231e5d5c81da",
+   "claim_short": "91532449f2d28e95",
+   "amount_text": "c382231e5d5c81da",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "14abbcf3ed14",
-   "promo_code": "774f4ec5d2b6",
-   "claim_how": "314e52ed16cf",
+   "claim_url": "d68a3c5f32f2ad24",
+   "promo_code": "69bbaa71c229bc6a",
+   "claim_how": "95ccbe1d3d927c9f",
    "first": 1792825835.372839,
-   "excerpt": "43425dbf39b8",
+   "excerpt": "d8b52d9de28b6bcf",
    "posts": [
     {
      "ts": 1792825835.372839,
      "channel": "cohost-spacetime",
-     "permalink": "51e011867c80"
+     "permalink": "fe77439ada96265e"
     },
     {
      "ts": 1792945800.364919,
      "channel": "cohost-spacetime",
-     "permalink": "62fde035ccfd"
+     "permalink": "7b499558e0997963"
     }
    ]
   },
   {
    "id": "o9",
    "sponsor": "CREAO AI",
-   "title": "7d41e1959c01",
-   "value_short": "6b7ea9b844b5",
-   "claim_short": "5e949f41e499",
+   "title": "391cdfc13351577d",
+   "value_short": "5d6efd5530a88bd6",
+   "claim_short": "f335211b96b6784c",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "7da60ff6803b",
+   "claim_url": "9f8252550aa09420",
    "promo_code": "",
-   "claim_how": "fa74a2618131",
+   "claim_how": "2b2316d3cddcc758",
    "first": 1792652472.670929,
-   "excerpt": "99945bce4c2e",
+   "excerpt": "db475ed170ef8dc6",
    "posts": [
     {
      "ts": 1792652472.670929,
      "channel": "spons-creao-ai",
-     "permalink": "88a8fafb1fee"
+     "permalink": "54e9920ed8ed2af6"
     }
    ]
   },
   {
    "id": "o10",
    "sponsor": "CRS Credit API",
-   "title": "67be16330001",
-   "value_short": "bbb31186dd35",
-   "claim_short": "26d4e9c5927b",
+   "title": "a4f76438788f26ac",
+   "value_short": "b6171569a9c5f4a7",
+   "claim_short": "2b77f92cd0b882b2",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "f75099e009fb",
+   "claim_url": "fc9c431e389790ce",
    "promo_code": "",
-   "claim_how": "71b14b3691aa",
+   "claim_how": "1056b9c4f05085fb",
    "first": 1792686910.485229,
-   "excerpt": "ce6a6e1bdde3",
+   "excerpt": "c4e21b4fd526c6a0",
    "posts": [
     {
      "ts": 1792686910.485229,
      "channel": "spons-crs-credit-api",
-     "permalink": "d63a9608f64a"
+     "permalink": "2ba08ea8dd1468a1"
     }
    ]
   },
   {
    "id": "o11",
    "sponsor": "Bright Data",
-   "title": "1ebe2e3e8857",
-   "value_short": "e883c82c323b",
-   "claim_short": "81046a4ce8a6",
-   "amount_text": "2a1c2edea778",
+   "title": "3d0ab5e23ed9ee5e",
+   "value_short": "6ad8df3453414d1a",
+   "claim_short": "38afb26a2ec59e7c",
+   "amount_text": "9206c354e96737e9",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "e9d0f87f6487",
-   "promo_code": "da1cc901064e",
-   "claim_how": "9c61aad5aa3d",
+   "claim_url": "b101c0e6ee3b068c",
+   "promo_code": "5c30702461ba1b0e",
+   "claim_how": "37728ce52d1dd58e",
    "first": 1792701277.628089,
-   "excerpt": "a764f9771d79",
+   "excerpt": "31c3bbea72036d4d",
    "posts": [
     {
      "ts": 1792701277.628089,
      "channel": "spons-bright-data",
-     "permalink": "ad790d857f95"
+     "permalink": "0e2686e0c95a3923"
     },
     {
      "ts": 1792778412.337339,
      "channel": "spons-bright-data",
-     "permalink": "93ac0e9d321d"
+     "permalink": "e6a2073425e777f7"
     },
     {
      "ts": 1792861451.204039,
      "channel": "0-announcements",
-     "permalink": "309c1dc0a037"
+     "permalink": "f2eacf03a588e96b"
     },
     {
      "ts": 1792885930.192369,
      "channel": "spons-bright-data",
-     "permalink": "04b06c21f012"
+     "permalink": "47a973f9bb87fadb"
     }
    ]
   },
   {
    "id": "o12",
    "sponsor": "Figma",
-   "title": "203630b792f6",
-   "value_short": "e6bf4d8a74b0",
-   "claim_short": "eea2745e2867",
+   "title": "deaec8abbe7c5103",
+   "value_short": "114d6eb744594c47",
+   "claim_short": "5d7c5393c917799b",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "09b528173675",
+   "claim_url": "9f16ac6d3a1a0408",
    "promo_code": "",
-   "claim_how": "85bf81bc9f6d",
+   "claim_how": "b8ce6cb681aacdea",
    "first": 1792720334.095409,
-   "excerpt": "735cba04c313",
+   "excerpt": "6978597abfe24882",
    "posts": [
     {
      "ts": 1792720334.095409,
      "channel": "spons-figma",
-     "permalink": "220c79abe6f0"
+     "permalink": "5537d5764aa1c52e"
     },
     {
      "ts": 1792791684.436319,
      "channel": "spons-figma",
-     "permalink": "bf7c733d0b2b"
+     "permalink": "e8c688cffb3b260f"
     },
     {
      "ts": 1792864088.969629,
      "channel": "spons-figma",
-     "permalink": "4d2e44f6802f"
+     "permalink": "1cba1be3bf017b39"
     }
    ]
   },
   {
    "id": "o13",
    "sponsor": "Factory",
-   "title": "860c8aa93b4b",
-   "value_short": "5952ff0a4b38",
-   "claim_short": "56eb5e8b010f",
-   "amount_text": "37dbb3deabb2",
+   "title": "48dbc7bb31a7c919",
+   "value_short": "25046b0ad4845db2",
+   "claim_short": "0f3cd81d2c800273",
+   "amount_text": "b5deb4c4d58c3b3e",
    "usd": 20,
    "limit": 1792807200,
    "limit_unclear": false,
-   "claim_url": "ea3c649be168",
+   "claim_url": "527a21a535211381",
    "promo_code": "",
-   "claim_how": "e8e5d5048a27",
+   "claim_how": "959f6aac0e62778d",
    "first": 1792792808.144379,
-   "excerpt": "208d9d1ff484",
+   "excerpt": "e3b95928ea447b07",
    "posts": [
     {
      "ts": 1792792808.144379,
      "channel": "spons-factory-ai",
-     "permalink": "1f3c16176bd7"
+     "permalink": "7955b20cece12e64"
     },
     {
      "ts": 1792800699.020179,
      "channel": "spons-factory-ai",
-     "permalink": "01ba2ee491ea"
+     "permalink": "ea44b023be40c920"
     },
     {
      "ts": 1792803765.678909,
      "channel": "spons-factory-ai",
-     "permalink": "71c1729e3436"
+     "permalink": "05933adf43dab872"
     },
     {
      "ts": 1792804676.570039,
      "channel": "spons-factory-ai",
-     "permalink": "72c73edaf29e"
+     "permalink": "70ecebe9d54f55b9"
     },
     {
      "ts": 1792872006.674189,
      "channel": "spons-factory-ai",
-     "permalink": "59ecdf2693c3"
+     "permalink": "b644a0fae5188e67"
     }
    ]
   },
   {
    "id": "o14",
    "sponsor": "Microsoft",
-   "title": "6ebbfac57016",
-   "value_short": "8680a9dd7b07",
-   "claim_short": "5e2b8e96503d",
+   "title": "acb7b4bc08be88f9",
+   "value_short": "95979e47c32e71d5",
+   "claim_short": "e274951694e4ff73",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "c109242f3317",
+   "claim_url": "2b00cda8a7d21cd3",
    "promo_code": "",
-   "claim_how": "bc837557c757",
+   "claim_how": "786ca569642ccf71",
    "first": 1792795022.826229,
-   "excerpt": "f1aaaeab3a82",
+   "excerpt": "818e29d82715cd5c",
    "posts": [
     {
      "ts": 1792795022.826229,
      "channel": "spons-microsoft",
-     "permalink": "9ab59704083d"
+     "permalink": "a85432c02c69dc03"
     }
    ]
   },
   {
    "id": "o15",
    "sponsor": "Mana",
-   "title": "cca2dd43bf2e",
-   "value_short": "9db92f4c3f8c",
-   "claim_short": "61e8d44ad423",
-   "amount_text": "a8d8ff9ff013",
+   "title": "3f6cc418423b34e9",
+   "value_short": "8b77b822ddf674a4",
+   "claim_short": "c52ff3a127e01648",
+   "amount_text": "f899ca72db158bb4",
    "usd": 150,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "92909504b02f",
+   "claim_url": "9d630c45759099e0",
    "promo_code": "",
-   "claim_how": "68dbd77679d3",
+   "claim_how": "8408bf6d2f4ebe80",
    "first": 1792798374.858629,
-   "excerpt": "ea0c92435060",
+   "excerpt": "1f72f31a90e87692",
    "posts": [
     {
      "ts": 1792798374.858629,
      "channel": "spons-mana",
-     "permalink": "895618deebd8"
+     "permalink": "ca2840d809b6872a"
     },
     {
      "ts": 1792869435.503479,
      "channel": "spons-mana",
-     "permalink": "117699106d7b"
+     "permalink": "cca275f54ec4fc6c"
     }
    ]
   },
   {
    "id": "o16",
    "sponsor": "Fetch.ai",
-   "title": "62c66fa94e0a",
-   "value_short": "e1df4e22a359",
-   "claim_short": "371111bf402b",
-   "amount_text": "00e9ef6d7248",
+   "title": "401e0c3bc580dc37",
+   "value_short": "29d4386e34a68cb8",
+   "claim_short": "a183a31a6eb2bafd",
+   "amount_text": "09806e5e01d9cf89",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "9689d68f64ac",
-   "promo_code": "72b8fb56b3af",
-   "claim_how": "177b5ee44eef",
+   "claim_url": "d30f22c1f65a3759",
+   "promo_code": "8d8c75d84df702f5",
+   "claim_how": "f45c0eefbbd249de",
    "first": 1792804485.718739,
-   "excerpt": "e81da7622cfe",
+   "excerpt": "6e6fae57cd15515d",
    "posts": [
     {
      "ts": 1792804485.718739,
      "channel": "spons-fetch-ai",
-     "permalink": "aceef717f878"
+     "permalink": "1db2dc0239e5e11c"
     }
    ]
   },
   {
    "id": "o17",
    "sponsor": "Moss",
-   "title": "925f703bdbaa",
-   "value_short": "d67822eadfe9",
-   "claim_short": "ad56c87ece8f",
-   "amount_text": "d67822eadfe9",
+   "title": "a58b42ff89868f69",
+   "value_short": "a700a391f603270e",
+   "claim_short": "a609c2793062fc34",
+   "amount_text": "a700a391f603270e",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
-   "claim_url": "439b8b0ff811",
-   "promo_code": "98a7dd2f707a",
-   "claim_how": "3f6a84642534",
+   "claim_url": "ecae3fcb0328fcd5",
+   "promo_code": "b6fbc4a39da97d42",
+   "claim_how": "61c84411375223d7",
    "first": 1792815540.425759,
-   "excerpt": "e890ab93ec0b",
+   "excerpt": "58a116ab32e62351",
    "posts": [
     {
      "ts": 1792815540.425759,
      "channel": "spons-moss",
-     "permalink": "9657585f6ffb"
+     "permalink": "9286b344f77a8b1a"
     },
     {
      "ts": 1792865006.057489,
      "channel": "spons-moss",
-     "permalink": "3a79332fad39"
+     "permalink": "6519123e3a415c03"
     }
    ]
   },
   {
    "id": "o18",
    "sponsor": "RunPod",
-   "title": "ac8276573059",
-   "value_short": "a7a56ba48dae",
-   "claim_short": "2c24d35a117c",
+   "title": "36b1776d6027421a",
+   "value_short": "c10d839cf5597e1a",
+   "claim_short": "4f71222ec7fad65a",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
    "claim_url": "",
    "promo_code": "",
-   "claim_how": "305d73041094",
+   "claim_how": "462092951ffba177",
    "first": 1792845799.603489,
-   "excerpt": "e59d75fe8248",
+   "excerpt": "852bf70999498a42",
    "posts": [
     {
      "ts": 1792845799.603489,
      "channel": "spons-runpod",
-     "permalink": "1dc4a386176c"
+     "permalink": "4ed53f8935e0f3d3"
     }
    ]
   },
   {
    "id": "o19",
    "sponsor": "Convex",
-   "title": "bdc18618411b",
-   "value_short": "ecc4873a1694",
-   "claim_short": "f1c283a2a09b",
+   "title": "bcabaece905bff39",
+   "value_short": "9174087e7e318676",
+   "claim_short": "b2df5c24e7d07294",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
    "claim_url": "",
    "promo_code": "",
-   "claim_how": "d0533c3df7ef",
+   "claim_how": "585ed144e79ed6a9",
    "first": 1792874371.871139,
-   "excerpt": "58a4067f5de8",
+   "excerpt": "ca974893533ad91b",
    "posts": [
     {
      "ts": 1792874371.871139,
      "channel": "spons-convex",
-     "permalink": "98f3a1d60794"
+     "permalink": "926d0da2b2946b5f"
     }
    ]
   },
   {
    "id": "o20",
    "sponsor": "Convex",
-   "title": "4aa0ba289436",
-   "value_short": "dac7319591a2",
-   "claim_short": "c0086f23dcdd",
+   "title": "30f9f3247141ed61",
+   "value_short": "3bbab8f1cf4b1801",
+   "claim_short": "0b8aa12d5c381d0f",
    "amount_text": "",
    "usd": null,
    "limit": null,
    "limit_unclear": false,
    "claim_url": "",
    "promo_code": "",
-   "claim_how": "0553392909ac",
+   "claim_how": "c702006f3c77ee70",
    "first": 1792881211.901109,
-   "excerpt": "27ee71232cce",
+   "excerpt": "50714bb778655118",
    "posts": [
     {
      "ts": 1792881211.901109,
      "channel": "spons-convex",
-     "permalink": "a313b2427b92"
+     "permalink": "132a8ec808676d6d"
     }
    ]
   }
@@ -846,21 +846,21 @@
    "at": 1792945800,
    "until": null,
    "posted": 1792943981.782739,
-   "source": "1d862795a788"
+   "source": "a3ad6c0d0347875a"
   },
   {
    "what": "Arrive with the whole team at the Palace of Fine Arts",
    "at": 1792945800,
    "until": null,
    "posted": 1792918203.114859,
-   "source": "e2e163637d11"
+   "source": "1ec2a8cb9e32cef8"
   },
   {
    "what": "Judging window (teams must be at their table)",
    "at": 1792949400,
    "until": 1792956600,
    "posted": 1792918203.114859,
-   "source": "e2e163637d11"
+   "source": "1ec2a8cb9e32cef8"
   }
  ],
  "basis": {
