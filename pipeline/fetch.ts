@@ -109,6 +109,7 @@ export function isPublicAddress(ip: string): boolean {
   if (zeros(7) && h[7] === 1) return false; // ::1
   if (zeros(5) && h[5] === 0xffff) return embedded(h[6]!, h[7]!); // ::ffff:a.b.c.d
   if (zeros(6)) return embedded(h[6]!, h[7]!); // ::a.b.c.d (deprecated compatible form)
+  if (h[0]! < 0x100) return false; // the rest of ::/8, incl. IPv4-translated ::ffff:0:a.b.c.d: reserved, never a public host
   if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((x) => x === 0)) return embedded(h[6]!, h[7]!); // NAT64
   if (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 1) return false; // local-use NAT64
   if (h[0] === 0x2002) return embedded(h[1]!, h[2]!); // 6to4
