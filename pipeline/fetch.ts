@@ -10,9 +10,7 @@
 // need the user's login (or a browser to render). Fetched snapshots are access "public" by definition: the
 // request carries no cookies or credentials.
 import { lookup } from "node:dns/promises";
-import http from "node:http";
-import https from "node:https";
-import { isIP, type LookupFunction } from "node:net";
+import { isIP } from "node:net";
 import type { PageSnapshot } from "./schema.ts";
 
 export const USER_AGENT = "HackRecon/2.0 (+https://github.com/atishaypahadiya/hackrecon; a hacker's local tool, one request per page per sync)";
@@ -170,47 +168,13 @@ function parseV6(ip: string): number[] | null {
   return groups.map((g) => parseInt(g, 16));
 }
 
-/** The default fetcher: node:http(s) with the address check inside the connection's own DNS lookup, so the
- *  address that is checked is the address that is dialed (no rebinding window). TLS still verifies the host. */
-export const pinnedFetch: Fetcher = (url, init) =>
-  new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const mod = u.protocol === "https:" ? https : http;
-    const req = mod.request(
-      u,
-      {
-        method: init.method ?? "GET",
-        headers: init.headers as Record<string, string>,
-        lookup: ((host, opts, cb) => {
-          lookup(host, { all: true, verbatim: true })
-            .then((addrs) => {
-              const bad = addrs.find((a) => !isPublicAddress(a.address));
-              if (bad || !addrs.length) return cb(new Error(`${host} resolves to a non-public address (${bad?.address ?? "none"})`), "", 0);
-              if (opts.all) cb(null, addrs);
-              else cb(null, addrs[0]!.address, addrs[0]!.family);
-            })
-            .catch((e: Error) => cb(e as NodeJS.ErrnoException, "", 0));
-        }) as LookupFunction,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          const headers = new Headers();
-          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
-          const status = res.statusCode ?? 0;
-          resolve(new Response(status === 204 || status === 304 || (status >= 300 && status < 400) ? null : Buffer.concat(chunks), { status, headers }));
-        });
-        res.on("error", reject);
-      },
-    );
-    req.setTimeout(FETCH_TIMEOUT_MS, () => req.destroy(new Error(`timed out after ${FETCH_TIMEOUT_MS / 1000}s`)));
-    req.on("error", reject);
-    req.end();
-  });
-
 /** Refuses non-http(s) URLs, IP-literal hosts, and names that resolve to any non-public address. Checked on
- *  every hop. This early check gives the run report a clear reason; the binding check is pinnedFetch's lookup. */
+ *  every hop.
+ *  Residual: a name could re-resolve between this lookup and fetch's own (DNS rebinding). Pinning the address
+ *  through node:https was tried and Devpost's Cloudflare answers it with a challenge (403, cf-mitigated:
+ *  challenge) while fetch gets 200 with the same headers (2026-11-06), so pinning would end automatic fetch
+ *  on the site it exists for. Bounded instead by trust: URLs come only from the user's config, organizer posts
+ *  in trusted channels, or Devpost's search; and a response only lands in a local snapshot. */
 export async function publicTarget(u: URL, resolve: Resolver = resolveAll): Promise<string | null> {
   if (u.protocol !== "https:" && u.protocol !== "http:") return `${u.protocol} is not fetched`;
   if (u.username || u.password) return "URLs with credentials are not fetched";
@@ -233,7 +197,7 @@ export class PoliteFetcher {
   private seen = new Map<string, Promise<FetchResult>>();
   robotsRequests = 0;
   constructor(
-    private fetcher: Fetcher = pinnedFetch,
+    private fetcher: Fetcher = fetch,
     private resolve: Resolver = resolveAll,
   ) {}
 
