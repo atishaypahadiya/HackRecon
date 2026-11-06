@@ -920,7 +920,16 @@ async function sync(args: string[]): Promise<number> {
   const announcement = new Set(ann);
   console.log(`announcement channels (${annSource}): ${[...announcement].join(", ") || "none"}${unknown ? `; ${unknown} of ${caps.length} captures predate or lack the restricted-posting flag` : ""}`);
 
-  const found = discoverUrls(messages, announcement);
+  // Trust (security review 2026-11-06): a channel's name proves nothing, since hackers can often create channels.
+  // Under the name fallback only posts by listed organizer ids count, and with no list nothing from Slack is
+  // fetched or made canon. Slack's restricted-posting flag and the user's authority_channels are trusted as is.
+  const nameOnly = !flagged.length && !event.authority_channels?.length;
+  const listed = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
+  const trusted = nameOnly ? messages.filter((m) => !!m.author_id && listed.has(m.author_id)) : messages;
+  if (nameOnly) console.log(listed.size ? `name-only announcement channels: counting only posts by the ${listed.size} ids in ${ORGANIZERS_PATH}` : `name-only announcement channels and no ${ORGANIZERS_PATH}: Slack links are listed, not fetched; set authority_channels or capture with the restricted-posting flag`);
+  const found = discoverUrls(trusted, nameOnly && !listed.size ? new Set() : announcement);
+  const untrusted = nameOnly && !listed.size ? discoverUrls(messages, announcement) : null;
+  if (untrusted?.devpost) console.log(`unverified Devpost link (not used): ${untrusted.devpost.url}`);
   const fetcher = new PoliteFetcher();
   let devpostRoot = found.devpost?.url ?? null;
   let devpostWhy = found.devpost?.why ?? "";
