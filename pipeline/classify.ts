@@ -44,6 +44,10 @@ export interface EventConfig {
   canon_pages?: string[];
   /** v2: pages that hold the schedule (D3); none listed means the schedule is Slack-only. */
   schedule_pages?: string[];
+  /** v2 (D23): prizes judged on the whole project, not an idea fit, besides those with no sponsor tag. */
+  event_level_prizes?: string[];
+  /** v2 (D23): a reporting tag for the fit eval ("*" matches any rest); never an exclusion. */
+  tool_gated_prizes?: string[];
 }
 
 export function readEvent(path = EVENT_PATH): EventConfig {
