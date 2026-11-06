@@ -21,7 +21,7 @@ export type CanonKind = (typeof CANON_KINDS)[number];
 export const KIND_FIELDS: Record<CanonKind, readonly string[]> = {
   track: ["description", "requirement", "eligible_with", "max_entries", "cash_value_usd", "winners"],
   prize: ["track", "place", "award_text", "amount_usd", "per"],
-  criterion: ["description", "weight"],
+  criterion: ["description", "weight", "track"],
   rule: ["text", "applies_to", "rule_kind", "deadline"],
 };
 const ALL_FIELDS = [...new Set(Object.values(KIND_FIELDS).flat())];
@@ -49,9 +49,9 @@ Return entities. Each has:
 - fields: a list of {field, value, block, quote}. Leave a field out when the page doesn't state it. Never guess.
 
 Kinds and their fields:
-- track: something a team enters or is judged for. On Devpost every prize block (a heading such as "[Visa] Best use of …" followed by its value, winner count and description) is one track. Its name is the heading. Fields: description (the block's description text), requirement (one per stated eligibility or must-use condition, e.g. "must be built with Cursor"; repeat the field for each), eligible_with (stated stacking rules), max_entries, cash_value_usd (the block's own "$X in cash" line, as a number, "0" when it says $0), winners (the "N winners" line, as a number).
-- prize: what a winner of a track gets. One per place the track states ("1st place: $1250 + Interview" is one prize, "Special Recognition: $250 each" another); a track that names no places gets one prize with no place. Fields: track (the track's ref; quote ""), place ("1st place"), award_text (verbatim award), amount_usd (a number, only when a dollar amount is stated for that prize; credits and gift cards count only if stated in dollars), per ("team" or "person", only if stated).
-- criterion: a judging criterion. Name = the criterion's name. Fields: description, weight (only if stated, as a number).
+- track: something a team enters or is judged for. On Devpost every prize block (a heading such as "[Visa] Best use of …" followed by its value, winner count and description) is one track. Its name is the heading. Fields: description (the block's description text), requirement (one per stated condition on entering or winning, e.g. "must be built with Cursor", "subject to eligibility verification"; repeat the field for each), eligible_with (stated stacking rules), max_entries, cash_value_usd (the block's own "$X in cash" line, as a number, "0" when it says $0), winners (the "N winners" line, as a number).
+- prize: what a winner of a track gets. One per place the track states ("1st place: $1250 + Interview" is one prize, "Special Recognition: $250 each" another); a track that names no places gets one prize with no place; something every entrant gets (a raffle entry, swag for all submitters) is its own prize with place "every entrant". Fields: track (the track's ref; quote ""), place ("1st place"), award_text (the award, verbatim, with everything the block says that winner gets: cash, credits, travel, interviews, swag), amount_usd (a number, only when a dollar amount is stated for that prize; credits and gift cards count only if stated in dollars), per ("team" or "person", only if stated).
+- criterion: a judging criterion. Name = the criterion's name. Fields: description, weight (only if stated, as a number), track (the track's ref, quote "", when the criterion is how one track is judged: "most innovative use of Tiger Data", "the more you use Cursor, the more likely you are to win"; leave it out for the event's criteria). A track's stated judging basis is a criterion, not a requirement.
 - rule: a submission, eligibility or conduct rule hackers must follow. Name = a short label of 2 to 6 words taken from the rule's own words. Fields: text (the rule, verbatim), applies_to ("all", or a track ref when the rule is for one track; quote ""), rule_kind (submission | eligibility | conduct), deadline (ISO 8601 with offset, e.g. 2026-10-25T09:00-07:00, only when the rule states a date and time). A deadline's time is the event's local time: write the UTC offset actually in effect in ${e.timezone} on that date, even if the page's zone label (PST/PDT) disagrees.
 
 Quoting:
@@ -221,15 +221,7 @@ export function checkCanon(parsed: unknown, s: PageSnapshot, snapshotHash: strin
   if (errors.length) return { error: `${errors.length} problem(s): ${errors.slice(0, 12).join("; ")}${errors.length > 12 ? "; …" : ""}` };
 
   const src = (block: number, quote: string): FieldValue<never>["source"] => ({ kind: "page", url: s.url, quote, captured_at: s.captured_at, snapshot_hash: snapshotHash, block });
-  const ids = new Map<string, string>();
-  const used = new Map<string, number>();
-  for (const e of raw) {
-    let id = entityId(e.kind, s, e.name.block, e.name.value);
-    const n = (used.get(id) ?? 0) + 1;
-    used.set(id, n);
-    if (n > 1) id = `${id}~${n}`; // same heading path and name twice on one page: keep both, in page order
-    ids.set(e.ref, id);
-  }
+  const ids = new Map(raw.map((e) => [e.ref, `ref:${e.ref}`])); // replaced by D7 ids in assignIds
   const entities = raw.map((e): Entity => {
     const fields: Record<string, FieldValue<unknown>> = {};
     let reqs = 0;
@@ -240,7 +232,56 @@ export function checkCanon(parsed: unknown, s: PageSnapshot, snapshotHash: strin
     }
     return { id: ids.get(e.ref)!, kind: e.kind, sponsor: e.sponsor, name: { value: e.name.value, source: src(e.name.block, e.name.quote) }, fields, history: [], origin: "page" };
   });
-  return { entities };
+  return { entities: assignIds(entities, s) };
+}
+
+const words8 = (q: string) => slug(q.split(/\s+/).slice(0, 8).join(" "));
+const pathOf = (s: PageSnapshot, block: number | undefined) => {
+  const b = block === undefined ? undefined : s.blocks[block];
+  return b ? [...b.path, ...(b.heading ? [b.text] : [])].map(slug).join("/") : "";
+};
+
+/** D7 ids from what the page fixes, never from a name the model chose: a track by its heading path; a prize by
+ *  its track and stated place; a criterion by its heading path and name (the page's own words); a rule by its
+ *  heading path and the first words of its verbatim text. Same id twice on a page → ~2, ~3 in answer order.
+ *  References (prize track_id, rule applies_to) follow the new ids. */
+export function assignIds(entities: Entity[], s: PageSnapshot): Entity[] {
+  const used = new Map<string, number>();
+  const uniq = (id: string) => {
+    const n = (used.get(id) ?? 0) + 1;
+    used.set(id, n);
+    return n > 1 ? `${id}~${n}` : id;
+  };
+  const page = pageKey(s.url);
+  const remap = new Map<string, string>();
+  for (const t of entities.filter((e) => e.kind === "track")) remap.set(t.id, uniq(entityId("track", s, t.name.source.block!, t.name.value ?? "")));
+  // A prize's leaf is its stated place. Where several prizes on one track share a leaf (no places, or "top 3
+  // teams" for all three), the stated amount tells them apart: usd-8000 (Hyphenate, Cal Hacks 13.0).
+  const prizeBase = (e: Entity) => {
+    const track = remap.get(String(e.fields.track_id?.value)) ?? `track:${page}#${pathOf(s, e.name.source.block)}`;
+    const place = e.fields.place?.value;
+    return `prize:${track.slice("track:".length)}/${slug(typeof place === "string" && place ? place : "prize")}`;
+  };
+  const baseCount = new Map<string, number>();
+  for (const e of entities) if (e.kind === "prize") baseCount.set(prizeBase(e), (baseCount.get(prizeBase(e)) ?? 0) + 1);
+  for (const e of entities.filter((e) => e.kind !== "track")) {
+    let id: string;
+    if (e.kind === "prize") {
+      id = prizeBase(e);
+      const usd = e.fields.amount_usd?.value;
+      if (baseCount.get(id)! > 1 && typeof usd === "number") id = `${id.slice(0, id.lastIndexOf("/"))}/usd-${usd}`;
+    } else if (e.kind === "rule") {
+      const at = e.fields.text?.source ?? e.name.source;
+      id = `rule:${page}#${pathOf(s, at.block)}/${words8(at.quote)}`;
+    } else id = entityId(e.kind as CanonKind, s, e.name.source.block!, e.name.value ?? "");
+    remap.set(e.id, uniq(id));
+  }
+  const swap = (v: unknown) => (typeof v === "string" && remap.has(v) ? remap.get(v)! : v);
+  return entities.map((e) => ({
+    ...e,
+    id: remap.get(e.id) ?? e.id,
+    fields: Object.fromEntries(Object.entries(e.fields).map(([k, fv]) => [k, k === "track_id" || k === "applies_to" ? { ...fv, value: swap(fv.value) } : fv])),
+  }));
 }
 
 // ---- the judge (D15, D21): a fresh Opus call that sees the page and the extraction, nothing else ----
@@ -296,4 +337,87 @@ export function checkJudge(parsed: unknown, s: PageSnapshot, entities: Entity[])
     ...v.misplaced.filter((m) => !ids.has(m.entity_id)).map((m) => `misplaced: ${m.entity_id} is not an entity id`),
   ];
   return bad.length ? { error: bad.join("; ") } : v;
+}
+
+// ---- D7: re-match after a re-extraction ----
+
+/** Quote normalization for matching: case, whitespace and punctuation ignored. */
+export const matchText = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+
+/** Dice coefficient over character bigrams of the normalized texts: 1 = same, 0 = nothing shared. */
+export function similarity(a: string, b: string): number {
+  const x = matchText(a);
+  const y = matchText(b);
+  if (x === y) return 1;
+  if (x.length < 2 || y.length < 2) return 0;
+  const grams = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) m.set(s.slice(i, i + 2), (m.get(s.slice(i, i + 2)) ?? 0) + 1);
+    return m;
+  };
+  const gx = grams(x);
+  const gy = grams(y);
+  let both = 0;
+  for (const [g, n] of gx) both += Math.min(n, gy.get(g) ?? 0);
+  return (2 * both) / (x.length - 1 + (y.length - 1));
+}
+
+/** What an entity is matched on: the page text its id is built from, plus its main quote. Model-chosen names
+ *  are left out, so a renamed prize still matches. */
+export function matchKey(e: Entity, s: PageSnapshot): string {
+  const at = e.kind === "rule" ? (e.fields.text?.source ?? e.name.source) : e.name.source;
+  const b = at.block === undefined ? undefined : s.blocks[at.block];
+  const extra =
+    e.kind === "prize"
+      ? [String(e.fields.place?.value ?? ""), String(e.fields.amount_usd?.value ?? ""), e.fields.award_text?.source.quote ?? ""]
+      : e.kind === "rule"
+        ? [at.quote]
+        : [e.name.source.quote];
+  return [e.kind, ...(b?.path ?? []), ...(b?.heading ? [b.text] : []), ...extra].join(" | ");
+}
+
+/** D7 similarity threshold. Uncalibrated: re-extracting an unchanged snapshot keeps every id exactly (Cal Hacks
+ *  Devpost, 2026-11-06: 151 of 151 across two runs), so fuzzy matching only ever runs after a real page edit.
+ *  Calibrate on the first re-capture whose snapshot hash changes. */
+export const REMATCH_THRESHOLD = 0.8;
+
+export interface Rematch {
+  /** new id → old id, for entities whose id changed but whose quote still matches. */
+  renamed: Map<string, string>;
+  /** Old ids with no entity left, or with two candidates (ambiguous): listed "no longer on the page". */
+  gone: { id: string; reason: "no match" | "ambiguous"; best: number }[];
+}
+
+export interface Keyed {
+  id: string;
+  kind: string;
+  /** matchKey at extraction time; stored, since a re-capture can overwrite the old snapshot file. */
+  key: string;
+}
+export const keyed = (entities: Entity[], s: PageSnapshot): Keyed[] => entities.map((e) => ({ id: e.id, kind: e.kind, key: matchKey(e, s) }));
+
+/** D7: an old id survives when the same id is extracted again, or when exactly one new entity of the same kind
+ *  (not already claimed) matches its key at or above `threshold`. Never a guess: two candidates → gone. */
+export function rematch(prev: Keyed[], next: Keyed[], threshold: number): Rematch {
+  const nextIds = new Set(next.map((e) => e.id));
+  const prevIds = new Set(prev.map((e) => e.id));
+  const free = next.filter((e) => !prevIds.has(e.id));
+  const renamed = new Map<string, string>();
+  const gone: Rematch["gone"] = [];
+  for (const old of prev) {
+    if (nextIds.has(old.id)) continue;
+    const scored = free
+      .filter((e) => e.kind === old.kind && !renamed.has(e.id))
+      .map((e) => ({ e, sim: similarity(old.key, e.key) }))
+      .sort((a, b) => b.sim - a.sim);
+    const best = scored[0]?.sim ?? 0;
+    const above = scored.filter((c) => c.sim >= threshold);
+    if (above.length === 1) renamed.set(above[0]!.e.id, old.id);
+    else gone.push({ id: old.id, reason: above.length > 1 ? "ambiguous" : "no match", best: Number(best.toFixed(3)) });
+  }
+  return { renamed, gone };
 }

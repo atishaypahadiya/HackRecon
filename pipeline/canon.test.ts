@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseHTML } from "linkedom";
 import { snapshotPage } from "../extension/src/page.ts";
-import { checkCanon, checkJudge, deadlineInQuote, entityId, numbersIn, type RawEntity } from "./canon.ts";
+import { checkCanon, checkJudge, deadlineInQuote, entityId, keyed, numbersIn, rematch, similarity, type RawEntity } from "./canon.ts";
 import { coverage, figuresIn, moneyValue, statedTotal } from "./coverage.ts";
 import { redactSnapshot, needsRedaction } from "./pages.ts";
 import type { Entity } from "./schema.ts";
@@ -37,14 +37,17 @@ const good = (): RawEntity[] => [
   ] },
   { ref: "p2", kind: "prize", sponsor: "Acme", name: { value: "1st place", block: at("1st place"), quote: "1st place" }, fields: [
     { field: "track", value: "t2", block: 0, quote: "" },
+    { field: "place", value: "1st place", block: at("1st place"), quote: "1st place" },
     { field: "amount_usd", value: "200", block: at("1st place"), quote: "1st place: $200" },
   ] },
   { ref: "p3", kind: "prize", sponsor: "Acme", name: { value: "2nd place", block: at("1st place"), quote: "2nd place" }, fields: [
     { field: "track", value: "t2", block: 0, quote: "" },
+    { field: "place", value: "2nd place", block: at("1st place"), quote: "2nd place" },
     { field: "amount_usd", value: "100", block: at("1st place"), quote: "2nd place: $100" },
   ] },
   { ref: "c1", kind: "criterion", sponsor: "event", name: { value: "Creativity", block: at("Creativity"), quote: "Creativity" }, fields: [{ field: "description", value: "Original ideas.", block: at("Creativity"), quote: "Original ideas." }] },
   { ref: "r1", kind: "rule", sponsor: "event", name: { value: "submit your hack", block: at("You must submit"), quote: "submit your hack" }, fields: [
+    { field: "text", value: "You must submit your hack by October 25th @ 9 AM PST.", block: at("You must submit"), quote: "You must submit your hack by October 25th @ 9 AM PST." },
     { field: "rule_kind", value: "submission", block: at("You must submit"), quote: "You must submit your hack" },
     { field: "applies_to", value: "all", block: 0, quote: "" },
     { field: "deadline", value: "2026-10-25T09:00-07:00", block: at("You must submit"), quote: "by October 25th @ 9 AM PST" },
@@ -80,21 +83,21 @@ describe("checkCanon", () => {
 
   test("a number in the value that isn't in the quote fails", () => {
     const raw = good();
-    raw[3]!.fields[1]!.value = "250";
+    raw[3]!.fields[2]!.value = "250";
     expect(err(raw)).toContain("250 not in its quote");
   });
 
   test("a deadline whose hour isn't in the quote fails", () => {
     const raw = good();
-    raw[6]!.fields[2]!.value = "2026-10-25T09:30-07:00";
+    raw[6]!.fields[3]!.value = "2026-10-25T09:30-07:00";
     expect(err(raw)).toBe("");
-    raw[6]!.fields[2]!.value = "2026-10-25T10:00-07:00";
+    raw[6]!.fields[3]!.value = "2026-10-25T10:00-07:00";
     expect(err(raw)).toContain("month, day or hour");
   });
 
   test("bad enum, unknown field for the kind, dangling ref, prize without track", () => {
     const raw = good();
-    raw[6]!.fields[0]!.value = "vibes";
+    raw[6]!.fields[1]!.value = "vibes";
     raw[5]!.fields.push({ field: "winners", value: "1", block: 0, quote: "Mini Hacks" });
     raw[1]!.fields[0]!.value = "t9";
     raw[4]!.fields = raw[4]!.fields.filter((f) => f.field !== "track");
@@ -103,6 +106,20 @@ describe("checkCanon", () => {
     expect(e).toContain("not a criterion field");
     expect(e).toContain('"t9" is not a ref');
     expect(e).toContain("a prize needs its track");
+  });
+
+  test("a prize's id comes from its track and place, not the name the model gave it", () => {
+    const raw = good();
+    raw[3]!.name = { value: "Acme first prize", block: at("1st place"), quote: "1st place: $200" };
+    expect(ok(raw).find((e) => e.name.value === "Acme first prize")!.id).toBe("prize:https://mini.devpost.com#mini-hacks/prizes/acme-best-use-of-acme/1st-place");
+    expect(ok(good()).find((e) => e.kind === "rule")!.id).toBe("rule:https://mini.devpost.com#mini-hacks/requirements/you-must-submit-your-hack-by-october-25th");
+  });
+
+  test("prizes sharing a place on one track are told apart by amount", () => {
+    const raw = good();
+    for (const i of [3, 4]) raw[i]!.fields = raw[i]!.fields.filter((f) => f.field !== "place");
+    const ids = ok(raw).filter((e) => e.kind === "prize" && e.sponsor === "Acme").map((e) => e.id.split("/").at(-1));
+    expect(ids).toEqual(["usd-200", "usd-100"]);
   });
 
   test("same heading path and name twice keeps both, numbered in page order", () => {
@@ -208,4 +225,43 @@ describe("redaction (D12)", () => {
 
 test("entityId leaves a track's heading as its leaf", () => {
   expect(entityId("track", snap, at("Mini Hacks Overall"), "Mini Hacks Overall")).toBe("track:https://mini.devpost.com#mini-hacks/prizes/mini-hacks-overall");
+});
+
+describe("rematch (D7)", () => {
+  const es = () => ok(good());
+  const prev = () => keyed(es(), snap);
+  const rename = (e: Entity, id: string, quote?: string): Entity => ({ ...e, id, name: { ...e.name, source: { ...e.name.source, quote: quote ?? e.name.source.quote } } });
+
+  test("same ids: nothing renamed, nothing gone", () => {
+    expect(rematch(prev(), prev(), 0.8)).toEqual({ renamed: new Map(), gone: [] });
+  });
+
+  test("a moved entity with the same quote keeps its old id", () => {
+    const next = es().map((e) => (e.kind === "criterion" ? rename(e, "criterion:moved") : e));
+    const r = rematch(prev(), keyed(next, snap), 0.8);
+    expect([...r.renamed]).toEqual([["criterion:moved", es().find((e) => e.kind === "criterion")!.id]]);
+    expect(r.gone).toEqual([]);
+  });
+
+  test("a lightly edited quote matches above the threshold; a different one doesn't", () => {
+    const c = es().find((e) => e.kind === "criterion")!;
+    const light = rematch(prev(), keyed(es().map((e) => (e.id === c.id ? rename(e, "x", "Creativity!") : e)), snap), 0.8);
+    expect(light.renamed.get("x")).toBe(c.id);
+    const other = rematch(prev(), keyed(es().map((e) => (e.id === c.id ? rename(e, "x", "Technical depth") : e)), snap), 0.8);
+    expect(other.renamed.size).toBe(0);
+    expect(other.gone).toEqual([{ id: c.id, reason: "no match", best: expect.any(Number) }]);
+  });
+
+  test("two candidates above the threshold: listed as ambiguous, never guessed", () => {
+    const c = es().find((e) => e.kind === "criterion")!;
+    const next = [...es().filter((e) => e.id !== c.id), rename(c, "a"), rename(c, "b")];
+    const r = rematch(prev(), keyed(next, snap), 0.8);
+    expect(r.renamed.size).toBe(0);
+    expect(r.gone).toEqual([{ id: c.id, reason: "ambiguous", best: 1 }]);
+  });
+
+  test("similarity ignores case, spacing and punctuation", () => {
+    expect(similarity("Best  Use of Fetch.ai!", "best use of fetch ai")).toBe(1);
+    expect(similarity("abc", "xyz")).toBe(0);
+  });
 });
