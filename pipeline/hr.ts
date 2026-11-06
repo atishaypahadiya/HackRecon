@@ -72,6 +72,7 @@ import {
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
   GAPS_CACHE_PATH,
+  SHIP_GAPS_PATH,
   FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
@@ -125,6 +126,7 @@ import { checkFit, sponsorAliases, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SC
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, repoFacts } from "./repo.ts";
+import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
 import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
@@ -184,6 +186,9 @@ const USAGE = `usage:
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
   bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
+  bun run hr ship --from fixtures/dogfood/<name>.json --enter "Best Actor, Claude for Public Benefit, ..." [--repo URL]
+      Ship's Recheck gaps: the entered tracks' stated requirements and entry steps against the repo's latest
+      commit (the result is reused while the commit is unchanged), open gaps first, then the tracks' checklist.
       Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
       fit-eval. Prints each track with its fit word, reason, verified quote, and the time to the section.
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
@@ -207,7 +212,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -226,6 +231,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "canon") return canon(rest);
   if (cmd === "fit-eval") return fitEval(rest);
   if (cmd === "plan") return planCli(rest);
+  if (cmd === "ship") return shipCli(rest);
   if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
@@ -690,6 +696,37 @@ async function board(args: string[]): Promise<number> {
         if (r.from === "model") writeJsonFile(FIT_CACHE_PATH, cache);
         console.log(`plan: tracks in ${r.ms} ms (${r.from})`);
         return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothBlocks(boothQuestions(r.items, input)), from: r.from, ms: r.ms });
+      }
+      if (req.method === "POST" && path === "/ship/gaps") {
+        // Ship's Recheck gaps (P6 renders it): the entered tracks against the repo's latest commit.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 16_000) return json({ error: "request too large" }, 413);
+        let body: { entering?: unknown };
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const input = parsePlanBody(body);
+        if ("error" in input) return json(input, 400);
+        if (!input.repo) return json({ error: "link a repo to recheck gaps" }, 400);
+        const ids = Array.isArray(body.entering) ? body.entering.filter((x): x is string => typeof x === "string").slice(0, 60) : [];
+        if (!ids.length) return json({ error: "no tracks entered" }, 400);
+        const { entities, event, aliases } = planContext();
+        const { tracks, unknown } = shipTracks(entities, ids, event, aliases);
+        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+        const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+        const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+        const r = await recheckGaps(anthropicClient(), { ...input, repo: input.repo }, tracks, entities, gcache, store);
+        if ("error" in r) {
+          console.error(`ship: couldn't recheck gaps: ${r.error}`);
+          return json({ error: "couldn't recheck gaps" }, 503);
+        }
+        writeJsonFile(GAPS_CACHE_PATH, gcache);
+        writeJsonFile(SHIP_GAPS_PATH, store);
+        console.log(`ship: gaps ${r.from} at ${r.commit.slice(0, 7)}`);
+        return json(r);
       }
       if (req.method === "POST" && path === "/plan/gaps") {
         if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
@@ -1244,6 +1281,72 @@ async function planCli(args: string[]): Promise<number> {
   if (dog?.targeted?.length) {
     const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
     out(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
+  }
+  return 0;
+}
+
+/** "Best Actor, claude for public" → track ids: each part is an id or a unique case-insensitive part of a name. */
+function matchTracks(entities: Entity[], parts: string[]): { ids: string[] } | { error: string } {
+  const tracks = entities.filter((x) => x.kind === "track");
+  const ids: string[] = [];
+  for (const part of parts.map((p) => p.trim()).filter(Boolean)) {
+    const hits = tracks.filter((t) => t.id === part || (t.name.value ?? "").toLowerCase().includes(part.toLowerCase()));
+    if (hits.length !== 1) return { error: `"${part}" matches ${hits.length ? hits.map((t) => t.name.value).join(", ") : "no track"}; give more of the name` };
+    ids.push(hits[0]!.id);
+  }
+  return { ids };
+}
+
+async function shipCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" } } });
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string } | null>(values.from, null) : null;
+  if (!dog) {
+    console.error(values.from ? `${values.from} not found` : "--from is required");
+    return 2;
+  }
+  const repo = values.repo ?? dog.repo;
+  if (!repo) {
+    console.error("no repo: pass --repo https://github.com/<owner>/<repo> or set repo in the fixture");
+    return 2;
+  }
+  const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
+  const m = matchTracks(entities, (values.enter ?? "").split(","));
+  if ("error" in m) {
+    console.error(`--enter: ${m.error}`);
+    return 2;
+  }
+  if (!m.ids.length) {
+    console.error('--enter is required: the tracks you plan to enter, e.g. --enter "Best Actor, Claude for Public Benefit"');
+    return 2;
+  }
+  const event = readEvent();
+  const { tracks } = shipTracks(entities, m.ids, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+  const input = { idea: dog.idea, stack: typeof dog.stack === "string" ? parseStack(dog.stack) : dog.stack.length ? dog.stack : null, repo };
+  const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+  const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+  const r = await recheckGaps(anthropicClient(), input, tracks, entities, gcache, store);
+  if ("error" in r) {
+    console.error(`couldn't recheck gaps: ${r.error}`);
+    return 1;
+  }
+  writeJsonFile(GAPS_CACHE_PATH, gcache);
+  writeJsonFile(SHIP_GAPS_PATH, store);
+  const at = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const out = (line: string) => console.log(wrapText(line, cliWidth()));
+  out(`Ship: ${tracks.length} tracks you plan to enter`);
+  out(`Recheck gaps: ${r.repo} @ ${r.commit.slice(0, 7)}, the latest commit as of ${at(r.latest_at)}. ${r.from === "reused" ? `Checked ${at(r.checked_at)}; the commit hasn't changed since, so that result stands.` : `Checked ${at(r.checked_at)}.`} ${r.checked} stated requirements and entry steps, ${r.repo_lines} repo lines.`);
+  out(r.gaps.length ? `\nOpen gaps (${r.gaps.length})` : "\nOpen gaps: none found. That says nothing about whether the requirements are met.");
+  for (const g of r.gaps) {
+    out(`  ${g.track}\n    ${g.gap}`);
+    out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
+    for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+  }
+  out("\nFor the tracks you entered (the rest of Ship's checklist comes with P6)");
+  for (const t of tracks) {
+    const d = trackDetail(entities, t.track_id);
+    out(`  ${t.name}${!d.requirements.length && !t.steps.length ? "   (no requirements or entry steps stated)" : ""}`);
+    for (const s of t.steps) out(`    [ ] ${s.label}: "${s.quote}"`);
+    for (const q of d.requirements.filter((q) => !t.steps.some((s) => s.quote === q))) out(`    [ ] requirement: "${q}"`);
   }
   return 0;
 }

@@ -28,17 +28,36 @@ export function parseRepoUrl(url: string): { owner: string; name: string } | nul
   return m ? { owner: m[1]!, name: m[2]! } : null;
 }
 
-/** Clone once (depth 1, no tags, LFS skipped); reuse the checkout after that. */
-export function checkoutRepo(url: string): Repo | { error: string } {
+const git = (args: string[], cwd?: string) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" }, timeout: 120_000 }).trim();
+const remote = (p: { owner: string; name: string }) => `https://github.com/${p.owner}/${p.name}.git`;
+
+/** Clone once (depth 1, no tags, LFS skipped) and reuse the checkout. With `latest`, first move it to the default
+ *  branch's newest commit (Ship's recheck): fetch depth 1 and reset this cache clone to it. */
+export function checkoutRepo(url: string, opts: { latest?: boolean } = {}): Repo | { error: string } {
   const p = parseRepoUrl(url);
   if (!p) return { error: "only public https://github.com/<owner>/<repo> links are read" };
   const dir = join(REPOS_DIR, `${p.owner}__${p.name}`);
-  const git = (args: string[], cwd?: string) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LFS_SKIP_SMUDGE: "1" }, timeout: 120_000 }).trim();
   try {
-    if (!existsSync(join(dir, ".git"))) git(["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", `https://github.com/${p.owner}/${p.name}.git`, dir]);
+    if (!existsSync(join(dir, ".git"))) git(["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", remote(p), dir]);
+    else if (opts.latest) {
+      git(["fetch", "--quiet", "--depth", "1", "--no-tags", "origin", "HEAD"], dir);
+      git(["reset", "--quiet", "--hard", "FETCH_HEAD"], dir);
+    }
     return { url: `https://github.com/${p.owner}/${p.name}`, dir, sha: git(["rev-parse", "HEAD"], dir) };
   } catch (e) {
-    return { error: `couldn't clone ${url}: ${(e as Error).message.split("\n")[0]}` };
+    return { error: `couldn't read ${url}: ${(e as Error).message.split("\n")[0]}` };
+  }
+}
+
+/** The default branch's newest commit on GitHub, without fetching anything (one ls-remote). */
+export function remoteHead(url: string): string | { error: string } {
+  const p = parseRepoUrl(url);
+  if (!p) return { error: "only public https://github.com/<owner>/<repo> links are read" };
+  try {
+    const sha = git(["ls-remote", remote(p), "HEAD"]).split(/\s+/)[0] ?? "";
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : { error: `no HEAD commit at ${url}` };
+  } catch (e) {
+    return { error: `couldn't reach ${url}: ${(e as Error).message.split("\n")[0]}` };
   }
 }
 

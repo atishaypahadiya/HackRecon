@@ -327,6 +327,13 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
     3. **Judging:** logistics such as "Be at your table 10:30–12:30".
     - Each item: a native checkbox (DESIGN.md), the quoted line, source ↗. Slack-added items say "added in #0-announcements".
     - **Last hour:** under 60 minutes to the deadline, Ship collapses to the countdown plus the unticked Required items only. The other groups fold to one line each and expand on click.
+  - **Recheck gaps (user 2026-11-06).** An item for the tracks the user plans to enter, shown when a repo is linked.
+    - **What it does:** reruns the gap check (Plan's, same rules) on those tracks against the repo's latest commit.
+    - **What it shows:** the commit and the time it was checked, e.g. "Hindsight @ db92f7d, latest as of Fri 3:23 PM; checked 3:23 PM".
+    - **Open gaps** go above the checklist, each with its sentence, the page's quote and the project's quotes with their sources (repo lines link to the commit).
+    - **Caching:** when the latest commit is the one already checked, the stored result stands ("the commit hasn't changed since") with no clone update and no model call. A new commit updates the cache clone and reruns. If the matching repo lines are unchanged, the gap check's own cache answers, with links re-pointed at the new commit.
+    - **Scope:** "Tracks the user plans to enter" are Ship's "tracks you entered", whatever their fit, so possible tracks are checked too.
+    - **Built (engine):** `pipeline/ship.ts` `recheckGaps`, `hr ship --from … --enter "…"`, and `POST /ship/gaps` (same Origin + token guard). The item's rendering is P6.
 
 ### 5. Per-event config and generalize
 
@@ -1612,6 +1619,18 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - A row shows "Gap: …". The drawer's Gaps section lists the sentence, the page's quote and each project quote with its source (repo lines link to GitHub at the commit).
       - Checked in the headless browser at 1440 and 360.
 
+  - **Plan output fixes and Ship's recheck engine (user 2026-11-06).**
+    - **Glued words ("actorfor", "universityguide"):** the printer never dropped a space. Its output has both spaces and no unusual characters. Its lines ran to 286 characters, and the terminal soft-wrapped them, where a break can lose its space when shown or copied. `hr plan` and `hr ship` now wrap at word boundaries themselves (`pipeline/wrap.ts`), with a test that every word and space survives.
+    - **CLI:** each track's gaps print under its row, as on the board. A likely track with stated requirements and no gap says "Gaps: none found" with the not-a-verdict line.
+    - **Booths from gaps:** the gap check now also returns `instead`, a verb phrase after "We", linted like the sentence. A track with a gap asks "We <instead>; what does ‘<requirement>’ need from us?", grounded in the gap's quotes. A sponsor's questions are one block (one Copy), and a shared opening is said once.
+      - Hindsight's Apify block: "We run Apify's prebuilt Cheerio Scraper from the Store instead of an Actor of our own; what does ‘We have a Best Actor award for building an actor for this event’ need from us? We use Apify to scrape campus calendars, club feeds, hackathon listings and university guide pages; what does ‘Best Use of Apify’ reward beyond that?"
+    - **Ship recheck on Hindsight** (`hr ship --enter "Best Actor, Claude for Public Benefit, Factory Droid SDK, Best Use of Apify"`; the four likely tracks stand in for the entered set, since the fixture doesn't record which tracks were entered):
+      - Hindsight @ db92f7d, checked Fri Nov 6, 3:23 PM PST.
+      - 2 requirements and entry steps, 115 repo lines, 1 open gap (Best Actor) with 3 repo quotes. The other three tracks state no requirements.
+      - The second run reused the result ("the commit hasn't changed since").
+    - **Cached gaps** now re-point their repo links at the commit just read, so a cache hit on a new commit doesn't link to the old one.
+    - **TODOS:** repo lines are picked by product name, so requirements naming none (voice, deployment, open source) can't find counter-evidence yet.
+
 ### Fit baseline before Slack requirements (2026-11-06)
 
 `review/fit_baseline.json` is now the complete tiered run above (run 2026-11-06T21:56Z, set with `hr fit-eval --set-baseline` from cache), replacing the T7 baseline. This is the measurement step 1 compares against: Slack sponsor posts merged as requirements or criteria move tracks from title-only to stated, and the next gate run is paired against these 94 pairs.
@@ -1691,11 +1710,18 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
 
 **Implementation tasks (step 4):**
 - [ ] **P1** Plan layout and rows (D2, D3, D7, D8, D12) in `board/`. Verify: /design-review at 1440, 390, 360. *Built 2026-11-06 and checked with /browse at those widths (Step 4 progress); the /design-review pass is still to run.*
+- [ ] **P1b** Prefill from a repo link (user 2026-11-06, moved from TODOS). A pasted public GitHub link drafts the description, the stack and each item's used-for, each draft shown with its source: the file and line, or the README / Devpost line. The user confirms each draft one by one. Only confirmed drafts are saved; an unconfirmed field stays empty.
+  - **Sources:** README, the dependency files (package.json, pyproject.toml) for the stack, and the call sites of each stack product for its used-for. The Devpost Built With list when a Devpost link is given too.
+  - **Rules:**
+    - Repo text is untrusted data, read through `pipeline/repo.ts` (outside the tree, no symlinks, nothing run).
+    - A draft states only what its source line shows.
+    - Where the code contradicts a claim (Hindsight lists Apify but runs the Store's Cheerio Scraper; `apps/actor` is a placeholder), the draft says what the code does.
+  - **Verify:** Hindsight's link reproduces the three used-fors the user confirmed by hand (2026-11-06) with their files. A draft with no source line is refused in a test. Nothing is saved before confirmation (board test). State the cost of any run over $1 first.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
 - [ ] **P5** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
-- [ ] **P6** Ship layout, the drafts item, the merge line, last-hour mode (D13). Verify: frames at 61 and 59 min before the deadline.
+- [ ] **P6** Ship layout, the drafts item, the merge line, last-hour mode (D13), and the Recheck gaps item: commit and time checked, open gaps above the checklist with their quotes (engine built: `POST /ship/gaps`). Verify: frames at 61 and 59 min before the deadline; a recheck on an unchanged commit makes no model call.
 - [ ] **P7** Eval: recall@3/@5 (done in fiteval.ts); credits, sessions, booths relevance by the Opus judge with n; Hindsight dogfood saved to `fixtures/dogfood/hindsight.json` (gitignored).
 
 TODOS: none deferred from this review. Every approved fix is a step 4 task above.
