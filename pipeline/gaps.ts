@@ -186,8 +186,12 @@ export async function planGaps(client: Anthropic | null, tracks: GapTrack[], ent
   if (!reqs.length) return { gaps: [], checked: 0, facts: counts, from: "none", ms: 0, usage: null };
   const request = gapRequest(reqs, facts);
   const hash = gapHash(request);
+  // The request names repo lines by path:line, not commit, so a new commit with the same lines hits the cache;
+  // links are re-pointed at the commit just read.
+  const urlOf = new Map(facts.map((f) => [f.source, f.url]));
+  const relink = (gaps: Gap[]) => gaps.map((g) => ({ ...g, project: g.project.map((p) => ({ ...p, url: urlOf.get(p.source) ?? p.url })) }));
   const hit = cache[hash];
-  if (hit) return { gaps: hit.gaps, checked: reqs.length, facts: counts, from: "cache", ms: Math.round(now() - t0), usage: null };
+  if (hit) return { gaps: relink(hit.gaps), checked: reqs.length, facts: counts, from: "cache", ms: Math.round(now() - t0), usage: null };
   if (!client) return { error: "no API key, and these requirements haven't been checked before" };
   const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: GAP_MAX_TOKENS, system: GAP_SYSTEM, schema: GAP_SCHEMA, request, check: (p) => checkGaps(p, reqs, facts) });
   if ("error" in r) return { error: r.error };

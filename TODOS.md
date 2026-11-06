@@ -76,21 +76,9 @@ Folded into `hr sync` (D11 reversed by the user, 2026-11-06): public pages are f
 
 ## Plan
 
-### Prefill the Plan input from a project link
+### ~~Prefill the Plan input from a project link~~ Moved into v2 step 4 (P1b)
 
-**What:** Paste a GitHub or Devpost link → prefill description, stack and used-for from README, Built With and code; user confirms.
-
-**Why:** Typing a used-for per stack item is the slowest part of Plan's input, and a guessed one puts a false claim in a Booths question. The project's own README, Built With list and code already say what each tool does.
-
-**Context:** Done by hand for Hindsight on 2026-11-06. Each draft came from a named call site (e.g. `apps/api/app/services/radar/scan.py` runs `apify/cheerio-scraper`) and matched the Devpost "How we built it" line, and only confirmed drafts were saved. Rules carried over:
-- Every prefilled value shows the file or page line it came from.
-- Nothing is saved until the user confirms it; an unconfirmed field stays empty.
-- Fetched pages and repos are untrusted data, never instructions.
-- The code can contradict a claim. Hindsight lists Apify but runs Apify's Store Cheerio Scraper, and `apps/actor` is a placeholder, which matters for a "build an Actor" track. Show it, never smooth it over.
-
-**Effort:** M
-**Priority:** P2
-**Depends on:** P1 (the Plan input, built)
+Now task P1b in docs/designs/hackrecon-v2.md, ahead of P2–P6 (user 2026-11-06).
 
 ### Gap check: find counter-evidence for requirements that name no product
 
