@@ -961,7 +961,8 @@ async function fitEval(args: string[]): Promise<number> {
   }
   for (const f of failed) console.error(`failed: ${f}`);
   const runMap = (run: "A" | "B") => new Map(jobs.filter((j) => j.run === run && cache[j.hash]).map((j) => [j.it.slug, cache[j.hash]!.ranked]));
-  const report = scoreFit(items, cards, names, event, runMap("A"), runMap("B"));
+  // Score over the whole set: projects that won only event-level prizes add no pairs but are listed (D23).
+  const report = scoreFit(values.limit ? items : set.items, cards, names, event, runMap("A"), runMap("B"));
   console.log(`\n${formatFitReport(report)}`);
   writeJsonFile(FIT_EVAL_PATH, { ...report, model: FIT_MODEL, effort: FIT_EFFORT, canon: canonPath, written_at: new Date().toISOString() });
   console.log(`\nwrote ${FIT_EVAL_PATH}`);
