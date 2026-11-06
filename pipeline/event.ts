@@ -60,8 +60,6 @@ export const FIT_EVAL_PATH = "review/fit_eval.json";
 export const FIT_BASELINE_PATH = "review/fit_baseline.json";
 /** `hr sync`: what discovery found this sync (URLs, fetch results, sponsor and organizer drafts). */
 export const DISCOVERED_PATH = "data/discovered.json";
-/** URL key → hashes of snapshots hr sync fetched without cookies: an automatic extension capture is public only on an exact match (ingest.ts). */
-export const FETCH_LOG_PATH = "data/fetch_log.json";
 
 // Repo paths (shared by every event).
 /** The labeling rules. Their Columns section goes verbatim into both prompts: the Opus judge's

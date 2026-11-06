@@ -188,17 +188,15 @@ describe("automatic extension pages (user, 2026-11-06)", () => {
   const snap = (url: string, at: string, text = "Prizes") => ({ schema_version: 1, url, title: "t", captured_at: at, captured_by: "extension", access: null, blocks: [{ i: 0, path: [], text }], embeds: { iframes: 0, pdfs: 0 } }) as unknown as PageSnapshot;
   const root = "https://e.devpost.com/";
   const wanted = new Set([pageKey(root)]);
-  test("public only after a cookie-less 200; otherwise authenticated (redacted)", () => {
+  test("an automatic capture is always authenticated (redacted); identical text writes nothing", () => {
     const s = snap(root, "2026-11-06T10:00:00Z");
-    const h = snapshotHash({ ...s, captured_by: "extension" });
-    expect(decideIngest(s, wanted, undefined, {}).access).toBe("authenticated");
-    expect(decideIngest(s, wanted, undefined, { [pageKey(root)]: { otherhash: "2026-11-06T09:00:00Z" } }).access).toBe("authenticated");
-    const d = decideIngest(s, wanted, undefined, { [pageKey(root)]: { [h]: "2026-11-06T09:00:00Z" } });
-    expect([d.action, d.access, d.snapshot?.access]).toEqual(["saved", "public", "public"]);
+    const d = decideIngest(s, wanted, undefined);
+    expect([d.action, d.snapshot?.access, d.snapshot?.captured_by]).toEqual(["saved", "authenticated", "extension"]);
+    expect(decideIngest(s, wanted, { hash: snapshotHash(d.snapshot!), captured_at: "2026-11-06T09:00:00Z" }).action).toBe("same");
   });
   test("unwanted URLs are ignored; older or identical captures don't replace the current snapshot", () => {
-    expect(decideIngest(snap("https://other.devpost.com/", "2026-11-06T10:00:00Z"), wanted, undefined, {}).action).toBe("not_wanted");
-    expect(decideIngest(snap(root, "2026-11-06T08:00:00Z", "new text"), wanted, { hash: "x", captured_at: "2026-11-06T09:00:00Z" }, {}).action).toBe("older");
+    expect(decideIngest(snap("https://other.devpost.com/", "2026-11-06T10:00:00Z"), wanted, undefined).action).toBe("not_wanted");
+    expect(decideIngest(snap(root, "2026-11-06T08:00:00Z", "new text"), wanted, { hash: "x", captured_at: "2026-11-06T09:00:00Z" }).action).toBe("older");
   });
   test("targets: only the event's Devpost root and rules; schedule sites are never opened automatically", () => {
     const ms = [msg({ ts: "2.0", text: "Devpost https://cal-hacks-13-0.devpost.com and our live site https://hive.example.org" })];

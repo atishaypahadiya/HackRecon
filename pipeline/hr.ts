@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { decideIngest, type IngestDecision, type PublicSeen } from "./ingest.ts";
+import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
@@ -70,7 +70,6 @@ import {
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
-  FETCH_LOG_PATH,
   FIT_CACHE_PATH,
   FIT_BASELINE_PATH,
   FIT_EVAL_PATH,
@@ -1020,9 +1019,6 @@ async function sync(args: string[]): Promise<number> {
     const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
     console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
   }
-  const seen = readJsonFile<PublicSeen>(FETCH_LOG_PATH, {});
-  for (const r of results) if (r.status === "fetched" && r.hash) (seen[pageKey(r.url)] ??= {})[r.hash] = new Date().toISOString();
-  writeJsonFile(FETCH_LOG_PATH, seen);
 
   // Pages the extension read in a background tab during "Sync this event" (Devpost refuses most plain fetches).
   const inbox = join(homedir(), "Downloads", "hackrecon", "pages");
@@ -1041,7 +1037,7 @@ async function sync(args: string[]): Promise<number> {
         continue;
       }
       const cur = latest.get(pageKey(snap.url));
-      const d = decideIngest(snap, wantedKeys, cur && { hash: cur.hash, captured_at: cur.snapshot.captured_at }, seen);
+      const d = decideIngest(snap, wantedKeys, cur && { hash: cur.hash, captured_at: cur.snapshot.captured_at });
       if (d.snapshot) {
         writeJsonFile(`${PAGES_DIR}/${pageFileName(snap.url)}`, d.snapshot);
         results.push({ url: snap.url, status: "fetched", detail: `from the extension: ${d.detail}`, requests: 0, role: canonPages.some((u) => pageKey(u) === pageKey(snap.url)) ? "canon" : "schedule", hash: snapshotHash(d.snapshot), changed: true });

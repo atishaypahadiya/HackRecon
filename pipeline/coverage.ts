@@ -1,7 +1,7 @@
 // D15 coverage checks: model-free, so they back the Opus judge instead of trusting it. On one page's
 // snapshot and the entities extracted from it:
-//   prize_total   the page's own total ("$204,408+ in prizes") = Σ track cash_value_usd × winners. That is how
-//                 Devpost computes it (each prize block's "$X in cash" line times its "N winners" line).
+//   prize_total   the page's own total ("$204,408+ in prizes") = Σ track cash_value_usd × winners (each prize
+//                 block's "$X in cash" line times its "N winners" line); measured equal on Cal Hacks, 2026-11-06.
 //                 Any nonzero gap fails; every prize block whose figures don't match is listed.
 //   prize_blocks  every prize block (Devpost: an element id prize_<n>) has a track named from its heading,
 //                 and at least one prize on that track.
