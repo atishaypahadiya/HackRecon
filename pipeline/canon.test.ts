@@ -197,6 +197,11 @@ describe("redaction (D12)", () => {
     const r = redactSnapshot(s, (t) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: 0 }));
     expect([r.snapshot.url, r.snapshot.title, r.snapshot.links[0]]).toEqual(["https://hive.example.com/u/[person]", "[person]'s schedule", { text: "[person]", href: "https://x.com/a", block: 0 }]);
   });
+  test("names in hyphenated host labels and path segments, and malformed escapes, don't get through", () => {
+    const red = (t: string) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: t.includes("Dana Reyes") ? 1 : 0 });
+    const s = { ...snap, url: "https://dana-reyes.hive.io/p/dana_reyes/%E0%A4%A?token=abc", links: [] };
+    expect(redactSnapshot(s, red).snapshot.url).toBe("https://[person].hive.io/p/[person]/%E0%A4%A");
+  });
 });
 
 test("entityId leaves a track's heading as its leaf", () => {
