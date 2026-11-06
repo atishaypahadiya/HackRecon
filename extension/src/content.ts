@@ -4,6 +4,7 @@
 import { SCHEMA_VERSION, messageId, type CaptureFile, type Message, type StopReason } from "../../pipeline/schema.ts";
 import { Accumulator, STEP_WAIT_MS, StopRule } from "./accumulate.ts";
 import { parseRows } from "./parse.ts";
+import { autoPageTargets } from "./autopages.ts";
 import { SEL, TEXT } from "./selectors.ts";
 
 const MAX_STEPS = 3000;
@@ -157,6 +158,10 @@ async function capture(): Promise<void> {
     }),
   };
   download(file);
+  // "Sync this event" (user 2026-11-06): an announcement channel's capture also reads the event's Devpost pages
+  // (and, when Slack restricts posting there, its schedule pages) in background tabs, with no click.
+  const targets = autoPageTargets(file);
+  if (targets.length) chrome.runtime.sendMessage({ type: "capture-pages", urls: targets }).then((r: string[] | undefined) => r && console.log("[hackrecon] pages:", r.join("; ")));
   const secs = Math.round((finished.getTime() - started.getTime()) / 1000);
   ui.set(
     `HackRecon: ${messages.length} messages in ${secs}s, stop: ${stop}, system rows skipped: ${systemRowsSkipped}` +

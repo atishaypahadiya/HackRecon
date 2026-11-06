@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft } from "./discover.ts";
 import { isPublicAddress, needsExtension, parseRobots, PoliteFetcher, robotsAllows, sameSite, USER_AGENT } from "./fetch.ts";
 import type { Entity, Message, PageSnapshot } from "./schema.ts";
+import { decideIngest } from "./ingest.ts";
+import { pageKey } from "./pages.ts";
+import { autoPageTargets } from "../extension/src/autopages.ts";
 
 const msg = (o: Partial<Message>): Message => ({
   text: "",
@@ -177,5 +180,26 @@ describe("PoliteFetcher", () => {
     expect(needsExtension(snap([{ i: 0, path: [], text: "Sign in" }]), '<input type="password">')).toContain("login form");
     expect(needsExtension(snap([{ i: 0, path: [], text: "x".repeat(900) }]), '<input type="password">')).toBeNull();
     expect(needsExtension(snap([{ i: 0, path: [], text: "Schedule" }, { i: 1, path: [], text: "Loading the schedule…" }]), "")).toContain("JavaScript");
+  });
+});
+
+describe("automatic extension pages (user, 2026-11-06)", () => {
+  const snap = (url: string, at: string, text = "Prizes") => ({ schema_version: 1, url, title: "t", captured_at: at, captured_by: "extension", access: null, blocks: [{ i: 0, path: [], text }], embeds: { iframes: 0, pdfs: 0 } }) as unknown as PageSnapshot;
+  const root = "https://e.devpost.com/";
+  const wanted = new Set([pageKey(root)]);
+  test("public only after a cookie-less 200; otherwise authenticated (redacted)", () => {
+    expect(decideIngest(snap(root, "2026-11-06T10:00:00Z"), wanted, undefined, {}).access).toBe("authenticated");
+    const d = decideIngest(snap(root, "2026-11-06T10:00:00Z"), wanted, undefined, { [pageKey(root)]: "2026-11-06T09:00:00Z" });
+    expect([d.action, d.access, d.snapshot?.access]).toEqual(["saved", "public", "public"]);
+  });
+  test("unwanted URLs are ignored; older or identical captures don't replace the current snapshot", () => {
+    expect(decideIngest(snap("https://other.devpost.com/", "2026-11-06T10:00:00Z"), wanted, undefined, {}).action).toBe("not_wanted");
+    expect(decideIngest(snap(root, "2026-11-06T08:00:00Z", "new text"), wanted, { hash: "x", captured_at: "2026-11-06T09:00:00Z" }, {}).action).toBe("older");
+  });
+  test("targets: Devpost root and rules from an announcement capture; schedule only with Slack's restricted flag", () => {
+    const ms = [msg({ ts: "2.0", text: "Devpost https://cal-hacks-13-0.devpost.com and our live site https://hive.example.org" })];
+    expect(autoPageTargets({ channel_name: "0-announcements", posting_restricted: null, messages: ms })).toEqual(["https://cal-hacks-13-0.devpost.com/", "https://cal-hacks-13-0.devpost.com/rules"]);
+    expect(autoPageTargets({ channel_name: "0-announcements", posting_restricted: true, messages: ms })).toContain("https://hive.example.org/");
+    expect(autoPageTargets({ channel_name: "random", posting_restricted: false, messages: ms })).toEqual([]);
   });
 });
