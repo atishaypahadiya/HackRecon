@@ -1526,6 +1526,20 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - Gate on B: recall@3 55 → 53 (lost 6, gained 4, exact McNemar p = 0.754). recall@5 68 → 68 (lost 4, gained 4, p = 1.000). **PASS, not an improvement.**
       - The cash_only rule accounts for most losses (Apify Best Use ×3, Mana ×2, Visa ×1 across @3 and @5). Gains: GoDaddy, Apify Best Actor, Notability, Bright Data, Spacetime, Vultr.
 
+  - **Title products, label cap and tier floor (user 2026-11-06). Uncommitted: the gate run is incomplete.**
+    - **`titleProducts`** works in code from the title and sponsors.json aliases. A product is the X of "Use of (the) X" when X holds the sponsor's name or is a proper name and not a gerund phrase, or the sponsor's name or an alias outside "sponsored by …".
+      - Examples: Claude for Public Benefit → Claude, Gemini API, Factory Droid SDK, x402 + Coinbase.
+      - Visa's "Reimagining Shopping sponsored by Visa", Apify's Best Actor and Figma's four titles name none.
+    - **Label cap (post-ranking, in `capLikely`):** a title-tier "likely" stays only when a product its title names is in the user's idea or stack (whole word, or its core without API/SDK/AI/Model/Studio/Builder/Agent/Platform/Cloud). Otherwise it shows "possible", marked capped. Ranking and the eval are untouched.
+    - **Tier floor:** a title naming a product is at least title-only. Tiers go from 7 / 30 / 3 to 7 / 32 / 1; Mana and Apify Best Use move up, Visa stays cash_only.
+    - **Fit eval (162 rankings, $1.86): incomplete.**
+      - The API account hit its usage limit: "You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."
+      - 16 rankings failed (8 projects × A and B: touchspace, trip-assist-ai, unstep, vigil-aewt3u, vision-os-4ckmq3, vouch-7i3bft, warden-p3uifn, yardsale), and their pairs counted as misses.
+      - As reported, the gate reads recall@3 50/94 and recall@5 60/94 (FAIL < 67%). That isn't a valid result.
+      - Diagnostic on the 86 completed pairs: recall@3 50 → 50 (lost 2, gained 2, p = 1.0), recall@5 61 → 60 (lost 7, gained 6, p = 1.0).
+      - Passing needs 63/94; the 8 failed projects held 7 baseline @5 hits.
+    - **Next:** the 146 good rankings are cached, so the re-run is 16 rankings (about $0.20) once the limit is raised or resets. Commit if it passes.
+
 ## Design Review (plan-design-review, 2026-11-06): Plan + Ship
 
 Target: §4 Views, Plan (new default tab) and Ship. Mode: Operate. No mockups: the gstack designer has no OpenAI key (`$D setup`), so every pass ran on text against DESIGN.md and the built Claim board. No outside voice (Codex not installed). Dogfood input (user): Hindsight, a transfer planner for community-college transfer students; stack Vercel, FastAPI, Claude API, Apify, Factory Droid SDK, Figma; targeted Anthropic, Factory Droid SDK, Figma and Apify; won no track prizes (https://devpost.com/software/hindsight-68sruh).
