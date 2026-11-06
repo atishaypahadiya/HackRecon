@@ -236,6 +236,16 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
   3. **Sessions to attend,** in time order: workshops and talks from the schedule that bear on the stack or a targeted track.
   4. **Booths and reps to visit,** each with a grounded question to ask, drawn from an ambiguous requirement, a judging criterion, or an unmet entry step.
   5. **People to pitch:** reps of targeted tracks, each with a one-line pitch that uses only facts from the user's description and the rep's own posts.
+  - **Stack input (user 2026-11-06).**
+    - **Fields:** one row per stack item, a name field plus one optional short field, placeholder "what it does in your project". Data: `StackItem { name, used_for }` in plan.ts. The CLI form is `--stack "Apify: pull course catalogs, Claude API: the Ask assistant, Vercel"`, split at the first ": " so "ASI:One" stays a name.
+    - **What reads it:**
+      - The ranker sees "Apify (used for: …)" only when given, so the fit reason can state it. A plain stack renders byte-identical to a names-only list, so the eval's Built With requests keep their cache keys (re-checked from cache: 162 rankings, 0 uncached, 0 pairs moved).
+      - Booths' opening uses the first that applies:
+        - (1) the item's used_for: "We use Apify to pull course catalogs from university sites; …", "We use Claude API for the Ask assistant; …";
+        - (2) the description's own "to/for …" clause;
+        - (3) a stack entry that already says its use, "<thing> <past participle> in|with|on <product>": "We designed the UI in Figma; what does ‘Best Design’ reward beyond that?";
+        - (4) "We use <product> for <the description's first sentence>".
+    - **Not built yet:** the input fields render when step 4's P1 builds the Plan tab in board/. This is the spec they follow.
   - **Layout (design review D2, user 2026-11-06).** Once filled, the project input collapses to one line (description · stack, then Edit). Under it, a single **"Next for you"** line, not a tile: the next time-bound item from the plan (a session, booth hours, a claim window or a deadline), e.g. "Sat 2:00 · Apify workshop, Gate 4 · in 40 min". It's hidden before the event starts and when nothing is upcoming. Then on desktop, Tracks 8 col | Credits 4 col, and Sessions | Booths and reps | People, 4 col each. Tablet: Tracks 12; Credits 12; the band 12 (three columns). Phone order: input, Next for you, Tracks, the band (Sessions, Booths, People), Credits. Tracks lead because the other four sections are matched to the targeted tracks.
     ```
     [ Hindsight: transfer planner…  ·  Vercel, FastAPI, Claude API…        Edit ]

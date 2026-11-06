@@ -178,7 +178,8 @@ const USAGE = `usage:
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
-  bun run hr plan (--idea "..." [--stack "a, b"] | --from fixtures/dogfood/<name>.json)
+  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."]
+      Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
       Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
       fit-eval. Prints each track with its fit word, reason, verified quote, and the time to the section.
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
@@ -1114,7 +1115,7 @@ async function planCli(args: string[]): Promise<number> {
     console.error("--idea or --from is required");
     return 2;
   }
-  const input = { idea, stack: parseStack(dog?.stack ?? values.stack) };
+  const input = { idea, stack: parseStack(values.stack ?? dog?.stack) };
   const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
   const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));

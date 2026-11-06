@@ -11,11 +11,23 @@ import { callChecked } from "./model.ts";
 import type { Entity } from "./schema.ts";
 import type { Usage } from "./usage.ts";
 
+/** One stack item (user 2026-11-06). In the Plan input each item is a name field plus one optional short field,
+ *  placeholder "what it does in your project". used_for is the user's own words, so Booths and the fit reason may
+ *  state it as fact. */
+export interface StackItem {
+  name: string;
+  used_for: string | null;
+}
+
 export interface PlanInput {
   idea: string;
-  /** Comma-separated in the UI; null when the user left it empty. */
-  stack: string[] | null;
+  /** null when the user left it empty. */
+  stack: StackItem[] | null;
 }
+
+/** What the ranker sees: the names, with "(used for: …)" only where the user gave one. A stack without any used_for
+ *  renders exactly as a plain list, so the eval's Built With requests (names only) keep their cache keys. */
+export const stackForRanker = (stack: StackItem[] | null): string[] | null => stack?.map((i) => (i.used_for ? `${i.name} (used for: ${i.used_for})` : i.name)) ?? null;
 
 export interface PlanTrack {
   track_id: string;
@@ -60,17 +72,41 @@ export function projectLead(idea: string): string {
   return unstop(first.replace(/^[^:\s][^:]{0,40}:\s+(?=\S)/, (m) => (m.trim().split(/\s+/).length <= 3 ? "" : m)));
 }
 
-/** A stack entry naming one of the track's products, in the user's words: the entry when it is little more than
+/** A stack item naming one of the track's products, in the user's words: the entry when it is little more than
  *  the product ("Claude API" for Claude), else the product as the entry spells it ("Figma" from "UI designed in Figma"). */
-export function stackProduct(names: string[], stack: string[] | null): { phrase: string; entry: string } | null {
-  for (const entry of stack ?? [])
+export function stackProduct(names: string[], stack: StackItem[] | null): { phrase: string; entry: string; used_for: string | null } | null {
+  for (const { name: entry, used_for } of stack ?? [])
     for (const n of names) {
       if (!productMentioned(n, entry)) continue;
       const short = entry.split(/\s+/).length <= n.split(/\s+/).length + 1;
       const at = entry.toLowerCase().indexOf(n.toLowerCase());
-      return { phrase: short || at < 0 ? entry : entry.slice(at, at + n.length), entry };
+      return { phrase: short || at < 0 ? entry : entry.slice(at, at + n.length), entry, used_for };
     }
   return null;
+}
+
+const DETERMINER = /^(?:the|a|an|our|its|their|my|this|each|every|all)\b/i;
+/** A used_for as a clause after "We use X": kept when it starts with "to"/"for"; "for" before a noun phrase ("the Ask
+ *  assistant", a capitalized name, an -ing word), else "to" before a verb phrase ("pull course catalogs"). */
+export function useClause(usedFor: string): string {
+  const u = unstop(usedFor.trim());
+  if (/^(?:to|for)\s/i.test(u)) return u;
+  const first = u.split(/\s+/)[0] ?? "";
+  return DETERMINER.test(u) || /^[A-Z]/.test(first) || /ing$/i.test(first) ? `for ${u}` : `to ${u}`;
+}
+
+const PARTICIPLE = "(?:\\w+ed|built|made|written|drawn|done|run|hosted)";
+/**
+ * A stack entry that already says its use (user 2026-11-06): "<thing> <past participle> in|with|on|using <product>"
+ * → "We <participle> the <thing> <prep> <product>". "UI designed in Figma" → "We designed the UI in Figma";
+ * "frontend built with React" → "We built the frontend with React". Null for a bare name ("web app on Vercel" has
+ * no participle), so nothing is read into it.
+ */
+export function entryUse(entry: string, product: string): string | null {
+  const m = new RegExp(`^(.+?)\\s+(${PARTICIPLE})\\s+(in|with|on|using|via)\\s+(.+)$`, "i").exec(unstop(entry.trim()));
+  if (!m || !productMentioned(product, m[4]!)) return null;
+  const thing = DETERMINER.test(m[1]!) ? m[1]! : `the ${m[1]!}`;
+  return `We ${m[2]!.toLowerCase()} ${thing} ${m[3]!.toLowerCase()} ${m[4]!}`;
 }
 
 /** What the description itself says the product does: "uses Apify to scrape course catalogs" → "to scrape course
@@ -89,8 +125,10 @@ export function statedUse(names: string[], idea: string): string | null {
  * description and stack, and the page:
  *   "We use <stack product> <use>; does that count as '<quoted requirement>'?"     (stated tracks)
  *   "We use <stack product> <use>; what does '<track title>' reward beyond that?"  (title-only tracks)
- * <use> is the description's own "to/for …" clause about the product when it has one, else "for <the project>"
- * (its first sentence), which says only that the product is used in this project. A title-only track whose
+ * <use>, in order: the item's used_for ("We use Apify to pull course catalogs"); the description's own "to/for …"
+ * clause about the product; a stack entry that already says its use, which replaces the opening ("We designed the
+ * UI in Figma; …"); else "for <the project>" (the description's first sentence), which says only that the product
+ * is used in this project. A title-only track whose
  * products the user doesn't name gets the plain "What does '<track>' reward?"; a stated track without one gets no
  * question (its requirement is already on the page). cash_only tracks get none.
  */
@@ -108,10 +146,18 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput): BoothQues
       if (t.evidence === "title") out.push({ ...base, question: `What does ‘${bare(t.name)}’ reward?`, grounds: page });
       continue;
     }
-    const use = statedUse(t.product_names, input.idea);
     const ask = t.evidence === "stated" ? `does that count as ‘${unstop(t.quote)}’?` : `what does ‘${bare(t.name)}’ reward beyond that?`;
-    const said = [sp ? `your stack lists “${sp.entry}”` : `your description names ${product}`, use ? `your description says “${use}”` : `your description: “${lead}”`];
-    out.push({ ...base, question: `We use ${product} ${use ?? `for ${lead}`}; ${ask}`, grounds: `${said.join("; ")}; ${page}` });
+    const said = sp ? `your stack lists “${sp.entry}”` : `your description names ${product}`;
+    const described = statedUse(t.product_names, input.idea);
+    const inEntry = sp && !sp.used_for && !described ? entryUse(sp.entry, product) : null;
+    const [opening, why] = sp?.used_for
+      ? [`We use ${product} ${useClause(sp.used_for)}`, `${said}, used for “${unstop(sp.used_for)}”`]
+      : described
+        ? [`We use ${product} ${described}`, `${said}; your description says “${described}”`]
+        : inEntry
+          ? [inEntry, said]
+          : [`We use ${product} for ${lead}`, `${said}; your description: “${lead}”`];
+    out.push({ ...base, question: `${opening}; ${ask}`, grounds: `${why}; ${page}` });
   }
   return out;
 }
@@ -158,9 +204,19 @@ export function entrySteps(entities: Entity[], trackIds: string[]): PlanStep[] {
   );
 }
 
-export function parseStack(s: string | undefined | null): string[] | null {
-  const parts = (s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  return parts.length ? parts : null;
+/** "Apify: pull course catalogs, Claude API: the Ask assistant, Vercel" → items; "name: used for" splits at the
+ *  first ": " (colon and space), so "ASI:One" stays one name. Commas can't appear inside a used_for in this form. */
+export function parseStack(s: string | undefined | null): StackItem[] | null {
+  const items = (s ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x): StackItem => {
+      const at = x.indexOf(": ");
+      const used = at > 0 ? x.slice(at + 2).trim() : "";
+      return used ? { name: x.slice(0, at).trim(), used_for: used } : { name: at > 0 ? x.slice(0, at).trim() : x, used_for: null };
+    });
+  return items.length ? items : null;
 }
 
 /**
@@ -170,7 +226,7 @@ export function parseStack(s: string | undefined | null): string[] | null {
  */
 export function capLikely(r: Ranked, card: TrackCard | undefined, input: PlanInput): { fit: Ranked["fit"]; capped: boolean } {
   if (r.fit !== "likely" || card?.evidence !== "title") return { fit: r.fit, capped: false };
-  const text = [input.idea, ...(input.stack ?? [])].join("\n");
+  const text = [input.idea, ...(input.stack ?? []).map((i) => i.name)].join("\n");
   return card.products.some((p) => productMentioned(p, text)) ? { fit: "likely", capped: false } : { fit: "possible", capped: true };
 }
 
@@ -179,7 +235,7 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   const t0 = now();
   const cards = trackCards(entities, e, aliases);
   const system = fitSystemPrompt(e, cards);
-  const request = fitRequest(input.idea, input.stack);
+  const request = fitRequest(input.idea, stackForRanker(input.stack));
   const hash = fitHash(system, request);
   let ranked = cache[hash]?.ranked;
   let usage: Usage | null = null;
