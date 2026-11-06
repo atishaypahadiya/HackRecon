@@ -52,6 +52,8 @@ export const FIT_CACHE_PATH = "data/fit_cache.json";
 /** The fit eval set: public winners, descriptions and Built With lists (gitignored like all fixtures). */
 export const FIT_EVAL_SET_PATH = "fixtures/fit/eval13.json";
 export const FIT_EVAL_PATH = "review/fit_eval.json";
+/** `hr sync`: what discovery found this sync (URLs, fetch results, sponsor and organizer drafts). */
+export const DISCOVERED_PATH = "data/discovered.json";
 
 // Repo paths (shared by every event).
 /** The labeling rules. Their Columns section goes verbatim into both prompts: the Opus judge's

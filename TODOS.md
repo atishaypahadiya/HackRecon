@@ -52,29 +52,13 @@
 
 ## Pages
 
-### `hr init`: auto-draft a new event's config
+### ~~`hr init`~~ Superseded in v2
 
-**What:** `hr init <devpost-url>` drafts `events/<slug>/config/event.json` and `sponsors.json` from the captured Devpost snapshot and the Slack sidebar, for the user to correct.
+Discovery drafts sponsors.json, organizers and the canon pages after one sync (user, 2026-11-06). See docs/designs/hackrecon-v2.md §5.
 
-**Why:** v2 step 7 writes the second event's config by hand (about an hour). Auto-drafting removes that hour at each new event.
+### ~~`hr fetch`~~ Done in v2
 
-**Context:** Deferred in the v2 eng review (D1) so generalization is proven by hand first. Draft from page entities (tracks, prizes → sponsors) and channel names; every drafted field cites its source, and nothing is drafted from names alone.
-
-**Effort:** M
-**Priority:** P3
-**Depends on:** v2 step 7 (second event by hand)
-
-### `hr fetch`: fetch public canon pages from the CLI
-
-**What:** `hr fetch <url>` snapshots a public, unauthenticated page into the same snapshot schema and content hash as the extension's "Capture this page".
-
-**Why:** Re-capturing canon by click could be slow at a live event with many canon pages.
-
-**Context:** Deferred in the v2 eng review (D11): page snapshots come only from the extension for now. Trigger: re-capturing canon by click is the bottleneck at a live event. If built: one request per URL per run, a descriptive User-Agent, honors robots.txt, and marks the snapshot `public` (D12).
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** v2 step 2 (snapshot schema)
+Folded into `hr sync` (D11 reversed by the user, 2026-11-06): public pages are fetched on every sync. See docs/designs/hackrecon-v2.md §1 Sources.
 
 ## Reps
 
