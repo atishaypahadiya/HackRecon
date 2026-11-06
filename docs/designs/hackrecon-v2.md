@@ -1479,6 +1479,16 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
 - Parallelization: 2 lanes, 2 parallel / 6 sequential
 - Lake Score: 2/16 = answers picking a 10/10 option / answers scored for Completeness
 
+### Step 4 progress (2026-11-06)
+
+- **P2 / P7, Tracks section and dogfood.** `pipeline/plan.ts` builds Plan's Tracks section with the same ranker, quote check and cache as fit-eval, so the gate's numbers describe what Plan shows. `hr plan --from fixtures/dogfood/hindsight.json` on real canon:
+  - **Results:** likely fits for [Anthropic] Claude for Public Benefit, [Apify] Best Use of Apify and [Factory] Best Use of the Factory Droid SDK; also possible: [Figma] Best Design and [Apify] Best Actor. All 4 tracks Hindsight targeted appear. They were targeted, not won (no track prizes), so this isn't a win label.
+  - **Time to the section:** 4,955 ms uncached (n = 1, Sonnet, $0.02), 1 ms cached. Under the 8 s target on one sample; more samples come with the board endpoint.
+  - **Open, for the user (both are prompt changes, so a fresh extraction or ranking and a fit-gate run):**
+    - (a) 4 of 5 quotes are just the track's name. They're verified but carry no evidence, because canon holds a description for only 9 of 52 tracks and requirements for 5.
+    - (b) Two reasons step past the facts. "likely to scrape course catalogs" guesses how Apify is used, and "so they can enter this track directly" reads close to an eligibility claim.
+    - (c) Entry steps aren't a canon kind yet, so D3's checkboxes have nothing to show. Only 1 requirement ("Register your domain name with GoDaddy Registry") looks like one.
+
 ## Design Review (plan-design-review, 2026-11-06): Plan + Ship
 
 Target: §4 Views, Plan (new default tab) and Ship. Mode: Operate. No mockups: the gstack designer has no OpenAI key (`$D setup`), so every pass ran on text against DESIGN.md and the built Claim board. No outside voice (Codex not installed). Dogfood input (user): Hindsight, a transfer planner for community-college transfer students; stack Vercel, FastAPI, Claude API, Apify, Factory Droid SDK, Figma; targeted Anthropic, Factory Droid SDK, Figma and Apify; won no track prizes (https://devpost.com/software/hindsight-68sruh).

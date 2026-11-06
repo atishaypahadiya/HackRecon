@@ -122,6 +122,7 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
 import { fitGate, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
+import { parseStack, planTracks, type FitCache } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -177,6 +178,9 @@ const USAGE = `usage:
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
+  bun run hr plan (--idea "..." [--stack "a, b"] | --from fixtures/dogfood/<name>.json)
+      Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
+      fit-eval. Prints each track with its fit word, reason, verified quote, and the time to the section.
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
       ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
       Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
@@ -198,7 +202,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -216,6 +220,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "pages") return pages(rest);
   if (cmd === "canon") return canon(rest);
   if (cmd === "fit-eval") return fitEval(rest);
+  if (cmd === "plan") return planCli(rest);
   if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
@@ -1095,6 +1100,41 @@ interface FitCached {
   ranked: Ranked[];
   usage: Usage;
   calls: number;
+}
+
+async function planCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" } } });
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string; targeted?: string[] } | null>(values.from, null) : null;
+  if (values.from && !dog) {
+    console.error(`${values.from} not found`);
+    return 2;
+  }
+  const idea = dog?.idea ?? values.idea;
+  if (!idea) {
+    console.error("--idea or --from is required");
+    return 2;
+  }
+  const input = { idea, stack: parseStack(dog?.stack ?? values.stack) };
+  const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
+  const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
+  const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache);
+  if ("error" in r) {
+    console.error(`couldn't rank tracks: ${r.error}`);
+    return 1;
+  }
+  writeJsonFile(FIT_CACHE_PATH, cache);
+  console.log(`Tracks to target (${r.from}, ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
+  let shown = "";
+  for (const t of r.items) {
+    if (t.fit === "possible" && shown !== "possible") console.log("  Also possible");
+    shown = t.fit;
+    console.log(`  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}\n    ${t.reason}\n    "${t.quote}"  ${t.source_url}`);
+  }
+  if (dog?.targeted?.length) {
+    const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
+    console.log(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
+  }
+  return 0;
 }
 
 async function fitEval(args: string[]): Promise<number> {
