@@ -10,7 +10,9 @@
 // need the user's login (or a browser to render). Fetched snapshots are access "public" by definition: the
 // request carries no cookies or credentials.
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import http from "node:http";
+import https from "node:https";
+import { isIP, type LookupFunction } from "node:net";
 import type { PageSnapshot } from "./schema.ts";
 
 export const USER_AGENT = "HackRecon/2.0 (+https://github.com/atishaypahadiya/hackrecon; a hacker's local tool, one request per page per sync)";
@@ -94,19 +96,121 @@ const resolveAll: Resolver = async (host) => (await lookup(host, { all: true, ve
  *  x.devpost.com); never sideways to a sibling under a shared suffix (a.co.uk → b.co.uk). */
 export const sameSite = (a: URL, b: URL) => a.hostname === b.hostname || b.hostname.endsWith(`.${a.hostname}`) || a.hostname.endsWith(`.${b.hostname}`);
 
-/** Addresses a sync must never reach: loopback, private, link-local (cloud metadata), CGNAT, ULA, unspecified, multicast. */
+/** Addresses a sync must never reach. IPv4: this-network, RFC 1918, loopback, link-local (cloud metadata),
+ *  CGNAT, IETF protocol and documentation ranges, benchmarking, 6to4 relay, multicast and reserved. IPv6: the
+ *  same for any IPv4 embedded in mapped, compatible, NAT64 or 6to4 form, plus unspecified, loopback, ULA,
+ *  link-local, site-local, multicast, documentation, discard, Teredo and local-use NAT64. */
 export function isPublicAddress(ip: string): boolean {
-  const v4 = /^(?:::ffff:)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/i.exec(ip);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224);
-  }
-  const h = ip.toLowerCase();
-  return !(h === "::" || h === "::1" || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || /^ff/.test(h) || h.startsWith("::ffff:"));
+  const v4 = parseV4(ip);
+  if (v4) return publicV4(v4);
+  const h = parseV6(ip);
+  if (!h) return false; // unparseable: refuse
+  const embedded = (hi: number, lo: number) => publicV4([hi >> 8, hi & 255, lo >> 8, lo & 255]);
+  const zeros = (n: number) => h.slice(0, n).every((x) => x === 0);
+  if (zeros(8)) return false; // ::
+  if (zeros(7) && h[7] === 1) return false; // ::1
+  if (zeros(5) && h[5] === 0xffff) return embedded(h[6]!, h[7]!); // ::ffff:a.b.c.d
+  if (zeros(6)) return embedded(h[6]!, h[7]!); // ::a.b.c.d (deprecated compatible form)
+  if (h[0] === 0x64 && h[1] === 0xff9b && h.slice(2, 6).every((x) => x === 0)) return embedded(h[6]!, h[7]!); // NAT64
+  if (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 1) return false; // local-use NAT64
+  if (h[0] === 0x2002) return embedded(h[1]!, h[2]!); // 6to4
+  if (h[0] === 0x2001 && h[1] === 0) return false; // Teredo
+  if (h[0] === 0x2001 && h[1] === 0xdb8) return false; // documentation
+  if (h[0] === 0x100 && zeros(4)) return false; // discard-only
+  if ((h[0]! & 0xfe00) === 0xfc00) return false; // ULA fc00::/7
+  if ((h[0]! & 0xffc0) === 0xfe80 || (h[0]! & 0xffc0) === 0xfec0) return false; // link-local, site-local
+  if ((h[0]! & 0xff00) === 0xff00) return false; // multicast
+  return true;
 }
 
+function parseV4(ip: string): number[] | null {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return null;
+  const o = m.slice(1).map(Number);
+  return o.every((x) => x <= 255) ? o : null;
+}
+
+function publicV4([a, b, c]: number[]): boolean {
+  return !(
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b! >= 16 && b! <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b! >= 64 && b! <= 127) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a! >= 224
+  );
+}
+
+/** Eight 16-bit groups, with :: expanded and a dotted IPv4 tail folded in; null if not IPv6. Zone ids refused. */
+function parseV6(ip: string): number[] | null {
+  if (ip.includes("%")) return null;
+  let s = ip.toLowerCase();
+  const tail = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(s);
+  if (tail) {
+    const v4 = parseV4(tail[1]!);
+    if (!v4) return null;
+    s = s.slice(0, -tail[1]!.length) + `${((v4[0]! << 8) | v4[1]!).toString(16)}:${((v4[2]! << 8) | v4[3]!).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const part = (x: string) => (x ? x.split(":") : []);
+  const head = part(halves[0]!);
+  const rest = halves.length === 2 ? part(halves[1]!) : [];
+  const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array(fill).fill("0"), ...rest];
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+/** The default fetcher: node:http(s) with the address check inside the connection's own DNS lookup, so the
+ *  address that is checked is the address that is dialed (no rebinding window). TLS still verifies the host. */
+export const pinnedFetch: Fetcher = (url, init) =>
+  new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === "https:" ? https : http;
+    const req = mod.request(
+      u,
+      {
+        method: init.method ?? "GET",
+        headers: init.headers as Record<string, string>,
+        lookup: ((host, opts, cb) => {
+          lookup(host, { all: true, verbatim: true })
+            .then((addrs) => {
+              const bad = addrs.find((a) => !isPublicAddress(a.address));
+              if (bad || !addrs.length) return cb(new Error(`${host} resolves to a non-public address (${bad?.address ?? "none"})`), "", 0);
+              if (opts.all) cb(null, addrs);
+              else cb(null, addrs[0]!.address, addrs[0]!.family);
+            })
+            .catch((e: Error) => cb(e as NodeJS.ErrnoException, "", 0));
+        }) as LookupFunction,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          const headers = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+          const status = res.statusCode ?? 0;
+          resolve(new Response(status === 204 || status === 304 || (status >= 300 && status < 400) ? null : Buffer.concat(chunks), { status, headers }));
+        });
+        res.on("error", reject);
+      },
+    );
+    req.setTimeout(FETCH_TIMEOUT_MS, () => req.destroy(new Error(`timed out after ${FETCH_TIMEOUT_MS / 1000}s`)));
+    req.on("error", reject);
+    req.end();
+  });
+
 /** Refuses non-http(s) URLs, IP-literal hosts, and names that resolve to any non-public address. Checked on
- *  every hop. (A DNS answer can change between this check and the request; the window is one lookup.) */
+ *  every hop. This early check gives the run report a clear reason; the binding check is pinnedFetch's lookup. */
 export async function publicTarget(u: URL, resolve: Resolver = resolveAll): Promise<string | null> {
   if (u.protocol !== "https:" && u.protocol !== "http:") return `${u.protocol} is not fetched`;
   if (u.username || u.password) return "URLs with credentials are not fetched";
@@ -129,7 +233,7 @@ export class PoliteFetcher {
   private seen = new Map<string, Promise<FetchResult>>();
   robotsRequests = 0;
   constructor(
-    private fetcher: Fetcher = fetch,
+    private fetcher: Fetcher = pinnedFetch,
     private resolve: Resolver = resolveAll,
   ) {}
 

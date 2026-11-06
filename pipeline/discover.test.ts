@@ -152,6 +152,9 @@ describe("PoliteFetcher", () => {
     expect(isPublicAddress("::ffff:10.0.0.1")).toBe(false);
     expect(isPublicAddress("8.8.8.8")).toBe(true);
     expect(isPublicAddress("2606:4700::1")).toBe(true);
+    for (const ip of ["::ffff:7f00:1", "::127.0.0.1", "64:ff9b::a9fe:a9fe", "64:ff9b::169.254.169.254", "2002:0a00:0001::1", "2001:0:4136::1", "2001:db8::1", "fe80::1", "fec0::1", "198.18.0.1", "192.0.2.1", "203.0.113.9", "255.255.255.255", "fe80::1%en0", "garbage"])
+      expect([ip, isPublicAddress(ip)]).toEqual([ip, false]);
+    for (const ip of ["64:ff9b::808:808", "2002:0808:0808::1", "::ffff:8.8.8.8", "1.1.1.1"]) expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
     expect(sameSite(new URL("https://a.co.uk/"), new URL("https://b.co.uk/"))).toBe(false);
     expect(sameSite(new URL("http://devpost.com/"), new URL("https://x.devpost.com/"))).toBe(true);
   });
