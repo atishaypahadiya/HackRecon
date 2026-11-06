@@ -23,6 +23,10 @@ export const EVENT_PATH = "config/event.json";
 export const SPONSORS_PATH = "config/sponsors.json";
 export const ORGANIZERS_PATH = "config/organizers.json";
 export const CAPTURES_DIR = "captures";
+/** Page snapshots from the extension's "Capture this page" (D11): canon. */
+export const PAGES_DIR = "captures/pages";
+/** Page snapshots built from saved HTML by tests and dev tools: never canon on a board. */
+export const PAGE_FIXTURES_DIR = "fixtures/pages";
 export const SLACK_DOM_FIXTURES_DIR = "fixtures/slack-dom";
 export const CACHE_PATH = "data/classify_cache.json";
 export const ERRORS_PATH = "data/classify_errors.json";

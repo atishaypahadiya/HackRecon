@@ -61,6 +61,7 @@ import {
   BOARD_DATA_PATH,
   CACHE_PATH,
   CAPTURES_DIR,
+  EVENT_PATH,
   DEFAULT_EXPORT_DIR,
   ERRORS_PATH,
   GROUP_PATH,
@@ -70,6 +71,8 @@ import {
   LABELS_PATH,
   MESSAGES_PATH,
   ORGANIZERS_PATH,
+  PAGE_FIXTURES_DIR,
+  PAGES_DIR,
   POOL_META_PATH,
   RULES_PATH,
   RUN_PATH,
@@ -79,7 +82,9 @@ import {
   takeEventArg,
   useEvent,
 } from "./event.ts";
-import type { Item } from "./schema.ts";
+import { loadPages, pageCoverage } from "./pages.ts";
+import { PAGE_ACCESS, pageFileName, type Item, type PageAccess } from "./schema.ts";
+import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
 const EXPORT_CUTOFF = "2026-10-27T03:17:00-07:00";
@@ -119,6 +124,10 @@ const USAGE = `usage:
   bun run hr board [--build-only] [--port N]
       Builds ${BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
       127.0.0.1. Needs a current ${GROUP_PATH}.
+  bun run hr pages [--from-html FILE --url URL --access public|authenticated]
+      Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
+      flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
+      --from-html builds a test fixture snapshot from saved HTML into ${PAGE_FIXTURES_DIR} (never canon).
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -131,7 +140,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board"];
+const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -146,6 +155,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "preview") return receiptPreview(rest);
   if (cmd === "group") return group(rest);
   if (cmd === "board") return board(rest);
+  if (cmd === "pages") return pages(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -599,6 +609,37 @@ async function board(args: string[]): Promise<number> {
   });
   console.log(`board: http://127.0.0.1:${server.port}/  (local only; Ctrl-C to stop)`);
   return await new Promise<number>(() => {});
+}
+
+async function pages(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "from-html": { type: "string" }, url: { type: "string" }, access: { type: "string" } } });
+  if (values["from-html"]) {
+    if (!values.url || !PAGE_ACCESS.includes(values.access as PageAccess)) {
+      console.error(`--from-html needs --url URL and --access ${PAGE_ACCESS.join("|")}`);
+      return 2;
+    }
+    const { parseHTML } = await import("linkedom");
+    const { document } = parseHTML(readFileSync(fromCaller(values["from-html"]), "utf8"));
+    const snap = snapshotPage(document as unknown as Document, { url: values.url, captured_at: new Date().toISOString(), access: values.access as PageAccess, captured_by: "fixture" });
+    const out = `${PAGE_FIXTURES_DIR}/${pageFileName(values.url)}`;
+    writeJsonFile(out, snap);
+    console.log(`wrote ${out}: ${snap.blocks.length} blocks, ${snap.links.length} links${snap.no_text ? ` (${snap.no_text})` : ""}`);
+    return 0;
+  }
+  const event = readEvent();
+  const wanted = [...(event.canon_pages ?? []), ...(event.schedule_pages ?? [])];
+  const { pages: loaded, errors } = loadPages(PAGES_DIR);
+  for (const e of errors) console.error(`unreadable: ${e}`);
+  const { latest, missing } = pageCoverage(loaded, wanted);
+  if (!loaded.length) console.log(`No page snapshots in ${PAGES_DIR} yet. Use the extension's "Capture this page".`);
+  for (const p of latest.values()) {
+    const s = p.snapshot;
+    const access = s.access ?? "no flag (treated as authenticated)";
+    console.log(`${s.url}\n  ${s.captured_at}  ${access}  ${s.blocks.length} blocks  hash ${p.hash}${s.no_text ? `  ${s.no_text}` : ""}`);
+  }
+  if (!wanted.length) console.log(`${EVENT_PATH} lists no canon_pages or schedule_pages.`);
+  for (const u of missing) console.log(`missing: ${u} (in ${EVENT_PATH}, no snapshot yet)`);
+  return errors.length ? 1 : 0;
 }
 
 function receiptPreview(args: string[]): number {
