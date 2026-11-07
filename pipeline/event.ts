@@ -56,6 +56,8 @@ export const FIT_CACHE_PATH = "data/fit_cache.json";
 export const GAPS_CACHE_PATH = "data/gaps_cache.json";
 export const SHIP_GAPS_PATH = "data/ship_gaps.json";
 export const PREFILL_CACHE_PATH = "data/prefill_cache.json";
+/** Sponsor products and their names, packages, hosts and code terms (P1b's sponsor-product pass). */
+export const PRODUCTS_PATH = "config/products.json";
 /** P1b's eval: the winners' GitHub links, read from their public Devpost project pages ({slug: url}). */
 export const PREFILL_REPOS_PATH = "fixtures/fit/repos13.json";
 export const PREFILL_EVAL_PATH = "review/prefill_eval.json";

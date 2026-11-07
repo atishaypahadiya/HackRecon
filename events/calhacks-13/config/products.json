@@ -1,0 +1,503 @@
+{
+ "_about": "Sponsor products on the event page (data/canon.json tracks) and how a repo or a Built With list names them. Used by P1b's sponsor-product pass and its Built With scoring (user 2026-11-06). names: how people and Built With lists say it. packages: npm, PyPI and crates.io names, checked to exist on their registry on 2026-11-06 (a trailing * is a prefix). hosts: API hostnames. code_terms: words searched in code and config lines; searched only in code files, and left out where the word has other meanings or names a dev tool more often than the API (Claude, Gemini, Azure, Jira, Timescale, Convex, Snowflake, Llama, Droid, Moss, Mana); those are found by package and host only. Mana: no package, host or distinctive term known, so a repo can't be matched to it.",
+ "products": [
+  {
+   "product": "Claude API",
+   "sponsor": "Anthropic",
+   "names": [
+    "Claude API",
+    "Claude",
+    "Anthropic",
+    "Anthropic API",
+    "Claude Agent SDK"
+   ],
+   "packages": [
+    "anthropic",
+    "@anthropic-ai/sdk",
+    "@anthropic-ai/claude-agent-sdk",
+    "claude-agent-sdk",
+    "@ai-sdk/anthropic",
+    "langchain-anthropic"
+   ],
+   "hosts": [
+    "api.anthropic.com"
+   ],
+   "code_terms": [
+    "anthropic"
+   ]
+  },
+  {
+   "product": "Gemini API",
+   "sponsor": "MLH",
+   "names": [
+    "Gemini API",
+    "Gemini",
+    "Google Gemini"
+   ],
+   "packages": [
+    "google-genai",
+    "google-generativeai",
+    "@google/genai",
+    "@google/generative-ai",
+    "@ai-sdk/google"
+   ],
+   "hosts": [
+    "generativelanguage.googleapis.com"
+   ],
+   "code_terms": []
+  },
+  {
+   "product": "Solana",
+   "sponsor": "MLH",
+   "names": [
+    "Solana",
+    "Anchor"
+   ],
+   "packages": [
+    "@solana/web3.js",
+    "@solana/kit",
+    "@coral-xyz/anchor",
+    "solana",
+    "solders",
+    "anchorpy",
+    "anchor-lang",
+    "solana-sdk",
+    "solana-program"
+   ],
+   "hosts": [
+    "solana.com"
+   ],
+   "code_terms": [
+    "solana"
+   ]
+  },
+  {
+   "product": "Tiger Data",
+   "sponsor": "MLH",
+   "names": [
+    "Tiger Data",
+    "TigerData",
+    "Timescale",
+    "TimescaleDB"
+   ],
+   "packages": [
+    "timescale-vector"
+   ],
+   "hosts": [
+    "timescale.com",
+    "tsdb.cloud.timescale.com"
+   ],
+   "code_terms": [
+    "timescaledb",
+    "tigerdata"
+   ]
+  },
+  {
+   "product": "Vultr",
+   "sponsor": "MLH",
+   "names": [
+    "Vultr"
+   ],
+   "packages": [
+    "vultr"
+   ],
+   "hosts": [
+    "api.vultr.com",
+    "vultrobjects.com"
+   ],
+   "code_terms": [
+    "vultr"
+   ]
+  },
+  {
+   "product": "Snowflake",
+   "sponsor": "MLH",
+   "names": [
+    "Snowflake",
+    "Snowflake API",
+    "Snowpark"
+   ],
+   "packages": [
+    "snowflake-sdk",
+    "snowflake-connector-python",
+    "snowflake-snowpark-python"
+   ],
+   "hosts": [
+    "snowflakecomputing.com"
+   ],
+   "code_terms": []
+  },
+  {
+   "product": "Fetch.ai",
+   "sponsor": "Fetch.ai",
+   "names": [
+    "Fetch.ai",
+    "Fetch",
+    "uAgents",
+    "Agentverse",
+    "ASI Alliance"
+   ],
+   "packages": [
+    "uagents",
+    "uagents-core",
+    "fetchai",
+    "cosmpy"
+   ],
+   "hosts": [
+    "agentverse.ai"
+   ],
+   "code_terms": [
+    "uagents",
+    "agentverse"
+   ]
+  },
+  {
+   "product": "ASI:One",
+   "sponsor": "Fetch.ai",
+   "names": [
+    "ASI:One",
+    "ASI One",
+    "ASI1"
+   ],
+   "packages": [],
+   "hosts": [
+    "asi1.ai"
+   ],
+   "code_terms": [
+    "asi1"
+   ]
+  },
+  {
+   "product": "Llama API",
+   "sponsor": "Meta",
+   "names": [
+    "Llama API",
+    "Llama",
+    "Meta Llama"
+   ],
+   "packages": [
+    "llama-api-client"
+   ],
+   "hosts": [
+    "api.llama.com"
+   ],
+   "code_terms": []
+  },
+  {
+   "product": "Factory Droid SDK",
+   "sponsor": "Factory",
+   "names": [
+    "Factory Droid SDK",
+    "Factory Droid",
+    "Droid SDK",
+    "Factory AI",
+    "Factory"
+   ],
+   "packages": [
+    "@factory/droid-sdk"
+   ],
+   "hosts": [],
+   "code_terms": []
+  },
+  {
+   "product": "Cartesia",
+   "sponsor": "Cartesia",
+   "names": [
+    "Cartesia"
+   ],
+   "packages": [
+    "cartesia",
+    "@cartesia/cartesia-js"
+   ],
+   "hosts": [
+    "api.cartesia.ai"
+   ],
+   "code_terms": [
+    "cartesia"
+   ]
+  },
+  {
+   "product": "Convex",
+   "sponsor": "Convex",
+   "names": [
+    "Convex"
+   ],
+   "packages": [
+    "convex"
+   ],
+   "hosts": [
+    "convex.cloud",
+    "convex.site"
+   ],
+   "code_terms": []
+  },
+  {
+   "product": "Apify",
+   "sponsor": "Apify",
+   "names": [
+    "Apify",
+    "Crawlee"
+   ],
+   "packages": [
+    "apify",
+    "apify-client",
+    "crawlee"
+   ],
+   "hosts": [
+    "api.apify.com"
+   ],
+   "code_terms": [
+    "apify"
+   ]
+  },
+  {
+   "product": "Bitdeer AI Model Studio",
+   "sponsor": "Bitdeer AI",
+   "names": [
+    "Bitdeer AI Model Studio",
+    "Bitdeer AI",
+    "Bitdeer"
+   ],
+   "packages": [],
+   "hosts": [],
+   "code_terms": [
+    "bitdeer"
+   ]
+  },
+  {
+   "product": "Elasticsearch",
+   "sponsor": "Elastic",
+   "names": [
+    "Elasticsearch",
+    "Elastic",
+    "Elastic Agent Builder",
+    "Elastic Cloud"
+   ],
+   "packages": [
+    "elasticsearch",
+    "@elastic/elasticsearch",
+    "elasticsearch-dsl"
+   ],
+   "hosts": [
+    "elastic-cloud.com"
+   ],
+   "code_terms": [
+    "elasticsearch"
+   ]
+  },
+  {
+   "product": "Nessie",
+   "sponsor": "Capital One",
+   "names": [
+    "Nessie",
+    "Nessie API",
+    "Capital One Nessie"
+   ],
+   "packages": [],
+   "hosts": [
+    "api.nessieisreal.com",
+    "nessieisreal.com"
+   ],
+   "code_terms": [
+    "nessieisreal"
+   ]
+  },
+  {
+   "product": "CRS API",
+   "sponsor": "CRS",
+   "names": [
+    "CRS API",
+    "CRS Credit API",
+    "CRS"
+   ],
+   "packages": [],
+   "hosts": [],
+   "code_terms": [
+    "crs credit"
+   ]
+  },
+  {
+   "product": "Moss",
+   "sponsor": "Moss",
+   "names": [
+    "Moss",
+    "InferEdge Moss"
+   ],
+   "packages": [
+    "@inferedge/moss",
+    "inferedge-moss"
+   ],
+   "hosts": [],
+   "code_terms": []
+  },
+  {
+   "product": "SpaceXSI",
+   "sponsor": "SpaceXSI",
+   "names": [
+    "SpaceXSI"
+   ],
+   "packages": [],
+   "hosts": [],
+   "code_terms": [
+    "spacexsi"
+   ]
+  },
+  {
+   "product": "x402",
+   "sponsor": "Coinbase",
+   "names": [
+    "x402"
+   ],
+   "packages": [
+    "x402",
+    "x402-fetch",
+    "x402-axios",
+    "x402-express",
+    "x402-next",
+    "x402-hono",
+    "@coinbase/x402"
+   ],
+   "hosts": [
+    "x402.org"
+   ],
+   "code_terms": [
+    "x402"
+   ]
+  },
+  {
+   "product": "Coinbase CDP",
+   "sponsor": "Coinbase",
+   "names": [
+    "Coinbase",
+    "Coinbase CDP",
+    "CDP",
+    "OnchainKit"
+   ],
+   "packages": [
+    "@coinbase/cdp-sdk",
+    "cdp-sdk",
+    "@coinbase/onchainkit"
+   ],
+   "hosts": [
+    "api.cdp.coinbase.com"
+   ],
+   "code_terms": [
+    "coinbase"
+   ]
+  },
+  {
+   "product": "Notability",
+   "sponsor": "Notability",
+   "names": [
+    "Notability"
+   ],
+   "packages": [],
+   "hosts": [],
+   "code_terms": [
+    "notability"
+   ]
+  },
+  {
+   "product": "SpacetimeDB",
+   "sponsor": "Spacetime",
+   "names": [
+    "SpacetimeDB",
+    "Spacetime"
+   ],
+   "packages": [
+    "spacetimedb",
+    "@clockworklabs/spacetimedb-sdk",
+    "spacetimedb-sdk"
+   ],
+   "hosts": [],
+   "code_terms": [
+    "spacetimedb"
+   ]
+  },
+  {
+   "product": "Mana",
+   "sponsor": "Mana",
+   "names": [
+    "Mana"
+   ],
+   "packages": [],
+   "hosts": [],
+   "code_terms": []
+  },
+  {
+   "product": "Bright Data",
+   "sponsor": "Bright Data",
+   "names": [
+    "Bright Data",
+    "BrightData"
+   ],
+   "packages": [
+    "brightdata-sdk",
+    "@brightdata/mcp"
+   ],
+   "hosts": [
+    "brightdata.com",
+    "brd.superproxy.io"
+   ],
+   "code_terms": [
+    "brightdata"
+   ]
+  },
+  {
+   "product": "Atlassian",
+   "sponsor": "Atlassian",
+   "names": [
+    "Atlassian",
+    "Jira",
+    "Confluence",
+    "Rovo"
+   ],
+   "packages": [
+    "atlassian-python-api",
+    "jira"
+   ],
+   "hosts": [
+    "atlassian.net"
+   ],
+   "code_terms": [
+    "atlassian"
+   ]
+  },
+  {
+   "product": "Figma",
+   "sponsor": "Figma",
+   "names": [
+    "Figma",
+    "Figma API",
+    "Figma Make"
+   ],
+   "packages": [
+    "@figma/plugin-typings",
+    "figma-api"
+   ],
+   "hosts": [
+    "api.figma.com"
+   ],
+   "code_terms": [
+    "figma"
+   ]
+  },
+  {
+   "product": "Azure",
+   "sponsor": "Microsoft",
+   "names": [
+    "Azure",
+    "Microsoft Azure",
+    "Azure OpenAI"
+   ],
+   "packages": [
+    "@azure/*",
+    "azure-*"
+   ],
+   "hosts": [
+    "azure.com"
+   ],
+   "code_terms": []
+  }
+ ]
+}

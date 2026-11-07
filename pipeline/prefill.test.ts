@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { checkPrefill, dependencies, fileHeader, prefillFacts, type PrefillFact } from "./prefill.ts";
-import { builtWithReport, pairedVsBaseline, scoreBuiltWith, tagMatch } from "./prefilleval.ts";
+import { checkPrefill, dependencies, fileHeader, prefillFacts, productHits, productOf, withProducts, type PrefillFact, type Product } from "./prefill.ts";
+import { builtWithReport, pairedDiffCI, pairedVsBaseline, scoreBuiltWith, tagMatch } from "./prefilleval.ts";
 
 const link = (p: string, n: number) => `https://github.com/o/r/blob/s/${p}#L${n}`;
 const repo = { url: "https://github.com/o/r", dir: "/nonexistent", sha: "s" };
@@ -104,5 +104,55 @@ describe("Prefill eval scoring", () => {
     expect(r.pairs).toBe(2);
     expect(r.not_in_baseline).toEqual(["z|T9"]);
     expect(r.paired.map((p) => [p.k, p.B.hits, p.C.hits, p.lost, p.gained])).toEqual([[3, 1, 1, 1, 1], [5, 2, 2, 0, 0]]);
+  });
+});
+
+const PRODUCTS: Product[] = [
+  { product: "Claude API", sponsor: "Anthropic", names: ["Claude API", "Claude", "Anthropic"], packages: ["anthropic", "@anthropic-ai/sdk"], hosts: ["api.anthropic.com"], code_terms: ["anthropic"] },
+  { product: "Fetch.ai", sponsor: "Fetch.ai", names: ["Fetch.ai", "uAgents"], packages: ["uagents"], hosts: ["agentverse.ai"], code_terms: ["uagents"] },
+  { product: "Elasticsearch", sponsor: "Elastic", names: ["Elasticsearch", "Elastic"], packages: ["@elastic/elasticsearch", "elasticsearch"], hosts: [], code_terms: ["elasticsearch"] },
+  { product: "Factory Droid SDK", sponsor: "Factory", names: ["Factory Droid SDK"], packages: ["@factory/droid-sdk"], hosts: [], code_terms: [] },
+  { product: "Vultr", sponsor: "MLH", names: ["Vultr"], packages: [], hosts: ["api.vultr.com"], code_terms: ["vultr"] },
+];
+
+describe("Sponsor-product pass", () => {
+  const texts = new Map([
+    ["agents/requirements.txt", "uagents==0.26.1\n"],
+    ["web/search.ts", 'import { Client } from "@elastic/elasticsearch";\n'],
+    ["api/llm.py", "import anthropic\nfrom . import util\n"],
+    ["api/other.py", '"""Data from Vultr\'s metadata."""\nfrom . import x\n'],
+    ["web/icons.ts", "import jira from './apps/jira.svg';\n"],
+    ["frontend/src/mock/booths.ts", 'const B = ["Vultr", "Elasticsearch"];\n'],
+    ["README.md", "We deploy on Vultr and use Factory Droid.\n"],
+    [".claude/settings.json", '{"note": "anthropic"}\n'],
+  ]);
+  test("dependency, import, host and term hits with file:line; README, mock data, tool settings and relative imports don't count", () => {
+    const hits = productHits(repo, texts, PRODUCTS);
+    expect(Object.fromEntries([...hits].map(([p, hs]) => [p, hs.map((h) => `${h.how} ${h.source}`)]))).toEqual({
+      "Claude API": ["import api/llm.py:1"],
+      "Fetch.ai": ["dependency agents/requirements.txt:1"],
+      Elasticsearch: ["import web/search.ts:1"],
+      Vultr: ["term api/other.py:1"],
+    });
+    expect(hits.get("Fetch.ai")![0]!.url).toBe("https://github.com/o/r/blob/s/agents/requirements.txt#L1");
+  });
+  test("found products the draft lacks are added with their lines and no used-for; ones it has are left alone", () => {
+    const draft = { description: { text: "x", sources: [] }, stack: [{ name: "Anthropic", used_for: "answer questions", sources: [] }] };
+    const w = withProducts(draft, productHits(repo, texts, PRODUCTS), PRODUCTS);
+    expect(w.added).toEqual(["Fetch.ai", "Elasticsearch", "Vultr"]);
+    expect(w.draft.stack.map((s) => [s.name, s.used_for, s.origin ?? "model"])).toEqual([["Anthropic", "answer questions", "model"], ["Fetch.ai", null, "sponsor_pass"], ["Elasticsearch", null, "sponsor_pass"], ["Vultr", null, "sponsor_pass"]]);
+  });
+  test("the alias table maps Built With tags and drafted names to one product", () => {
+    expect(["anthropic", "Claude", "@anthropic-ai/sdk", "uagents", "elastic", "react"].map((n) => productOf(n, PRODUCTS))).toEqual(["Claude API", "Claude API", "Claude API", "Fetch.ai", "Elasticsearch", null]);
+    const s = scoreBuiltWith("p", ["anthropic", "fetch.ai", "react"], ["Claude API", "uAgents", "Python"], PRODUCTS);
+    expect([s.alias, s.missed, s.extra]).toEqual([["anthropic", "fetch.ai"], ["react"], ["Python"]]);
+    expect(builtWithReport([s]).aliased.hits).toBe(2);
+  });
+  test("the paired 95% interval (Agresti–Min) for C − B", () => {
+    const r = pairedDiffCI(6, 3, 81);
+    expect(r.est).toBeCloseTo((100 * -3) / 81, 6);
+    expect(r.lo).toBeCloseTo(-11.04, 1);
+    expect(r.hi).toBeCloseTo(3.81, 1);
+    expect(pairedDiffCI(0, 0, 50).lo).toBeLessThan(0);
   });
 });

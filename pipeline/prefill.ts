@@ -235,7 +235,8 @@ export interface Source {
 }
 export interface PrefillDraft {
   description: { text: string; sources: Source[] };
-  stack: { name: string; used_for: string | null; sources: Source[] }[];
+  /** origin "sponsor_pass": added by the sponsor-product pass in code, not drafted by the model. */
+  stack: { name: string; used_for: string | null; sources: Source[]; origin?: "sponsor_pass" }[];
 }
 
 interface Cite {
@@ -281,16 +282,128 @@ export function checkPrefill(parsed: unknown, facts: PrefillFact[]): PrefillDraf
   return { description: { text, sources: dsrc }, stack };
 }
 
+// Sponsor-product pass (user 2026-11-06) ----------------------------------------------------------------------
+// The model's draft skips sponsor products often enough to cost fit recall (elasticsearch, fetch.ai, vultr in the
+// first eval run). So, in code and with no model call, each sponsor product in the event's alias table
+// (config/products.json) is searched in the repo; a product found that the draft lacks is added with its lines and
+// no used-for. Evidence is code, not claims: dependency lines, import lines, API hosts, and the product's
+// distinctive terms in code and config files. README and docs lines don't count.
+
+export interface Product {
+  product: string;
+  sponsor: string;
+  /** How people and Built With lists name it ("Claude API", "Anthropic"). */
+  names: string[];
+  /** npm / PyPI / crates.io names; a trailing "*" is a prefix ("@azure/*"). */
+  packages: string[];
+  hosts: string[];
+  /** Searched as whole words in code and config lines; empty where the word has other meanings. */
+  code_terms: string[];
+}
+
+export interface ProductHit extends Source {
+  how: "dependency" | "import" | "host" | "term";
+}
+
+const HITS_PER_PRODUCT = 3;
+const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|uv\.lock|poetry\.lock|Cargo\.lock|Gemfile\.lock|go\.sum)$/;
+/** Code and config files, minus dependencies, tests, lockfiles and tool settings (.claude/, .github/, editors). */
+const SCANNED = (p: string) => (CODE.test(p) || /\.(json|ya?ml|toml)$/.test(p) || /(^|\/)Dockerfile$/.test(p)) && !NOT_CODE.test(p) && !LOCKFILE.test(p) && !/\.(test|spec)\.|_test\.|(^|\/)test_/.test(p) && !/(^|\/)\.(claude|github|vscode|cursor|idea|devcontainer)\//.test(p);
+const pyNorm = (n: string) => n.toLowerCase().replace(/[-_.]+/g, "-");
+const pkgMatches = (pkg: string, dep: string) => (pkg.endsWith("*") ? dep.toLowerCase().startsWith(pkg.slice(0, -1).toLowerCase()) : pyNorm(pkg) === pyNorm(dep));
+const words = (t: string) => new RegExp(`(?<![A-Za-z0-9_])${t.split(/\s+/).map(esc).join("\\s+")}(?![A-Za-z0-9_])`, "i");
+
+/** Each product's hits in the repo, strongest first: dependency lines, import lines, hosts, then terms. */
+export function productHits(repo: Repo, texts: Map<string, string>, products: Product[]): Map<string, ProductHit[]> {
+  const link = (path: string, line: number) => `${repo.url}/blob/${repo.sha}/${path}#L${line}`;
+  const deps = dependencies(texts, link);
+  const scanned = [...texts.entries()].filter(([p]) => SCANNED(p)).map(([p, t]) => [p, t.split("\n")] as const);
+  const out = new Map<string, ProductHit[]>();
+  for (const pr of products) {
+    const hits: ProductHit[] = [];
+    const seen = new Set<string>();
+    const add = (how: ProductHit["how"], source: string, quote: string, url: string | null) => {
+      if (hits.length >= HITS_PER_PRODUCT || seen.has(source)) return;
+      seen.add(source);
+      hits.push({ how, source, quote: cut(quote.trim()), url });
+    };
+    for (const d of deps) if (pr.packages.some((pkg) => pkgMatches(pkg, d.name))) add("dependency", d.fact.source, d.fact.text, d.fact.url);
+    // Real import syntax only: JS/TS module strings, Python import statements at the start of a line, Rust `use`.
+    // A docstring saying "from Cartesia" is not an import.
+    const alt = (forms: (pkg: string) => string[]) => pr.packages.flatMap((pkg) => (pkg.endsWith("*") ? [`${esc(pkg.slice(0, -1))}[\\w./-]*`] : forms(pkg))).join("|");
+    // A pattern is built only from a non-empty set of names: an empty alternation would match every import.
+    const js = alt((k) => [esc(k)]);
+    const mod = alt((k) => (k.startsWith("@") ? [] : [esc(k.replace(/-/g, "_"))]));
+    // Each form only in its own language's files: `import jira from "./jira.svg"` in TypeScript is not Python.
+    const re = (src: string | false) => (src ? new RegExp(src) : null);
+    const imports: [RegExp, RegExp | null][] = [
+      [/\.(m?[jt]sx?|vue|svelte)$/, re(js && `(?:\\bfrom\\s+|\\bimport\\s+|\\brequire\\(\\s*|\\bimport\\(\\s*)['"](?:${js})(?:['"/])`)],
+      [/\.py$/, re(mod && `^\\s*(?:from|import)\\s+(?:${mod})(?:[.\\s,]|$)`)],
+      [/\.rs$/, re(mod && `^\\s*(?:pub\\s+)?use\\s+(?:${mod})::`)],
+    ];
+    const importIn = (path: string) => imports.find(([ext]) => ext.test(path))?.[1] ?? null;
+    const hostRe = pr.hosts.length ? new RegExp(pr.hosts.map(esc).join("|"), "i") : null;
+    const termRes = pr.code_terms.map(words);
+    for (const [how, test] of [
+      ["import", (l: string, path: string) => !!importIn(path)?.test(l)],
+      ["host", (l: string) => !!hostRe?.test(l)],
+      ["term", (l: string) => termRes.some((t) => t.test(l))],
+    ] as const) {
+      for (const [path, lines] of scanned) {
+        if (hits.length >= HITS_PER_PRODUCT) break;
+        // Terms count only in code files: a JSON or YAML file naming a product is often data (prize lists, merch).
+        // Nor in mock, seed or sample data, which lists names without using them.
+        if (how === "term" && (!CODE.test(path) || /(^|\/)(mocks?|__mocks__|seeds?|samples?|data|fixtures?)\/|(^|\/)[^/]*fixture[^/]*$/i.test(path))) continue;
+        const i = lines.findIndex((l) => l.length < 2000 && test(l, path) && !SECRET.test(l));
+        if (i >= 0) add(how, `${path}:${i + 1}`, lines[i]!, link(path, i + 1));
+      }
+    }
+    if (hits.length) out.set(pr.product, hits);
+  }
+  return out;
+}
+
+const compactName = (s: string) => s.toLowerCase().replace(/[^a-z0-9+#]+/g, "");
+/** The product a name stands for ("anthropic" → Claude API), by its names and packages, case and punctuation
+ *  dropped; null when it names none. */
+export function productOf(name: string, products: Product[]): string | null {
+  const c = compactName(name);
+  if (!c) return null;
+  return products.find((p) => [...p.names, ...p.packages.filter((k) => !k.endsWith("*"))].some((n) => compactName(n) === c))?.product ?? null;
+}
+
+/** The draft plus every sponsor product found in the repo that it lacks, each with its lines and no used-for. */
+export function withProducts(draft: PrefillDraft, hits: Map<string, ProductHit[]>, products: Product[]): { draft: PrefillDraft; added: string[] } {
+  const have = new Set(draft.stack.map((s) => productOf(s.name, products)).filter(Boolean));
+  const added: string[] = [];
+  const stack = [...draft.stack];
+  for (const [product, hs] of hits) {
+    if (have.has(product)) continue;
+    added.push(product);
+    stack.push({ name: product, used_for: null, sources: hs.map(({ source, quote, url }) => ({ source, quote, url })), origin: "sponsor_pass" });
+  }
+  return { draft: { ...draft, stack }, added };
+}
+
 export type PrefillCache = Record<string, { draft: PrefillDraft; usage: Usage; calls: number }>;
 
 export interface PrefillResult {
   draft: PrefillDraft;
+  /** Sponsor products the pass added (withProducts). */
+  added: string[];
   facts: number;
   from: "cache" | "model";
   usage: Usage | null;
 }
 
-export async function prefillDraft(client: Anthropic | null, repo: Repo, texts: Map<string, string>, cache: PrefillCache): Promise<PrefillResult | { error: string }> {
+export async function prefillDraft(client: Anthropic | null, repo: Repo, texts: Map<string, string>, cache: PrefillCache, products: Product[] = []): Promise<PrefillResult | { error: string }> {
+  const r = await modelDraft(client, repo, texts, cache);
+  if ("error" in r) return r;
+  const w = withProducts(r.draft, productHits(repo, texts, products), products);
+  return { ...r, draft: w.draft, added: w.added };
+}
+
+async function modelDraft(client: Anthropic | null, repo: Repo, texts: Map<string, string>, cache: PrefillCache): Promise<Omit<PrefillResult, "added"> | { error: string }> {
   const facts = prefillFacts(repo, texts);
   if (!facts.length) return { error: "the repo has no README, dependency file or code to draft from" };
   const request = prefillRequest(facts);

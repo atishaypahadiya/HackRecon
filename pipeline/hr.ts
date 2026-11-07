@@ -74,6 +74,7 @@ import {
   GAPS_CACHE_PATH,
   SHIP_GAPS_PATH,
   PREFILL_CACHE_PATH,
+  PRODUCTS_PATH,
   PREFILL_EVAL_PATH,
   PREFILL_REPOS_PATH,
   FIT_BASELINE_PATH,
@@ -129,7 +130,7 @@ import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODE
 import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, repoFacts, repoTexts } from "./repo.ts";
-import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft } from "./prefill.ts";
+import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
 import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
@@ -1365,13 +1366,15 @@ async function shipCli(args: string[]): Promise<number> {
   return 0;
 }
 
+const readProducts = () => readJsonFile<{ products: Product[] }>(PRODUCTS_PATH, { products: [] }).products;
+
 function printDraft(d: PrefillDraft, out: (line: string) => void) {
   const src = (s: PrefillDraft["description"]["sources"]) => s.map((x) => `      ${x.source}: "${x.quote}"${x.url ? `  ${x.url}` : ""}`);
   out(`Description (draft)\n  ${d.description.text}`);
   for (const l of src(d.description.sources)) out(l);
   out(`\nStack (drafts; confirm each before it's saved)`);
   for (const it of d.stack) {
-    out(`  ${it.name}${it.used_for ? `: ${it.used_for}` : "   (no used-for: no README or code line says what it does)"}`);
+    out(`  ${it.name}${it.used_for ? `: ${it.used_for}` : "   (no used-for: no README or code line says what it does)"}${it.origin === "sponsor_pass" ? "   [sponsor product found in the code]" : ""}`);
     for (const l of src(it.sources)) out(l);
   }
 }
@@ -1389,7 +1392,7 @@ async function prefillCli(args: string[]): Promise<number> {
   }
   const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
   const t0 = Date.now();
-  const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache);
+  const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache, readProducts());
   if ("error" in r) {
     console.error(`couldn't draft: ${r.error}`);
     return 1;
@@ -1412,6 +1415,9 @@ async function prefillEval(args: string[]): Promise<number> {
   }
   let items = set.items.filter((it) => repos[it.slug]);
   if (values.limit) items = items.slice(0, Number(values.limit));
+  const products = readProducts();
+  // C: the model's draft alone. C+: with the sponsor-product pass (user 2026-11-06).
+  const stackOf = (d: PrefillDraft, run: "C" | "C+") => d.stack.filter((s) => run === "C+" || s.origin !== "sponsor_pass").map((s) => s.name);
   const event = readEvent();
   const entities = readJsonFile<CanonPage[]>(baseline.canon, []).flatMap((p) => p.entities);
   const cards = trackCards(entities, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
@@ -1431,6 +1437,17 @@ async function prefillEval(args: string[]): Promise<number> {
   const sizes = prepared.map((p) => prefillRequest(prefillFacts(p.repo, p.texts)).length);
   const cachedDrafts = prepared.filter((p) => pcache[prefillHashOf(p)]).length;
   console.log(`${prepared.length} repos read; prefill request ${Math.min(...sizes)}–${Math.max(...sizes)} chars (mean ${Math.round(sizes.reduce((a, b) => a + b, 0) / Math.max(1, sizes.length))}); ${cachedDrafts} drafts cached`);
+  {
+    let fitTodo = 0;
+    let added = 0;
+    for (const p of prepared) {
+      const r = await prefillDraft(null, p.repo, p.texts, pcache, products);
+      if ("error" in r) continue;
+      added += r.added.length;
+      for (const run of ["C", "C+"] as const) if (!fcache[fitHash(system, fitRequest(p.it.description, stackOf(r.draft, run)))]) fitTodo++;
+    }
+    console.log(`sponsor-product pass: ${added} products added across the cached drafts; ${fitTodo} fit rankings not cached`);
+  }
   if (values["dry-run"]) {
     console.log("dry run: no API call");
     return 0;
@@ -1445,7 +1462,7 @@ async function prefillEval(args: string[]): Promise<number> {
   const worker = async () => {
     while (next < prepared.length) {
       const p = prepared[next++]!;
-      const r = await prefillDraft(client, p.repo, p.texts, pcache);
+      const r = await prefillDraft(client, p.repo, p.texts, pcache, products);
       if ("error" in r) {
         failed.push(`prefill ${p.it.slug}: ${r.error}`);
         continue;
@@ -1455,14 +1472,16 @@ async function prefillEval(args: string[]): Promise<number> {
         calls++;
       }
       drafts.set(p.it.slug, r.draft);
-      const request = fitRequest(p.it.description, r.draft.stack.map((s) => s.name));
+      for (const stack of new Set([JSON.stringify(stackOf(r.draft, "C")), JSON.stringify(stackOf(r.draft, "C+"))])) {
+      const request = fitRequest(p.it.description, JSON.parse(stack));
       const hash = fitHash(system, request);
       if (!fcache[hash]) {
         const f = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request, check: (x) => checkFit(x, cards) });
         usage = sumUsage([usage, f.usage]);
         calls += f.calls;
-        if ("error" in f) failed.push(`fit C ${p.it.slug}: ${f.error}`);
+        if ("error" in f) failed.push(`fit ${p.it.slug}: ${f.error}`);
         else fcache[hash] = { ranked: f.value, usage: f.usage, calls: f.calls };
+      }
       }
     }
   };
@@ -1471,31 +1490,39 @@ async function prefillEval(args: string[]): Promise<number> {
   writeJsonFile(FIT_CACHE_PATH, fcache);
   console.log(formatUsage(calls, usage, FIT_MODEL));
   for (const f of failed) console.error(`failed: ${f}`);
-  // (a) Built With recall
-  const scores = prepared.filter((p) => drafts.has(p.it.slug)).map((p) => scoreBuiltWith(p.it.slug, p.it.built_with ?? [], drafts.get(p.it.slug)!.stack.map((s) => s.name)));
-  const bw = builtWithReport(scores);
-  console.log(`\n(a) Built With recall from the drafted stack, ${bw.projects} projects with a Built With list, ${bw.tags} tags:`);
-  console.log(`  strict (same name once case and punctuation are dropped): ${fmt(bw.strict)}`);
-  console.log(`  loose (also one name's words inside the other's, e.g. "claude" in "Claude API"): ${fmt(bw.loose)}; per-project mean ${bw.mean_project_loose.toFixed(1)}%`);
-  // (b) Fit with the drafted stack (run C), paired against the baseline's B on the same pairs
-  const byName = new Map(cards.map((c) => [c.name, c]));
-  const C = new Map<string, { C3: boolean; C5: boolean }>();
-  for (const p of prepared) {
-    const d = drafts.get(p.it.slug);
-    const ranked = d ? fcache[fitHash(system, fitRequest(p.it.description, d.stack.map((s) => s.name)))]?.ranked : undefined;
-    for (const prize of p.it.won) {
-      const card = byName.get(prize);
-      if (!card) continue;
-      const ids = (ranked ?? []).map((r) => r.track_id);
-      C.set(`${p.it.slug}|${prize}`, { C3: ids.slice(0, 3).includes(card.id), C5: ids.slice(0, FIT_TOP).includes(card.id) });
-    }
+  // (a) Built With recall, for the model's draft alone (C) and with the sponsor-product pass (C+)
+  const done = prepared.filter((p) => drafts.has(p.it.slug));
+  const bwOf = (run: "C" | "C+") => done.map((p) => scoreBuiltWith(p.it.slug, p.it.built_with ?? [], stackOf(drafts.get(p.it.slug)!, run), products));
+  const scores = { C: bwOf("C"), "C+": bwOf("C+") };
+  const added = Object.fromEntries(done.map((p) => [p.it.slug, drafts.get(p.it.slug)!.stack.filter((x) => x.origin === "sponsor_pass").map((x) => ({ name: x.name, sources: x.sources }))]).filter(([, a]) => (a as unknown[]).length));
+  const bw = { C: builtWithReport(scores.C), "C+": builtWithReport(scores["C+"]) };
+  console.log(`\n(a) Built With recall, ${bw.C.projects} projects with a Built With list, ${bw.C.tags} tags. Sponsor-product pass: ${Object.values(added).flat().length} products added to ${Object.keys(added).length} projects.`);
+  for (const run of ["C", "C+"] as const) {
+    const r = bw[run];
+    console.log(`  ${run === "C" ? "model draft (C)        " : "with sponsor pass (C+) "}strict ${fmt(r.strict)}, loose ${fmt(r.loose)}, loose + alias table ${fmt(r.aliased)}`);
   }
-  const paired = pairedVsBaseline(baseline.pair_hits, C);
-  console.log(`\n(b) Fit with the drafted stack in place of Built With (run C), ${paired.pairs} won sponsor-track pairs of ${baseline.pair_hits.length} (projects with a readable repo), paired with the baseline's run B on the same pairs:`);
-  for (const r of paired.paired) console.log(`  ${formatPaired(r)}`);
+  // (b) Fit with each drafted stack in place of Built With, paired with the baseline's run B on the same pairs
+  const byName = new Map(cards.map((c) => [c.name, c]));
+  const hitsOf = (run: "C" | "C+") => {
+    const m = new Map<string, { C3: boolean; C5: boolean }>();
+    for (const p of prepared) {
+      const d = drafts.get(p.it.slug);
+      const ranked = d ? fcache[fitHash(system, fitRequest(p.it.description, stackOf(d, run)))]?.ranked : undefined;
+      for (const prize of p.it.won) {
+        const card = byName.get(prize);
+        if (!card) continue;
+        const ids = (ranked ?? []).map((r) => r.track_id);
+        m.set(`${p.it.slug}|${prize}`, { C3: ids.slice(0, 3).includes(card.id), C5: ids.slice(0, FIT_TOP).includes(card.id) });
+      }
+    }
+    return m;
+  };
+  const fit = { C: pairedVsBaseline(baseline.pair_hits, hitsOf("C")), "C+": pairedVsBaseline(baseline.pair_hits, hitsOf("C+")) };
+  console.log(`\n(b) Fit with the drafted stack in place of Built With, ${fit.C.pairs} won sponsor-track pairs of ${baseline.pair_hits.length} (projects with a readable repo), paired with the baseline's run B on the same pairs (95% CI: Agresti–Min paired):`);
+  for (const run of ["C", "C+"] as const) for (const r of fit[run].paired) console.log(`  ${formatPaired(r, run)}`);
   console.log(`  whole baseline for reference: B recall@3 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B3).length, n: baseline.pair_hits.length })}, recall@5 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B5).length, n: baseline.pair_hits.length })}`);
-  if (paired.not_in_baseline.length) console.log(`  not in the baseline (skipped): ${paired.not_in_baseline.join(", ")}`);
-  writeJsonFile(PREFILL_EVAL_PATH, { built_with: bw, scores, fit: paired, failed, unreadable, usage, calls, model: FIT_MODEL, written_at: new Date().toISOString(), limit: values.limit ?? null });
+  if (fit.C.not_in_baseline.length) console.log(`  not in the baseline (skipped): ${fit.C.not_in_baseline.join(", ")}`);
+  writeJsonFile(PREFILL_EVAL_PATH, { built_with: bw, scores, added, fit, failed, unreadable, usage, calls, model: FIT_MODEL, written_at: new Date().toISOString(), limit: values.limit ?? null });
   console.log(`\nwrote ${PREFILL_EVAL_PATH}`);
   return failed.length ? 1 : 0;
 
