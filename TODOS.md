@@ -18,9 +18,9 @@
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
 
-### Background sync (user 2026-11-07): needs a decision
+### Background API pull: the live check (2026-11-07)
 
-Asked: only posts since the last sync, no mark-read, on a timer, no visible-window requirement. The extension reads the DOM of the user's own Slack tab and makes no Slack API calls, so: a timer can start a Sync (`chrome.alarms`), but the tab must render (Chrome throttles hidden tabs, item 1 below); opening a channel to read it marks it read. A since-last-sync stop (per channel: the newest top-level ts captured; per thread: the latest reply shown) is buildable offline but can't be verified while capture is frozen. Options were put to the user.
+Built and verified offline (design doc, Zero setup). Open: one live pull on Cal Hacks, then `hr sync-ingest` and `hr compare-api`, which should report 54/54 channels and 494/494 locked replies. That run also confirms the service worker's requests carry the session cookie. An old thread (past the 48 h lookback) that gets a new reply isn't re-read (D17). After a browser restart the session is gone until the next Sync from the popup; the popup shows the last pull's status.
 
 ### Zero setup leftovers (2026-11-07)
 

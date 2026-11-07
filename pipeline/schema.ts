@@ -101,7 +101,8 @@ export interface Run {
   source: "extension";
 }
 
-export const STOP_REASONS = ["channel_start", "no_new_keys", "user_stopped", "max_steps"] as const;
+/** api_end: the API pull (user 2026-11-07) read to the last page Slack returned. */
+export const STOP_REASONS = ["channel_start", "no_new_keys", "user_stopped", "max_steps", "api_end"] as const;
 export type StopReason = (typeof STOP_REASONS)[number];
 
 /** What the extension downloads as `<channel_id>.json`, one per channel. */
@@ -131,7 +132,7 @@ export interface CaptureFile {
 
 /** Step 1 (D5, D17): thread replies, downloaded as `<channel_id>.threads.json` beside the channel's capture. One
  *  entry per parent whose "N replies" the extension opened, or tried to; the channel capture itself is unchanged. */
-export const THREAD_STOP_REASONS = ["parent_seen", "no_new_keys", "user_stopped", "max_steps", "not_opened"] as const;
+export const THREAD_STOP_REASONS = ["parent_seen", "no_new_keys", "user_stopped", "max_steps", "not_opened", "api_end"] as const;
 export type ThreadStopReason = (typeof THREAD_STOP_REASONS)[number];
 
 export interface ThreadRun {
