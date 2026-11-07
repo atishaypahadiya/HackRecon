@@ -1762,6 +1762,17 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
       - Model draft (C): @3 −2.5 points (−9.5 to +4.7); @5 −3.7 (−11.0 to +3.8).
       - With the pass (C+): @3 58.0%, −2.5 (−8.6 to +3.8); @5 71.6%, −2.5 (−9.5 to +4.7).
       - The pass recovers one @5 pair. Every interval contains 0. At n = 81 the data can't rule out a loss of up to about 10 points against the team's own Built With list, or a small gain.
+  - **Board, confirm each draft (user 2026-11-06):**
+    - Under the repo link, "Draft from this repo" calls `POST /plan/prefill` (same Origin and token guard; the draft is cached per request, so a repeat costs nothing). It lists one row per draft: the description, then each stack item.
+    - Each row shows the draft, then its source lines: the path:line links to GitHub at the commit, and the quote follows.
+    - A stack item the sponsor pass found says "Found in the code; no line says what it does."
+    - "Use" fills that one draft into the form. The description replaces the text. A stack item fills the row with its name, keeping a use the user typed, or takes a blank row or a new one. "Skip" drops it.
+    - Nothing is stored until "Make my plan", as for anything typed.
+    - The logic is `board/prefill.js`, inlined by `hr board` because the CSP allows inline scripts only. Its test (`pipeline/prefill-board.test.ts`, linkedom) checks:
+      - nothing reaches the input before Use, and each click hands over exactly one draft;
+      - links that aren't GitHub show as text, and draft text is escaped;
+      - the module never touches storage, and the page saves the input only on submit.
+    - Checked in the headless browser on Hindsight at 1440 and 390: 17 drafts, focus moves to the list, storage is empty before and after Use, and only the used item is saved on submit. No console errors, no horizontal scroll.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
