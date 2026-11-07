@@ -452,6 +452,12 @@ Total: about 10–14 solo days [estimated, no basis beyond v1's pace]. Steps 1 a
 - **Slack DOM drift.** All selectors stay in one file, fixture-tested, as in v1.
 - **Override precision is the safety-critical number.** A wrong "deadline moved" is worse than a missed one, because the user trusts the board. Hence the gate at 0.95, both values always shown, and the source one click away.
 - **Workspace access** may be revoked at any time. Capture Cal Hacks threads first, before anything else in step 1 (TODOS already says this for the 29 stretch channels).
+  - **What the export already holds (checked 2026-11-06, `~/projects/hackrecon-data/calhacks`, the extracted `calhacks.zip`; the folder matches the zip except `__uploads/`, 247 attached files).** The content at risk is already safe:
+    - **Thread replies in the locked 25:** 494 replies by `thread_ts` (520 with the 26 sent-to-channel copies v1 already captures). This is the recall baseline itself.
+    - **The 29 stretch channels** (the 27 `spons-*` channels outside the locked 25, plus `partner-asus` and `partner-redbull`): all present, with 753 top-level messages (170 real posts, subtype null; the rest are joins and other system rows) and 91 thread replies.
+    - **Users and profiles:** `users.json` has 2,900 users (52 admins or owners, 9 deleted, 15 bots). Of the people who post in the 54 channels, 663 of 665 have an entry (475 of 477 in the locked 25, all 188 in the stretch 29). Profile titles are thin: 41 of 565 distinct posters have one, so a rep's role keeps coming from their posts, not their profile.
+  - **So what steps −1 and 1 protect while access lasts is the live extension test, not the content:** running the real extension on the real workspace and measuring it against the export (top-level keyed recall on the 29; thread recall ≥ 0.9 on the locked 25), plus the thread-pane DOM samples the selectors are tested on. Without access, thread recall is "unmeasured" (OV7) and v2 runs on the export's replies.
+  - **Order (user, 2026-11-06):** Slack access is still open, so capture goes first: the user runs step −1 while thread capture (step 1) is built, then runs it uncapped on the locked 25. P2 starts after that.
 
 ## Not in scope
 
