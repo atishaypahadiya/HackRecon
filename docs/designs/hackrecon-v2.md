@@ -1838,7 +1838,7 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
     - **Row:** the quote, then mono metadata: start time · sponsor · why · source ↗.
     - **None:** "No upcoming session from these sponsors before the submission deadline".
   - **P5 People:** reps for each likely track's sponsor, keyed by Slack user ID with person links (people.ts).
-    - **Who counts:** sponsor-side posters (`rolesById`) in that sponsor's channels, posted at or before now. Bots and replies-only threads are excluded.
+    - **Who counts:** sponsor-side posters (`rolesById`) in that sponsor's channels, posted at or before now. Bots and copies of thread replies also sent to the channel are excluded, as on the Claim board.
     - **Each rep shows:** the display name from their latest post, the number of accounts when more than one, the first post's time, its first line (verbatim) and its link, and the post count.
     - **Order:** sponsors in likely-track order; reps by first post.
     - **Layout:** People renders inside "Booths and reps", under that sponsor's questions. This replaces D2's separate People column: a rep and the question to ask them belong together, and a third column would repeat the questions. The band is now Sessions | Booths and reps, 1 : 2.
@@ -1846,6 +1846,18 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
     - **None:** "No rep of a targeted track has posted yet".
   - **Layout (D2, D7):** Credits is the second tile, Tracks 8 | Credits 4. Tablet: Tracks 12, Credits 12, band 12. Phone order: input, Tracks, band, Credits.
   - **Verify:** unit tests on each join (sponsor set, open and expired offers, a failed quote, the deadline cut, person links); Hindsight's output for each section, at a stated instant.
+  - **Built 2026-11-07** (`pipeline/planjoin.ts`; `planStream`'s `joins`; `hr plan --at`; the board's Credits tile, Sessions column and reps under Booths):
+    - **Tests:** joins (planjoin.test.ts) and the stream: P3–P5 come after gaps, one failing leaves the others standing, a failed ranking settles all six.
+    - **Board, checked in the headless browser:** at 1440 the layout is Tracks 8 | Credits 4, then Sessions | Booths and reps. At 390 the order is Tracks, the band, Credits, with no horizontal scroll. A credit row opens its drawer (why, the post, claim, links). No console errors.
+    - **Hindsight (`fixtures/dogfood/hindsight.json`), at Sat Oct 24 12:00 PM PT (`--at`, the first day of hacking; an instant chosen for the report):**
+      - **Joined sponsors:** Anthropic (stack: Claude API; likely track), Apify (stack; two likely tracks), Factory (stack: Factory Droid SDK; likely track), Figma (stack only; its track is possible).
+      - **Credits (3):** Anthropic "$50 Claude API credits", Apify "$200 Apify credits" (code APIFY_CAL_HACKS) and Figma "Free Figma Edu Access", none with a stated limit. Left out by the rules: Factory's "$20 free credits" (closed Fri 7:00 PM), and Apify's "extend coupon 3 months" (posted Sun). No quote failed.
+      - **Sessions (1), before "Devpost submission deadline extended" (Sun 9:30 AM):** Sat 1:00 PM, Anthropic, "Hey! A reminder that our Claude workshop, Building Multi-Agent Teams & Systems, is today from 1-2pm in the Theater…". Left out: Apify's workshop (11:00 AM, already started) and an Anthropic post from 1:08 PM (not yet posted at noon).
+      - **People:**
+        - Anthropic: Tyler Lacroix [Anthropic Researcher], 1 post, first "Yes all hackers will get $50 of Claude API credits".
+        - Factory: David GU [Factory], 4 posts by noon, first "Hi!".
+        - Apify: none. Apify's posters in #spons-apify have no sponsor tag, title or external badge in the capture, so A5's role signals don't mark them sponsor-side. The coupon post's author says "DM me", so this is a miss in the role signals, not an absence (TODOS).
+    - **At today's clock (Nov 7, after the event):** the same 3 credits (none states a limit), no sessions, and the same reps.
 - [ ] **P6** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P7** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
 - [ ] **P8** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
