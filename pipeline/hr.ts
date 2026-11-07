@@ -146,7 +146,7 @@ import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planT
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
-import type { Entity, PageSnapshot } from "./schema.ts";
+import type { Entity, Message, PageSnapshot } from "./schema.ts";
 import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parsePageSnapshot, parseThreadCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
@@ -2200,20 +2200,21 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
   const products = readProducts();
   const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
   const nowSec = nowMs / 1000;
+  // Every Plan quote comes from the board's rendering of a post (redacted plain text), never the raw capture.
+  const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
+  const rendered = new Map<string, string>();
+  const shown = (m: Message) => rendered.get(m.id) ?? (rendered.set(m.id, redact(plainText(m.text)).text), rendered.get(m.id)!);
   return {
     credits: (tracks) => {
       const board = readJsonFile<BoardData | null>(BOARD_DATA_PATH, null);
-      // The board's excerpts are redacted plain text, so each is checked against the same rendering of its posts.
-      const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-      const shown = new Map(messages.map((m) => [m.permalink, redact(plainText(m.text)).text]));
       const sp = set(tracks);
-      return { sponsors: sp, ...planCredits(board?.offers ?? [], sp, shown, nowSec) };
+      return { sponsors: sp, ...planCredits(board?.offers ?? [], sp, new Map(messages.map((m) => [m.permalink, shown(m)])), nowSec) };
     },
     sessions: (tracks) => {
       const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event).deadlines);
-      return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline) };
+      return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline, shown) };
     },
-    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec),
+    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec, shown),
   };
 }
 

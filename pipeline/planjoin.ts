@@ -1,7 +1,7 @@
 // Plan's Credits, Sessions and People (P3–P5, user 2026-11-07): deterministic joins, no model calls. Each joins on
 // the same sponsors: those the user's stack names, plus the likely tracks' sponsors. Every item carries a quote that
 // is checked against its source post here, or it isn't shown ("no suggestion without a verified source quote").
-import { plainText, type BoardOffer } from "./board.ts";
+import type { BoardOffer } from "./board.ts";
 import { productMentioned, type SponsorAliases } from "./fit.ts";
 import type { PlanInput, PlanTrack } from "./plan.ts";
 import type { PosterRole } from "./roles.ts";
@@ -91,9 +91,13 @@ export interface PlanSession {
   source_url: string;
 }
 
+/** A post's text as the board shows it: redacted plain text (the Claim board's rendering). Every quote on Plan is
+ *  taken from, and checked against, this, so no section shows a name the board redacts. */
+export type Shown = (m: Message) => string;
+
 /** P4: workshops, talks and office hours (classifier kind `workshop`) from these sponsors, starting after now and
- *  before the submission deadline, by time. One per sponsor and start; the quote is the post's first line. */
-export function planSessions(items: Item[], messages: Map<string, Message>, sponsors: JoinSponsor[], nowMs: number, deadline: SubmissionDeadline | null): PlanSession[] {
+ *  before the submission deadline, by time. One per sponsor and start; the quote is the post's first line, as shown. */
+export function planSessions(items: Item[], messages: Map<string, Message>, sponsors: JoinSponsor[], nowMs: number, deadline: SubmissionDeadline | null, shown: Shown): PlanSession[] {
   const why = new Map(sponsors.map((s) => [s.sponsor, s.why]));
   const end = deadline ? Date.parse(deadline.at) : Infinity;
   const seen = new Set<string>();
@@ -104,7 +108,7 @@ export function planSessions(items: Item[], messages: Map<string, Message>, spon
     .sort((a, b) => a.at - b.at || Number(a.m!.ts) - Number(b.m!.ts))
     .flatMap(({ i, at, m }) => {
       const key = `${i.sponsor}|${at}`;
-      const text = plainText(m!.text), quote = firstLine(text);
+      const text = shown(m!), quote = firstLine(text);
       if (seen.has(key) || !quoteHolds(quote, text)) return [];
       seen.add(key);
       return [{ sponsor: i.sponsor, why: why.get(i.sponsor)!, start: i.event_start_iso!, quote, source_url: m!.permalink }];
@@ -129,7 +133,7 @@ export interface PlanPeople {
 }
 
 /** P5: reps of each likely track's sponsor: sponsor-side posters in that sponsor's channels, by person, posted by now. */
-export function planPeople(messages: Message[], sponsors: JoinSponsor[], channels: Sponsors, role: (m: Message) => PosterRole, person: (id: string) => string, nowSec: number): PlanPeople[] {
+export function planPeople(messages: Message[], sponsors: JoinSponsor[], channels: Sponsors, role: (m: Message) => PosterRole, person: (id: string) => string, nowSec: number, shown: Shown): PlanPeople[] {
   return sponsors
     .filter((s) => s.why.some((w) => w.startsWith("likely track: ")))
     .map((s) => {
@@ -142,7 +146,7 @@ export function planPeople(messages: Message[], sponsors: JoinSponsor[], channel
       }
       const reps = [...by].flatMap(([who, ms]): PlanRep[] => {
         ms.sort((a, b) => Number(a.ts) - Number(b.ts));
-        const first = ms[0]!, text = plainText(first.text), quote = firstLine(text);
+        const first = ms[0]!, text = shown(first), quote = firstLine(text);
         if (!quoteHolds(quote, text)) return [];
         return [{ person: who, name: ms.at(-1)!.author_name, accounts: new Set(ms.map((m) => m.author_id)).size, posts: ms.length, first: Number(first.ts), quote, source_url: first.permalink }];
       });
