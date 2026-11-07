@@ -75,6 +75,10 @@ describe("For the tracks you entered", () => {
       ["t:1:req:0", "Use at least one Actor from the Apify Store."],
     ]);
   });
+  test("the chooser offers every track on the pages, whatever is entered; nothing is pre-ticked", () => {
+    expect(at("2026-10-25T08:00:00-07:00").choices).toEqual([{ track_id: "t:1", name: "Best Use of Apify" }]);
+    expect(at("2026-10-25T08:00:00-07:00", ["t:1"]).choices).toEqual(at("2026-10-25T08:00:00-07:00").choices);
+  });
 });
 
 describe("Judging", () => {

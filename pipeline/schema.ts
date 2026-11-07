@@ -181,16 +181,19 @@ export interface AuthorsCaptureFile {
   threads: { parents: number; read: number };
   authors: { id: string; posts: number }[];
   unidentified: number;
+  /** Signal 2b, matched in the page: who named which sponsor as their employer. No text, no time. */
+  self_ids: { id: string; sponsor: string; match: true }[];
 }
 
 export function authorsFileName(channelId: string): string {
   return `${channelId}.authors.json`;
 }
 
-const AUTHORS_KEYS = ["schema_version", "kind", "source", "run_id", "channel_id", "channel_name", "started_at", "finished_at", "stop_reason", "threads", "authors", "unidentified"];
+const AUTHORS_KEYS = ["schema_version", "kind", "source", "run_id", "channel_id", "channel_name", "started_at", "finished_at", "stop_reason", "threads", "authors", "unidentified", "self_ids"];
 
-/** Throws with a path-qualified reason if `v` isn't an AuthorsCaptureFile, or carries anything besides its fields. */
-export function parseAuthorsCaptureFile(v: unknown, where = "authors"): AuthorsCaptureFile {
+/** Throws with a path-qualified reason if `v` isn't an AuthorsCaptureFile, or carries anything besides its fields.
+ *  `sponsors`: when given, each self_ids sponsor must be one of them, so the field can't carry anything else. */
+export function parseAuthorsCaptureFile(v: unknown, where = "authors", sponsors?: Set<string>): AuthorsCaptureFile {
   const o = obj(v, where);
   for (const k of Object.keys(o)) if (!AUTHORS_KEYS.includes(k)) fail(`${where}.${k}`, "not an authors-only field");
   if (o.schema_version !== SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${SCHEMA_VERSION}`);
@@ -209,6 +212,15 @@ export function parseAuthorsCaptureFile(v: unknown, where = "authors"): AuthorsC
     if (!Number.isInteger(x.posts) || (x.posts as number) < 1) fail(`${where}.authors[${i}].posts`, "expected a positive integer");
   });
   num(o.unidentified, `${where}.unidentified`);
+  arr(o.self_ids, `${where}.self_ids`).forEach((a, i) => {
+    const w = `${where}.self_ids[${i}]`;
+    const x = obj(a, w);
+    if (Object.keys(x).some((k) => k !== "id" && k !== "sponsor" && k !== "match")) fail(w, "expected only id, sponsor and match");
+    if (typeof x.id !== "string" || !/^[UW][A-Z0-9]{6,}$/.test(x.id)) fail(`${w}.id`, "expected a Slack user ID");
+    if (typeof x.sponsor !== "string" || !x.sponsor || x.sponsor.length > 60) fail(`${w}.sponsor`, "expected a sponsor id");
+    if (sponsors && !sponsors.has(x.sponsor as string)) fail(`${w}.sponsor`, "not a sponsor in sponsors.json");
+    if (x.match !== true) fail(`${w}.match`, "expected true");
+  });
   return o as unknown as AuthorsCaptureFile;
 }
 

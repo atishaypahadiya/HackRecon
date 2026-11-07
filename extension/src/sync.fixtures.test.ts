@@ -56,7 +56,7 @@ describe.skipIf(!exp)("sidebar", () => {
     }
     expect(known).toBeGreaterThan(50);
   });
-  const sponsors = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "sponsors.json"), "utf8")) as Record<string, { stretch?: boolean }>;
+  const sponsors = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "sponsors.json"), "utf8")) as Record<string, { stretch?: boolean; sponsor?: string; aliases?: string[] }>;
   const event = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "event.json"), "utf8"));
 
   test("every locked channel is selected from the config, 2-opportunities included, in config order", () => {

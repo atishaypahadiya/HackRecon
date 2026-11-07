@@ -34,7 +34,7 @@ export interface SyncLogLite {
   stopped_by_user: boolean;
   targets: string[];
   config?: { event: string | null; channels: number; missing: string[]; discovered: string[]; authors_only?: string[] };
-  channels: { name: string; mode?: "authors"; authors?: number; opened: boolean; error?: string; messages?: number; threads?: { stop: string; replies: number; pane_how?: string; close?: string; note?: string }[] }[];
+  channels: { name: string; mode?: "authors"; authors?: number; self_ids?: number; opened: boolean; error?: string; messages?: number; threads?: { stop: string; replies: number; pane_how?: string; close?: string; note?: string }[] }[];
   samples: { file: string; why: string }[];
   save_errors: string[];
 }
@@ -53,7 +53,7 @@ export function summarizeSync(log: SyncLogLite): string[] {
   if (log.config) {
     lines.unshift(`selection: ${log.config.channels} config channels${log.config.missing.length ? `; not in the sidebar: ${log.config.missing.join(", ")}` : ""}${log.config.discovered.length ? `; found by prefix, not in config: ${log.config.discovered.join(", ")}` : ""}`);
   } else lines.unshift("selection: prefixes only (no sync-config.json; rebuild with bun run build:ext)");
-  for (const c of log.channels.filter((c) => c.mode === "authors" && c.opened)) lines.push(`authors only: #${c.name}, ${c.authors ?? 0} posters in ${c.messages ?? 0} posts and ${(c.threads ?? []).length} threads (no text kept)`);
+  for (const c of log.channels.filter((c) => c.mode === "authors" && c.opened)) lines.push(`authors only: #${c.name}, ${c.authors ?? 0} posters in ${c.messages ?? 0} posts and ${(c.threads ?? []).length} threads, ${c.self_ids ?? 0} saying they work for a sponsor (no text kept)`);
   for (const c of log.channels.filter((c) => c.error)) lines.push(`  #${c.name}: ${c.error}`);
   const notes = tally(threads.map((t) => t.note).filter(Boolean));
   if (notes) lines.push(`thread notes: ${notes}`);

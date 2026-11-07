@@ -114,6 +114,14 @@ Two accounts of one person are linked by `hr person-links` (user 2026-11-07; des
 
 Now task P1b in docs/designs/hackrecon-v2.md, ahead of P2–P6 (user 2026-11-06).
 
+### Read your own Devpost draft's selected prizes (Ship prefill)
+
+**What:** During sync's Devpost background visit, read the user's own draft submission and prefill Ship's "Tracks you're entering" with its selected prizes, labeled "from your Devpost draft" with the read time. Empty with no draft; never from Plan (user 2026-11-07).
+
+**Why:** What you entered on Devpost is the truth; ticking it again in Ship is a second place to get wrong.
+
+**Blocked on:** the page structure. The prize checkboxes are on the logged-in submission form (steps: Manage team, Project overview, Project details, Additional info, Submit), on devpost.com, not the event subdomain the background worker is limited to. Needs one read of a real submission form (the user's own Cal Hacks submission would do) before a parser and the URL rule are written. Ship's chooser already lists every Devpost track and pre-ticks nothing.
+
 ### Gap check: find counter-evidence for requirements that name no product
 
 **What:** Pick repo lines for the gap check by what each requirement asks, not only by the track's product names. Today `repoFacts` (pipeline/repo.ts) keeps only lines naming a likely track's product (Apify, Claude, Factory …), so a requirement that names none, such as voice, deployment or open source, gets no repo lines and can't find counter-evidence.

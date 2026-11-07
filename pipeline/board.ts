@@ -7,7 +7,7 @@ import type { EventConfig } from "./classify.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
-import { likelySince, signalLabels, type RepIndex } from "./reps.ts";
+import { likelySince, signalLabels, staffSince, type RepIndex } from "./reps.ts";
 import { sponsorSignals, type A5Signal, type PosterRole } from "./roles.ts";
 import type { Message } from "./schema.ts";
 import {  } from "./event.ts";
@@ -83,10 +83,10 @@ export interface BoardData {
   /** Per sponsor channel, when each candidate first named the sponsor as their employer (reps.ts signal 2b), aligned
    *  the same way; null if never. A time, so a replay shows it only once posted; no phrase, which can hold a name. */
   rep_self: Record<string, (number | null)[]>;
-  /** Per sponsor channel, likely staff (reps.ts signal 3) who aren't sponsor-side: shown apart, never counted as
+  /** Per sponsor channel, likely staff (reps.ts 2b or signal 3) who aren't sponsor-side: shown apart, never counted as
    *  reps, never given authority. `first` is when the signal first holds (a staff post and an answer both in);
    *  posts and answers are their times, so a replay counts only what was posted by then. Never names. */
-  rep_likely: Record<string, { first: number; posts: number[]; answers: number[]; self: number | null; hacker: number }[]>;
+  rep_likely: Record<string, { first: number; posts: number[]; answers: number[]; staff: number | null; self: number | null; hacker: number }[]>;
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
@@ -296,7 +296,7 @@ export function boardData(o: {
       const fileSignals = (who: string) => o.reps?.signals.get(`${who}|${s.sponsor}`) ?? [];
       const selfSince = (who: string) => {
         const x = fileSignals(who).find((x) => x.kind === "self-identified");
-        return x?.kind === "self-identified" ? (x.posts[0]?.ts ?? null) : null;
+        return x?.kind === "self-identified" && x.posts.length ? Math.min(...x.posts.map((e) => e.ts)) : null;
       };
       repSignals[ch] = ranked.map(([who]) => signalLabels([...(a5.get(who) ?? [])], fileSignals(who).filter((x) => x.kind === "email domain" || x.kind === "organizer mention" || x.kind === "hacker channels")));
       repSelf[ch] = ranked.map(([who]) => selfSince(who));
@@ -307,6 +307,7 @@ export function boardData(o: {
           first,
           posts: l?.kind === "likely staff" ? l.posts.map((e) => e.ts) : [],
           answers: l?.kind === "likely staff" ? l.answers.map((e) => e.ts) : [],
+          staff: staffSince(fileSignals(who)),
           self: selfSince(who),
           hacker: h?.kind === "hacker channels" ? h.channels.reduce((n, c) => n + c.posts, 0) : 0,
         };

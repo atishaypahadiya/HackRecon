@@ -2,9 +2,10 @@
 //   1. confirmed: a profile email on the sponsor's domain (sponsors.json `domains`), from the users.json snapshot;
 //   2. confirmed: an authority account (D19: an admin/owner-backed organizer id, or any post in an authority
 //      channel) mentions the person's user ID on a line that names the sponsor, and no other sponsor;
-//   2b. self-identified: the person's own post in the sponsor's channel names the sponsor as their employer or
-//      company ("I'm Pat with Apify", "one of the founders of Mana", "We're Wajo"), matched in code against the
-//      sponsor's names. Self-asserted, like a name tag: alone it's a label and grants nothing;
+//   2b. says they work there: the person's own post names the sponsor as their employer, in one of four phrasings
+//      anchored on the writer (selfid.ts). In the sponsor's channel the phrase is kept; in a hacker-only channel the
+//      page runs the match and keeps only the flag (hackerchannels.ts). Alone it makes the person likely staff
+//      (user 2026-11-07, second pass);
 //   3. likely staff: posted a classified credit, prize or workshop post at the top of the sponsor's own channel, AND
 //      answered a hacker's question in one of its threads, AND never posted in a hacker-only channel, unless 2b holds:
 //      then those posts are shown as a counter-signal instead (user 2026-11-07).
@@ -15,6 +16,7 @@ import { REP_SIGNALS_PATH } from "./event.ts";
 import type { Sponsors } from "./pool.ts";
 import type { A5Signal, PosterRole } from "./roles.ts";
 import type { Item, Message } from "./schema.ts";
+import { selfIdentification } from "./selfid.ts";
 
 export { HACKER_ONLY } from "./hackerchannels.ts";
 const STAFF_KINDS = new Set(["credit", "prize", "workshop"]);
@@ -22,7 +24,7 @@ const STAFF_KINDS = new Set(["credit", "prize", "workshop"]);
 export type RepSignal =
   | { kind: "email domain"; domain: string }
   | { kind: "organizer mention"; by: string; permalink: string }
-  | { kind: "self-identified"; posts: (Evidence & { phrase: string })[] }
+  | { kind: "self-identified"; posts: SelfEvidence[] }
   | { kind: "likely staff"; posts: Evidence[]; answers: Evidence[] }
   /** Counter-signal: posts in hacker-only channels (authors-only, so counts and no times). */
   | { kind: "hacker channels"; channels: { channel: string; posts: number }[] };
@@ -33,13 +35,17 @@ export interface Evidence {
   permalink: string;
 }
 
+/** 2b's evidence. A sponsor-channel post keeps its phrase and permalink. A hacker-only channel's flag has neither,
+ *  only the channel, and its `ts` is when the source was read (the authors-only capture, or the export's end): the
+ *  post's own time isn't kept. */
+export type SelfEvidence = Evidence & { phrase?: string; channel?: string };
+
 export interface RepEvidence {
   person: string;
   accounts: string[];
   sponsor: string;
-  /** confirmed: signal 1 or 2 (a role). likely: signal 3 (shown, no role). label: only 2b or the counter-signal,
-   *  shown beside a rep found otherwise, never making one. */
-  standing: "confirmed" | "likely" | "label";
+  /** confirmed: signal 1 or 2 (a role). likely: 2b or signal 3 (shown, no role). */
+  standing: "confirmed" | "likely";
   signals: RepSignal[];
 }
 
@@ -109,56 +115,28 @@ export function mentionReps(posts: MentionPost[], sponsors: Sponsors, authority:
   return { hits, ambiguous };
 }
 
-const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** Case-insensitive without the i flag, for patterns that need a capital elsewhere (a person's name). */
-const ci = (x: string) => escapeRe(x).replace(/\p{L}/gu, (c) => `[${c.toLowerCase()}${c.toUpperCase()}]`);
+/** The sponsors and their names, as the page's matcher takes them (hackerchannels.ts). */
+export const selfIdSponsorList = (sponsors: Sponsors) => [...sponsorNames(sponsors)].map(([id, names]) => ({ id, names }));
 
-/** Signal 2b's matcher: the phrase in `text` where the writer names one of `names` as their own employer or company,
- *  or null. Six forms only, each anchored on the writer: "I'm <Name> with/from/at S", a role "of/at/for S"
- *  (founder, engineer, recruiter…), "we're (the team behind) S", "here from S", "I work at/for S" or "the S team", "I am a recruiter with S".
- *  A sentence ending in "?" never counts ("anyone here from Apify?"), nor S followed by booth, table, workshop,
- *  office hours, track, prize, challenge or credits ("I'm at the Apify booth"). Links are dropped first. */
-export function selfIdentification(text: string, names: string[]): string | null {
-  if (!names.length) return null;
-  const alts = [...names].sort((a, b) => b.length - a.length);
-  const S = `(?:${alts.map(ci).join("|")})`;
-  const end = String.raw`(?![\p{L}\p{N}])(?!\s+(?:[Bb]ooth|[Tt]able|[Ww]orkshop|[Oo]ffice hours|[Tt]rack|[Pp]rize|[Cc]hallenge|[Cc]redits?)\b)`;
-  const name = String.raw`\p{Lu}[\p{L}'.-]*(?:\s+\p{Lu}[\p{L}'.-]*)?`;
-  const forms = [
-    String.raw`\b(?:[Ii]'?m|[Ii] am|[Mm]y name is|[Tt]his is)\s+${name},?\s+(?:[Ww]ith|[Ff]rom|[Aa]t)\s+(?:[Tt]he\s+)?${S}${end}`,
-    String.raw`\b(?:${ci("co-founder")}s?|${ci("cofounder")}s?|${ci("founder")}s?|CEO|CTO|COO|${ci("engineer")}s?|${ci("developer advocate")}s?|${ci("devrel")}|${ci("recruiter")}s?|${ci("product manager")}s?|${ci("researcher")}s?|${ci("employee")}s?)\s+(?:of|at|for|from)\s+(?:[Tt]he\s+)?${S}${end}`,
-    String.raw`\b(?:[Ww]e'?re|[Ww]e are)\s+(?:[Tt]he\s+team\s+(?:behind|at|from)\s+)?${S}${end}(?!\s+(?:users?|fans?|hackers?)\b)`,
-    String.raw`\b[Hh]ere\s+(?:from|with)\s+(?:[Tt]he\s+)?${S}${end}`,
-    String.raw`\b(?:[Ii] work (?:at|for)\s+${S}${end}|(?:[Ff]rom|[Oo]n) the\s+${S}\s+team\b|${S}\s+team here\b)`,
-    String.raw`\b(?:[Ii]'?m|[Ii] am)\s+(?:a|an|the|one of the)\s+(?:\p{L}+\s+){0,2}?(?:${ci("recruiter")}s?|${ci("engineer")}s?|${ci("founder")}s?|${ci("developer advocate")}s?|${ci("product manager")}s?|${ci("researcher")}s?)\s+(?:[Ww]ith|[Aa]t|[Ff]rom|[Ff]or)\s+(?:[Tt]he\s+)?${S}${end}`,
-  ].map((f) => new RegExp(f, "u"));
-  const plain = text.replace(/\s*<https?:\/\/[^>\s]+>/g, "").replace(/[\u2018\u2019]/g, "'").replace(/[*_~]/g, "");
-  for (const sentence of plain.split(/(?<=[.!])\s+|\n+/)) {
-    const t = sentence.trim();
-    if (!t || /\?["')]*$/.test(t)) continue;
-    for (const f of forms) {
-      const m = f.exec(t);
-      if (m) return m[0].trim().slice(0, 100);
-    }
-  }
-  return null;
-}
-
-/** Signal 2b over each person's own posts in each sponsor's channels (not event channels, not bots). */
-export function selfIdReps(posts: Message[], sponsors: Sponsors, person: (id: string) => string): { person: string; accounts: string[]; sponsor: string; posts: (Evidence & { phrase: string })[] }[] {
+/** Signal 2b over each person's own posts in each sponsor's channels (not event channels, not bots), plus the flags
+ *  from hacker-only channels (`hacker`: user ID, sponsor, the channel, when the source was read). */
+export function selfIdReps(posts: Message[], sponsors: Sponsors, person: (id: string) => string, hacker: { id: string; sponsor: string; channel: string; ts: number }[] = []): { person: string; accounts: string[]; sponsor: string; posts: SelfEvidence[] }[] {
   const names = sponsorNames(sponsors);
-  const by = new Map<string, { accounts: Set<string>; posts: (Evidence & { phrase: string })[] }>();
+  const by = new Map<string, { accounts: Set<string>; posts: SelfEvidence[] }>();
+  const add = (id: string, sponsor: string, ev: SelfEvidence) => {
+    const key = `${person(id)}|${sponsor}`;
+    const e = by.get(key) ?? { accounts: new Set(), posts: [] };
+    e.accounts.add(id);
+    e.posts.push(ev);
+    by.set(key, e);
+  };
   for (const m of posts) {
     const ch = sponsors[m.channel_name];
     if (!ch || ch.sponsor === "event" || !m.author_id || m.author_kind === "bot") continue;
-    const phrase = selfIdentification(m.text, names.get(ch.sponsor) ?? []);
-    if (!phrase) continue;
-    const key = `${person(m.author_id)}|${ch.sponsor}`;
-    const e = by.get(key) ?? { accounts: new Set(), posts: [] };
-    e.accounts.add(m.author_id);
-    e.posts.push({ ts: Number(m.ts), permalink: m.permalink, phrase });
-    by.set(key, e);
+    const hit = selfIdentification(m.text, names.get(ch.sponsor) ?? []);
+    if (hit) add(m.author_id, ch.sponsor, { ts: Number(m.ts), permalink: m.permalink, phrase: hit.phrase });
   }
+  for (const h of hacker) if (names.has(h.sponsor)) add(h.id, h.sponsor, { ts: h.ts, permalink: "", channel: h.channel });
   return [...by].map(([key, e]) => {
     const [who, sponsor] = key.split("|") as [string, string];
     return { person: who, accounts: [...e.accounts].sort(), sponsor, posts: e.posts.sort((a, b) => a.ts - b.ts) };
@@ -215,7 +193,7 @@ export function likelyReps(o: {
 export function repEvidence(o: {
   email: { id: string; sponsor: string; domain: string }[];
   mention: { id: string; sponsor: string; by: string; permalink: string }[];
-  selfId?: { person: string; accounts: string[]; sponsor: string; posts: (Evidence & { phrase: string })[] }[];
+  selfId?: { person: string; accounts: string[]; sponsor: string; posts: SelfEvidence[] }[];
   likely: { person: string; accounts: string[]; sponsor: string; posts: Evidence[]; answers: Evidence[] }[];
   /** person → posts per hacker-only channel. */
   hacker?: Map<string, { channel: string; posts: number }[]>;
@@ -224,7 +202,7 @@ export function repEvidence(o: {
   const by = new Map<string, RepEvidence>();
   const entry = (who: string, sponsor: string) => {
     const key = `${who}|${sponsor}`;
-    if (!by.has(key)) by.set(key, { person: who, accounts: [], sponsor, standing: "label", signals: [] });
+    if (!by.has(key)) by.set(key, { person: who, accounts: [], sponsor, standing: "likely", signals: [] });
     return by.get(key)!;
   };
   const account = (e: RepEvidence, ids: string[]) => (e.accounts = [...new Set([...e.accounts, ...ids])].sort());
@@ -251,7 +229,7 @@ export function repEvidence(o: {
   for (const e of by.values()) {
     const h = o.hacker?.get(e.person);
     if (h?.length) e.signals.push({ kind: "hacker channels", channels: h });
-    e.standing = e.signals.some((s) => s.kind === "email domain" || s.kind === "organizer mention") ? "confirmed" : e.signals.some((s) => s.kind === "likely staff") ? "likely" : "label";
+    e.standing = e.signals.some((s) => s.kind === "email domain" || s.kind === "organizer mention") ? "confirmed" : "likely";
   }
   return [...by.values()].sort((a, b) => a.sponsor.localeCompare(b.sponsor) || a.person.localeCompare(b.person));
 }
@@ -269,8 +247,8 @@ export function repIndex(file: RepSignalsFile | null, person: (id: string) => st
   for (const e of file?.reps ?? []) {
     // Re-keyed through today's person links: a link made after the file was built still joins its accounts.
     const who = person(e.accounts[0] ?? e.person);
-    const into = e.standing === "confirmed" ? ix.confirmed : e.standing === "likely" ? ix.likely : null;
-    into?.set(who, (into.get(who) ?? new Set()).add(e.sponsor));
+    const into = e.standing === "confirmed" ? ix.confirmed : ix.likely;
+    into.set(who, (into.get(who) ?? new Set()).add(e.sponsor));
     ix.signals.set(`${who}|${e.sponsor}`, [...(ix.signals.get(`${who}|${e.sponsor}`) ?? []), ...e.signals]);
   }
   return ix;
@@ -281,16 +259,27 @@ export function loadRepIndex(person: (id: string) => string = (id) => id, path =
   return repIndex(existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as RepSignalsFile) : null, person);
 }
 
+const selfFirst = (file: RepSignal[]) => {
+  const s = file.find((x) => x.kind === "self-identified");
+  return s?.kind === "self-identified" && s.posts.length ? Math.min(...s.posts.map((e) => e.ts)) : null;
+};
+
 /** When signal 3 first holds: a staff post and an answer are in and, for someone who posted in a hacker-only
  *  channel, the self-identification that lets them pass (epoch seconds); null if it never does. Hacker-only posts
  *  carry no times (authors-only), so a replay counts them all: it can drop someone early, never add them. */
-export function likelySince(file: RepSignal[] = []): number | null {
+export function staffSince(file: RepSignal[] = []): number | null {
   const s = file.find((x) => x.kind === "likely staff");
   if (s?.kind !== "likely staff" || !s.posts.length || !s.answers.length) return null;
   const since = Math.max(s.posts[0]!.ts, s.answers[0]!.ts);
   if (!file.some((x) => x.kind === "hacker channels")) return since;
-  const self = file.find((x) => x.kind === "self-identified");
-  return self?.kind === "self-identified" && self.posts.length ? Math.max(since, self.posts[0]!.ts) : null;
+  const self = selfFirst(file);
+  return self === null ? null : Math.max(since, self);
+}
+
+/** When the person is first likely staff: by 2b alone, or by signal 3, whichever holds first; null if neither does. */
+export function likelySince(file: RepSignal[] = []): number | null {
+  const xs = [selfFirst(file), staffSince(file)].filter((x): x is number => x !== null);
+  return xs.length ? Math.min(...xs) : null;
 }
 
 /** What a rep matched, strongest first, as shown on the board and Plan; signal 3's counts as of `nowSec`. */
@@ -299,15 +288,18 @@ export function signalLabels(a5: A5Signal[], file: RepSignal[] = [], nowSec = In
   for (const s of file) if (s.kind === "email domain") out.push(`email on ${s.domain}`);
   if (file.some((s) => s.kind === "organizer mention")) out.push("named by an organizer");
   for (const s of file) {
-    const first = s.kind === "self-identified" ? s.posts.find((e) => e.ts <= nowSec) : undefined;
-    if (first) out.push(`self-identified: “${first.phrase}”`);
+    if (s.kind !== "self-identified") continue;
+    const seen = s.posts.filter((e) => e.ts <= nowSec).sort((a, b) => a.ts - b.ts);
+    const quoted = seen.find((e) => e.phrase);
+    if (quoted) out.push(`says they work there: “${quoted.phrase}”`);
+    else if (seen.length) out.push(`says they work there (in #${seen[0]!.channel})`);
   }
   if (a5.includes("external badge")) out.push("external badge");
   if (a5.includes("name or title")) out.push("name or title");
   for (const s of file) {
     if (s.kind !== "likely staff") continue;
     const p = s.posts.filter((e) => e.ts <= nowSec).length, a = s.answers.filter((e) => e.ts <= nowSec).length;
-    const since = likelySince(file);
+    const since = staffSince(file);
     if (p && a && since !== null && since <= nowSec) out.push(`likely staff: ${p} offer, prize or workshop post${p === 1 ? "" : "s"}, ${a} answer${a === 1 ? "" : "s"} to hackers`);
   }
   for (const s of file) if (s.kind === "hacker channels") out.push(`counter-signal: posted in ${s.channels.map((c) => `#${c.channel} (${c.posts})`).join(", ")}`);

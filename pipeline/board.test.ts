@@ -119,7 +119,7 @@ describe("rep signals on the board", () => {
     expect(d.rep_signals["spons-apify"]).toEqual([["name or title"]]);
     expect(d.rep_self["spons-apify"]).toEqual([150]);
     // Pat passes the hacker-channel rule only from his self-identification at 300.
-    expect(d.rep_likely["spons-apify"]).toEqual([{ first: 300, posts: [200], answers: [250], self: 300, hacker: 2 }]);
+    expect(d.rep_likely["spons-apify"]).toEqual([{ first: 300, posts: [200], answers: [250], staff: 300, self: 300, hacker: 2 }]);
     expect(JSON.stringify(d)).not.toContain("with Apify");
   });
 });

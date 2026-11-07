@@ -38,6 +38,9 @@ export interface ShipList {
   required: ShipItem[];
   /** 2. For the tracks you entered: entry steps, then stated requirements, per track. */
   tracks: { track_id: string; name: string; source_url: string; items: ShipItem[] }[];
+  /** Every track on the pages, in page order: what the "Tracks you're entering" chooser offers. Never Plan's
+   *  picks (user 2026-11-07): what you enter is yours, ticked here or read from your Devpost draft. */
+  choices: { track_id: string; name: string }[];
   /** 3. Judging: schedule entries from the deadline on, then the page's rules about pitching and judges. */
   judging: ShipItem[];
 }
@@ -147,7 +150,8 @@ export function shipList(o: {
       .map((x): ShipItem => ({ id: x.id, label: String(x.fields.text!.value), from: "page", source_url: x.fields.text!.source.url })),
   ];
 
-  return { deadline, required, tracks, judging };
+  const choices = o.entities.filter((x) => x.kind === "track").map((t) => ({ track_id: t.id, name: t.name.value ?? "" }));
+  return { deadline, required, tracks, judging, choices };
 }
 
 /** D13's countdown: "5 h 12 min", "59 min", "2 d 3 h"; rounded down, so it never promises time that isn't there. */
