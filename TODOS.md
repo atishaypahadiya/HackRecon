@@ -20,7 +20,7 @@
 
 ### Background API pull: the live check (2026-11-07)
 
-Built and verified offline (design doc, Zero setup). Open: one live pull on Cal Hacks, then `hr sync-ingest` and `hr compare-api`, which should report 54/54 channels and 494/494 locked replies. That run also confirms the service worker's requests carry the session cookie. An old thread (past the 48 h lookback) that gets a new reply isn't re-read (D17). After a browser restart the session is gone until the next Sync from the popup; the popup shows the last pull's status.
+Built and verified offline (design doc, Zero setup). First live pull (2026-11-07 13:08): requests carried the session (0-announcements and 2-opportunities saved), then the service worker was stopped in the third channel. Chrome ends a worker after 30 s with no extension API call, and fetch does not count; fixed with a call before every Slack request and in every wait, and a 2-minute heartbeat lock. Open: one live pull on Cal Hacks, then `hr sync-ingest` and `hr compare-api`, which should report 54/54 channels and 494/494 locked replies. That run also confirms the service worker's requests carry the session cookie. An old thread (past the 48 h lookback) that gets a new reply isn't re-read (D17). After a browser restart the session is gone until the next Sync from the popup; the popup shows the last pull's status.
 
 ### Zero setup leftovers (2026-11-07)
 
