@@ -2,7 +2,7 @@
 // what the workspace and Devpost already say, with no hand-edited config. Pure; hr.ts does the reading and fetching.
 //   event      the Slack workspace (its name when the extension recorded one, else its subdomain) → Devpost search
 //   sponsors   Devpost prize tags matched to sidebar channel names (discover.ts sponsorsDraft)
-//   organizers Slack admin and owner flags, the event's name tag in display names, and restricted-posting posters
+//   organizers Slack admin and owner flags and restricted-posting posters (name tags and titles are only proposed)
 //   schedule   Devpost's stated deadlines (canon rules), then organizer deadlines classified in announcement channels
 // Every value carries where it came from; what discovery can't know is listed for the user, never guessed.
 import type { EventConfig } from "./classify.ts";
@@ -104,20 +104,33 @@ export interface DiscoveredUser {
   title?: string;
 }
 const ORG_TITLE = /director|exec|organi[sz]er|logistics/i;
-/** Organizers (user IDs only): Slack's admin and owner flags, the event's name tag, an organizing title, and
- *  posters in restricted-posting channels (or, with no admin flags to go on, in announcement channels). */
-export function organizersFrom(users: DiscoveredUser[], tag: RegExp | null, posters: string[], postersWhy = "restricted-posting channel"): { id: string; why: string[] }[] {
-  const out = new Map<string, string[]>();
-  const add = (id: string, why: string) => out.set(id, [...new Set([...(out.get(id) ?? []), why])]);
+type Org = { id: string; why: string[] };
+/** Organizers (user IDs only), D19: only signals a hacker can't set confer authority: Slack's admin and owner flags,
+ *  and posting where Slack restricts posting. A display-name tag, a profile title, or posting in a channel picked by
+ *  its name are self-asserted (security review 2026-11-07): they are proposals for the user, never written. */
+export function organizersFrom(
+  users: DiscoveredUser[],
+  tag: RegExp | null,
+  restrictedPosters: string[],
+  namedChannelPosters: string[] = [],
+): { organizers: Org[]; proposals: Org[] } {
+  const confirmed = new Map<string, string[]>();
+  const proposed = new Map<string, string[]>();
+  const add = (m: Map<string, string[]>, id: string, why: string) => m.set(id, [...new Set([...(m.get(id) ?? []), why])]);
   for (const u of users) {
     if (u.deleted || u.is_bot) continue;
-    if (u.is_admin) add(u.id, "admin");
-    if (u.is_owner) add(u.id, "owner");
-    if (tag?.test(u.names)) add(u.id, "event name tag");
-    if (ORG_TITLE.test(u.title ?? "")) add(u.id, "title");
+    if (u.is_admin) add(confirmed, u.id, "admin");
+    if (u.is_owner) add(confirmed, u.id, "owner");
   }
-  for (const id of posters) add(id, postersWhy);
-  return [...out].map(([id, why]) => ({ id, why }));
+  for (const id of restrictedPosters) add(confirmed, id, "restricted-posting channel");
+  for (const u of users) {
+    if (u.deleted || u.is_bot || confirmed.has(u.id)) continue;
+    if (tag?.test(u.names)) add(proposed, u.id, "event name tag");
+    if (ORG_TITLE.test(u.title ?? "")) add(proposed, u.id, "title");
+  }
+  for (const id of namedChannelPosters) if (!confirmed.has(id)) add(proposed, id, "posted in a channel named like announcements");
+  const list = (m: Map<string, string[]>) => [...m].map(([id, why]) => ({ id, why }));
+  return { organizers: list(confirmed), proposals: list(proposed) };
 }
 
 /** Local wall time of an instant in tz, with its offset: 2026-10-09T15:40:59-07:00. */

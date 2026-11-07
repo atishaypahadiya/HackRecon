@@ -24,7 +24,7 @@ Asked: only posts since the last sync, no mark-read, on a timer, no visible-wind
 
 ### Zero setup leftovers (2026-11-07)
 
-`hr discover` can't derive: hacking start and end, event-level prizes, sponsor aliases, event channels with no prefix (Cal Hacks' 2-opportunities), schedule end times. Admin and owner flags come from the export; at a live event the extension would need to read them (profile cards show "Workspace Admin"). The extension doesn't record the workspace's display name; the subdomain searched well on Devpost.
+`hr discover` can't derive: hacking start and end, event-level prizes, sponsor aliases, event channels with no prefix (Cal Hacks' 2-opportunities), schedule end times. Admin and owner flags come from the export until the API pull reads `users.list`. Name tags and titles are only proposed (self-asserted). The extension doesn't record the workspace's display name; the subdomain searched well on Devpost.
 
 ### Capture is frozen for Cal Hacks (user 2026-11-07)
 
