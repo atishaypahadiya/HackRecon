@@ -43,9 +43,11 @@ test("summarizeSync names failures, stops, how the pane was found and the sample
     save_errors: [],
   });
   expect(lines).toEqual([
+    "selection: prefixes only (no sync-config.json; rebuild with bun run build:ext)",
     "channels: 1/2 opened",
     "threads: 2 tried, 3 replies read; stops: parent_seen 1, not_opened 1",
     "pane found by: outside_message_pane 1",
+    "pane closed by: none 1",
     "  #b: not in the sidebar",
     "thread notes: no pane 1",
     "sample slack-dom/a--thread-1-top.html: first thread of the sync; pane at its top",

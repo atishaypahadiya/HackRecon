@@ -27,6 +27,7 @@ import {
   ThreadRecorder,
   type PaneFound,
   type SidebarChannel,
+  type SyncConfig,
   type ThreadRaw,
 } from "./thread.ts";
 import { overlay, saveFile } from "./ui.ts";
@@ -45,6 +46,7 @@ const SAMPLE_CAP = { long: 6, more: 2, empty: 2, not_found: 2 };
 declare global {
   interface Window {
     __hackreconSync?: boolean;
+    __hackreconSyncConfig?: SyncConfig;
   }
 }
 
@@ -58,6 +60,8 @@ interface ThreadLog {
   pane_how?: PaneFound["how"];
   scroller: boolean;
   more_clicks: number;
+  /** The SEL.threadClose candidate that closed the pane, or "escape" (user 2026-11-06: log it). */
+  close?: string;
   note?: string;
 }
 
@@ -82,6 +86,8 @@ interface SyncLog {
   stopped_by_user: boolean;
   sidebar: SidebarChannel[];
   targets: string[];
+  /** Selection source (user 2026-11-06): config channels, those missing from the sidebar, and prefix finds. */
+  config?: { event: string | null; channels: number; missing: string[]; discovered: string[] };
   channels: ChannelLog[];
   samples: { file: string; why: string }[];
   save_errors: string[];
@@ -179,10 +185,13 @@ async function sync(): Promise<void> {
     sideScroller.scrollTop = 0;
   } else readSidebar();
   log.sidebar = [...seen.values()];
-  const targets = syncTargets(log.sidebar);
+  const config = window.__hackreconSyncConfig;
+  const pick = syncTargets(log.sidebar, config?.channels ?? []);
+  const targets = pick.targets;
   log.targets = targets.map((c) => c.name);
+  log.config = { event: config?.event ?? null, channels: config?.channels.length ?? 0, missing: pick.missing, discovered: pick.discovered };
   if (!targets.length) {
-    ui.set(`HackRecon: no spons-, partner-, cohost- or announcement channels in the sidebar (${log.sidebar.length} channels read).`);
+    ui.set(`HackRecon: none of the config's ${config?.channels.length ?? 0} channels, and no spons-, partner-, cohost- or announcement channels, in the sidebar (${log.sidebar.length} channels read).`);
     await saveLog();
     ui.done();
     return;
@@ -235,11 +244,13 @@ async function sync(): Promise<void> {
     return null;
   };
 
-  const closePane = async (root: Element | null) => {
-    const btn = root?.querySelector(SEL.threadClose);
-    if (btn) press(btn);
+  /** Closes the pane; returns which SEL.threadClose candidate matched, or "escape" (logged per thread). */
+  const closePane = async (root: Element | null): Promise<string> => {
+    const sel = SEL.threadClose.split(/,\s*(?![^\[]*\])/).find((c) => root?.querySelector(c));
+    if (sel) press(root!.querySelector(sel)!);
     else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
     await sleep(500);
+    return sel ?? "escape";
   };
 
   /** Opens one thread, reads its pane top to bottom, and returns the raw rows. */
@@ -351,7 +362,7 @@ async function sync(): Promise<void> {
       counts.empty++;
       await sample(`${tag}-empty`, root().outerHTML, "pane rendered the parent but no replies were read");
     }
-    await closePane(root());
+    tl.close = await closePane(root());
     return done(sawParent ? undefined : "the parent never rendered at the top of the pane");
   };
 

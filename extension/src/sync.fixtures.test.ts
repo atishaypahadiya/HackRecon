@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { parseHTML } from "linkedom";
 import { parseReplyBar, parseRows } from "./parse.ts";
 import { SEL } from "./selectors.ts";
-import { findThreadPane, paneRows, sidebarChannels, syncTargets, threadRunFromRaw, ThreadRecorder, type HtmlToRows, type ThreadRaw } from "./thread.ts";
+import { findThreadPane, paneRows, sidebarChannels, syncConfigFrom, syncTargets, threadRunFromRaw, ThreadRecorder, type HtmlToRows, type ThreadRaw } from "./thread.ts";
 import { loadExport, readChannel } from "../../pipeline/export.ts";
 import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
@@ -56,13 +56,28 @@ describe.skipIf(!exp)("sidebar", () => {
     }
     expect(known).toBeGreaterThan(50);
   });
-  test("Sync picks spons-, partner-, cohost- and announcement channels, nothing else", () => {
-    const names = syncTargets(sidebarChannels(doc!)).map((c) => c.name);
-    const sponsors = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "sponsors.json"), "utf8")) as Record<string, unknown>;
-    for (const ch of Object.keys(sponsors).filter((c) => /^(spons|partner|cohost)-|announce/.test(c))) expect(names).toContain(ch);
-    expect(names.filter((n) => !/^(spons|partner|cohost)-|announce/.test(n))).toEqual([]);
-    expect(names).toContain("0-announcements");
-    expect(names).not.toContain("0-general");
+  const sponsors = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "sponsors.json"), "utf8")) as Record<string, { stretch?: boolean }>;
+  const event = JSON.parse(readFileSync(join(EVENTS_DIR, "calhacks-13", "config", "event.json"), "utf8"));
+
+  test("every locked channel is selected from the config, 2-opportunities included, in config order", () => {
+    const config = syncConfigFrom(sponsors, event);
+    const pick = syncTargets(sidebarChannels(doc!), config.channels);
+    const names = pick.targets.map((c) => c.name);
+    const locked = Object.keys(sponsors).filter((k) => !sponsors[k]!.stretch);
+    expect(locked).toHaveLength(25);
+    for (const ch of locked) expect(names).toContain(ch);
+    expect(names).toContain("2-opportunities");
+    expect(names.slice(0, locked.length)).toEqual(locked.filter((c) => names.includes(c)));
+    expect(pick.missing).toEqual([]);
+  });
+
+  test("prefixes only discover what the config doesn't list; nothing else is picked", () => {
+    const pick = syncTargets(sidebarChannels(doc!), ["0-announcements", "spons-moss"]);
+    expect(pick.targets.slice(0, 2).map((c) => c.name)).toEqual(["0-announcements", "spons-moss"]);
+    expect(pick.discovered).toContain("spons-apify");
+    expect(pick.discovered).not.toContain("spons-moss");
+    expect(pick.targets.map((c) => c.name).filter((n) => !/^(spons|partner|cohost)-|announce/.test(n) && !["0-announcements"].includes(n))).toEqual([]);
+    expect(syncTargets(sidebarChannels(doc!), ["no-such-channel"]).missing).toEqual(["no-such-channel"]);
   });
 });
 

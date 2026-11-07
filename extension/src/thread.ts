@@ -174,12 +174,41 @@ export function sidebarChannels(doc: ParentNode): SidebarChannel[] {
   return out;
 }
 
-/** "Sync this event": sponsor channels by prefix (user 2026-11-06), plus announcement channels (design doc §Sync). */
+/** Channels a sync discovers by name when the config doesn't list them yet: sponsor prefixes (user 2026-11-06)
+ *  and announcement channels (design doc §Sync). */
 export const SYNC_CHANNEL = /^(?:spons|partner|cohost)-|announce/i;
 
-export function syncTargets(found: SidebarChannel[]): SidebarChannel[] {
+/** What the build hands the sync (extension/build-config.ts): the event's configured channels, in config order. */
+export interface SyncConfig {
+  event: string;
+  channels: string[];
+}
+
+export function syncConfigFrom(sponsors: Record<string, unknown>, event: { event?: string; authority_channels?: string[] }): SyncConfig {
+  return { event: event.event ?? "", channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])] };
+}
+
+export interface SyncSelection {
+  targets: SidebarChannel[];
+  /** In the config but not in the sidebar (not joined, or a renamed channel). */
+  missing: string[];
+  /** Not in the config; picked by SYNC_CHANNEL. Add them to sponsors.json if they belong to the event. */
+  discovered: string[];
+}
+
+/** Config channels first, in config order (user 2026-11-06: selection comes from the event config); then
+ *  channels the prefixes find that the config doesn't list yet, in sidebar order. */
+export function syncTargets(found: SidebarChannel[], config: string[] = []): SyncSelection {
+  const byName = new Map(found.map((c) => [c.name, c]));
+  const targets = config.map((n) => byName.get(n)).filter((c): c is SidebarChannel => !!c);
+  const inConfig = new Set(config);
+  const extra = found.filter((c) => !inConfig.has(c.name) && SYNC_CHANNEL.test(c.name));
   const seen = new Set<string>();
-  return found.filter((c) => SYNC_CHANNEL.test(c.name) && !seen.has(c.id) && seen.add(c.id));
+  return {
+    targets: [...targets, ...extra].filter((c) => !seen.has(c.id) && seen.add(c.id)),
+    missing: config.filter((n) => !byName.has(n)),
+    discovered: extra.map((c) => c.name),
+  };
 }
 
 function squash(s: string): string {

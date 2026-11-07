@@ -58,7 +58,7 @@ import {
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
-import { buildOrganizers, loadOrganizerIds, posterRole } from "./roles.ts";
+import { buildOrganizers, loadOrganizerIds, rolesById } from "./roles.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import {
   BOARD_DATA_PATH,
@@ -823,18 +823,18 @@ async function board(args: string[]): Promise<number> {
   const event = readEvent();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
-  const all = Object.values(sponsors);
   const labels = readLabels();
+  const messages = readMessages();
   const data = boardData({
     event: event.event,
     timezone: event.timezone,
     schedule: event.schedule,
     run_id: last?.run_id ?? "",
     channels: last?.channels ?? [],
-    messages: readMessages(),
+    messages,
     sponsors,
     offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
-    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+    role: rolesById(messages, sponsors, organizerIds),
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
     permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
@@ -1381,7 +1381,7 @@ async function sync(args: string[]): Promise<number> {
   const newOnes = proposals.filter((p) => !known.has(p.id));
   console.log(`organizers from restricted-posting channels: ${proposals.length} posters; ${proposals.length - newOnes.length} already in ${ORGANIZERS_PATH}${known.size ? ` (${known.size} listed)` : ""}${newOnes.length ? `, ${newOnes.length} new (in ${DISCOVERED_PATH}, not applied)` : ""}`);
   if (!existsSync(ORGANIZERS_PATH) && proposals.length && annSource.startsWith("Slack")) {
-    writeJsonFile(ORGANIZERS_PATH, proposals.map((p) => ({ id: p.id, name: p.name, why: ["restricted-posting channel"] })));
+    writeJsonFile(ORGANIZERS_PATH, proposals.map((p) => ({ id: p.id, why: ["restricted-posting channel"] })));
     console.log(`wrote ${ORGANIZERS_PATH} from the restricted-posting channels (confirm once)`);
   }
   writeJsonFile(DISCOVERED_PATH, {
@@ -1822,7 +1822,6 @@ function receiptPreview(args: string[]): number {
   const messages = readMessages();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
-  const all = Object.values(sponsors);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
   const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
   if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
@@ -1834,7 +1833,7 @@ function receiptPreview(args: string[]): number {
     messages,
     sponsors,
     channels: last?.channels ?? [],
-    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+    role: rolesById(messages, sponsors, organizerIds),
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
   const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";

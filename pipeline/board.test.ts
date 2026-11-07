@@ -60,7 +60,7 @@ describe("event deadlines", () => {
 describe("boardData", () => {
   const sponsors = { "spons-a": { sponsor: "Acme", kind: "sponsor", aliases: [] }, "0-ann": { sponsor: "event", kind: "event", aliases: [] } } as unknown as Sponsors;
   const msg = (ts: string, o: Partial<Message> = {}): Message => ({
-    id: `C1:${ts}`, channel_id: "C1", channel_name: "spons-a", ts, author_name: "Grant Timmerman", text: "Grant Timmerman here: code ABC", links: [], permalink: `p/${ts}`, captured_at: "", run_id: "r", ...o,
+    id: `C1:${ts}`, channel_id: "C1", channel_name: "spons-a", ts, author_name: "Grant Timmerman", author_id: "UGRANT", text: "Grant Timmerman here: code ABC", links: [], permalink: `p/${ts}`, captured_at: "", run_id: "r", ...o,
   });
   const offer: Offer = { sponsor: "Acme", title: "API credits", amount_text: "", amount_usd_per_person: "", amount_basis: "unknown", limit_iso: "", limit_status: "unresolved", claim_url: "", promo_code: "ABC", claim_how: "", value_short: "API credits", claim_short: "", posts: ["C1:1792800000.0"], reason: "" };
   const d = boardData({

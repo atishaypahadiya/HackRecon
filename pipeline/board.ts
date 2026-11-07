@@ -251,7 +251,8 @@ export function boardData(o: {
     .map(([ch, s]) => {
       const inCh = o.messages.filter((m) => m.channel_name === ch && !m.subtype && m.author_kind !== "bot");
       const firstBy = new Map<string, number>();
-      for (const m of inCh) if (o.role(m) === "sponsor-side") firstBy.set(m.author_name, Math.min(firstBy.get(m.author_name) ?? Infinity, Number(m.ts)));
+      // Keyed by Slack user ID: a rep who renames mid-event stays one rep (roles.ts rolesById).
+      for (const m of inCh) if (m.author_id && o.role(m) === "sponsor-side") firstBy.set(m.author_id, Math.min(firstBy.get(m.author_id) ?? Infinity, Number(m.ts)));
       return {
         sponsor: s.sponsor,
         channel: ch,

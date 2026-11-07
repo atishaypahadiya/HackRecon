@@ -72,7 +72,8 @@ export const SEL = {
   // samples in fixtures/slack-dom/*--thread-*.html, checked by thread.fixtures.test.ts). The other candidates and
   // the markup-free fallbacks in thread.ts stay in case Slack renames it.
   threadPane: '[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"], [data-qa="secondary_view"]',
-  /** UNVERIFIED which candidate matched: the first sync logged no close failures, but didn't record the match. */
+  /** Every end-of-pane sample from the 2026-11-06 sync has one close button, matching both data-qa="close_flexpane"
+   *  and aria-label="Close", so that's what the first sync pressed. Syncs now log the match per thread. */
   threadClose: '[data-qa="close_flexpane"], [data-qa="flexpane_close_button"], button[aria-label="Close"], button[aria-label="Close thread"]',
 } as const;
 

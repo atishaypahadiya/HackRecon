@@ -99,7 +99,7 @@ describe("repCandidates and preview", () => {
     "0-announcements": { sponsor: "event", kind: "event", aliases: [] },
   } as Sponsors;
   const msg = (id: string, channel: string, author: string): Message =>
-    ({ id, channel_id: "C", channel_name: channel, ts: id.split(":")[1]!, author_name: author, text: "", links: [], permalink: `p/${id}`, captured_at: "", run_id: "r" }) as Message;
+    ({ id, channel_id: "C", channel_name: channel, ts: id.split(":")[1]!, author_name: author, author_id: `U${author.split(" ")[0]}`, text: "", links: [], permalink: `p/${id}`, captured_at: "", run_id: "r" }) as Message;
   const messages = [msg("C:1", "spons-acme", "Ann (Acme)"), msg("C:2", "spons-acme", "Ann (Acme)"), msg("C:3", "0-announcements", "Bo (Acme)"), msg("C:4", "spons-acme", "Hacker")];
   const role = (m: Message): "sponsor-side" | "other" => (m.author_name.includes("Acme") ? "sponsor-side" : "other");
 
