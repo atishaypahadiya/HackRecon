@@ -33,6 +33,10 @@ export interface Message {
   /** Every href in the message body, in order (OV7, needed for URL merge). */
   links: string[];
   permalink: string;
+  /** A parent post's rendered "N replies" (Slack counts sent-to-channel replies too). */
+  reply_count?: number;
+  /** The newest reply's ts, from the reply bar. */
+  latest_reply?: Ts;
   /** ISO 8601 */
   captured_at: string;
   run_id: string;
@@ -336,6 +340,8 @@ function checkMessage(v: unknown, where: string, channelId: string): void {
     fail(`${where}.subtype`, 'expected "thread_broadcast" with thread_ts set');
   }
   arr(m.links, `${where}.links`).forEach((l, i) => str(l, `${where}.links[${i}]`));
+  if (m.reply_count !== undefined) num(m.reply_count, `${where}.reply_count`);
+  if (m.latest_reply !== undefined) tsStr(m.latest_reply, `${where}.latest_reply`);
 }
 
 function fail(path: string, why: string): never {

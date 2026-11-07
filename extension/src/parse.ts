@@ -41,7 +41,27 @@ export function parseRow(el: Element, base?: string): RawRow | null {
   if (nonPost) return { kind: "system", ts, sender, text, links, permalink, nonPost };
   const kind = isSystem(el, sender, !!bodyEl) ? "system" : "message";
   const threadTs = broadcastParent(permalink, ts);
-  return threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
+  const row: RawRow = threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
+  const replies = parseReplyBar(el);
+  if (replies) row.replies = replies;
+  return row;
+}
+
+/** The reply bar under a parent post: the "N replies" count and the newest reply's ts. data-qa first, then text. */
+export function parseReplyBar(row: Element): { count: number; last?: string } | null {
+  const button = replyButton(row);
+  const count = Number(TEXT.replyCount.exec(squash(button?.textContent ?? ""))?.[1] ?? NaN);
+  if (!button || !Number.isInteger(count) || count < 1) return null;
+  const last = tsFromAttr(row.querySelector(SEL.lastReply)?.getAttribute("data-ts"));
+  return last ? { count, last } : { count };
+}
+
+/** The element to click to open the thread: data-qa first, then any button or link reading "N replies". */
+export function replyButton(row: Element): Element | null {
+  const byQa = row.querySelector(SEL.replyCount);
+  if (byQa) return byQa;
+  for (const el of row.querySelectorAll("button, a, [role=button]")) if (TEXT.replyCount.test(squash(el.textContent ?? ""))) return el;
+  return null;
 }
 
 function parseSender(row: Element): Sender | null {

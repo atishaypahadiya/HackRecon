@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "HackRecon capture",
-  "version": "0.1.0",
-  "description": "Captures the Slack channel open in this tab, or the page open in this tab, as rendered. After capturing an announcement channel it reads the event's own Devpost pages in a background tab and saves them for hr sync.",
+  "version": "0.2.0",
+  "description": "Syncs an event's Slack channels and threads as rendered, or captures the open channel or page. Never posts, reacts or messages.",
   "permissions": [
     "activeTab",
     "scripting",

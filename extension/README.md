@@ -11,6 +11,16 @@ bun run build:ext          # writes extension/dist/
 
 In Chrome, open `chrome://extensions`, turn on Developer mode, click **Load unpacked**, and pick `extension/`. Rebuild and hit the reload icon after any change.
 
+## Sync this event
+
+1. Open the event's Slack at `app.slack.com/client/...`.
+2. Click the extension icon, then **Sync this event**. Keep the Slack window visible until it finishes (Chrome slows timers in hidden tabs).
+3. It reads the sidebar and picks every `spons-`, `partner-` and `cohost-` channel, plus announcement channels. It opens each one with a sidebar click and captures it as below. Then it opens every thread it found, longest first. For each, it clicks "N replies", reads the pane from the parent down to the last reply, clicks any "show more replies" control, and closes the pane. Pacing: 1.5 s per scroll step, 1.5 s between threads, 3 s between channels. **Stop sync** ends it after the current step; finished channels are already saved.
+4. Everything goes to `~/Downloads/hackrecon/sync/<stamp>/`: `captures/<channel_id>.json`, `.threads.json` and `.threads.raw.json` (the pane rows as scrubbed HTML, per scroll step), thread-pane samples in `slack-dom/`, and `sync.json` (what happened per channel and thread).
+5. `bun run hr sync-ingest` copies the bundle into `events/<slug>/captures/sync-<stamp>/` and the samples into `fixtures/slack-dom/`, and prints a summary. Then `bun run hr compare events/current/captures/sync-<stamp>` scores channels and threads against the export.
+
+It never posts, reacts or messages, makes no Slack API calls and opens no profile cards. Opening channels and threads marks them read, as it would for you.
+
 ## Capture a channel
 
 1. Open the channel at `app.slack.com/client/...`.
@@ -48,9 +58,9 @@ Posters the export can't name are listed as "no name in export". These are the S
 
 The last line lists the locked-25 channels that don't pass yet. Exit code 1 means some channel failed keyed recall: fix it and re-capture (day-2 morning rule).
 
-## Saving DOM samples (`events/<slug>/fixtures/slack-dom/`, gitignored)
+## DOM samples (`events/<slug>/fixtures/slack-dom/`, gitignored)
 
-Every Slack selector lives in `src/selectors.ts`. They were verified on 2026-10-27 against samples from spons-moss, spons-capital-one and spons-factory-ai. The few with no matching element in those samples (inline titles, APP badges) are marked UNVERIFIED. `src/parse.fixtures.test.ts` checks the parser against each sample using the export as the answer key:
+Every Slack selector lives in `src/selectors.ts`. The channel selectors were verified on 2026-10-27 against samples from spons-moss, spons-capital-one and spons-factory-ai. The reply bar and sidebar selectors were verified against the same samples on 2026-11-06. The few with no matching element in those samples (inline titles, APP badges, the thread pane's own markup) are marked UNVERIFIED. `src/parse.fixtures.test.ts` checks the parser against each channel sample using the export as the answer key:
 - kept vs skipped rows
 - authors after carry-forward
 - the Slack Connect flag
@@ -58,26 +68,10 @@ Every Slack selector lives in `src/selectors.ts`. They were verified on 2026-10-
 - ts consistency
 - channel-start detection
 
-If Slack changes its DOM, save fresh samples and rerun it.
+Samples are not saved by hand (user, 2026-11-06). **Sync this event** saves thread-pane samples on its own, scrubbed of session tokens before they leave the page (the same rules as `hr scrub-dom`):
+- `<channel>--thread-<ts>-top.html` and `-end.html`: the pane at its top and at its end, for the sync's first thread and for threads with at least 8 replies (6 at most)
+- `-more.html`: a pane showing a "more replies" control (2 at most)
+- `-empty.html`: a pane that opened but gave no replies (2 at most)
+- `-notfound-<ts>.html`: the page after a click on "N replies" that opened no pane (2 at most), for fixing the pane selectors
 
-To save one: scroll a channel to the spot you want, open DevTools → Console, and run
-
-```js
-copy(document.body.outerHTML)
-```
-
-Then in a terminal: `pbpaste > events/<slug>/fixtures/slack-dom/<channel>--<case>.html`, and then `bun run hr scrub-dom`. `outerHTML` can carry the session (xoxc- tokens in boot data, the xoxd- cookie, signed file URLs); scrub-dom strips them in place and prints counts only, and `bun test` fails while any sample still has one. Cover each of these at least once (the coverage tests name any that are missing):
-
-| Case | Where to find one | File name |
-|---|---|---|
-| Channel-start header | scroll any channel to the very top | must contain `channel-start` (other samples may show it too) |
-| Grouped posts (no repeated author header) | consecutive posts by one person | anything else |
-| Bot post | Slackbot "… from Moss was added to this channel" (spons-moss, spons-wajo-ai, spons-capital-one) | |
-| System rows | "joined #channel" rows (most channels) | |
-| Labeled link | a post with "Use this link"-style text | |
-| Thread pane, top (step 1) | a thread open in the side pane, scrolled up until the parent message shows | `--thread-top` |
-| Thread pane, end (step 1) | the same pane scrolled to its last reply | `--thread-end` |
-| Reply row (step 1) | the channel with the pane closed, a post showing "N replies · Last reply …" | `--reply-row` |
-| More replies (step 1) | a pane showing a "Show more replies"-style control, if Slack renders one | `--thread-more` |
-
-Then `bun test extension/`. Fix `src/selectors.ts` until it passes, and rebuild.
+`src/thread.fixtures.test.ts` checks every pane sample against the export: the pane is found, and each reply read belongs to that parent and has the export's author. `bun test` fails while any sample still carries a token. If Slack changes its DOM, run a sync, then `bun test extension/`, fix `src/selectors.ts` until it passes, rebuild, and `bun run hr rebuild-threads` reparses the saved rows without another sync.

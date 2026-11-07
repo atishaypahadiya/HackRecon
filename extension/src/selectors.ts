@@ -44,6 +44,32 @@ export const SEL = {
    *  UNVERIFIED: no DOM sample of a restricted channel yet (D19); posting_restricted is null when absent. */
   footer: '[data-qa="message_pane"] ~ footer, .p-workspace__primary_view_footer, [data-qa="message_input"]',
   composer: '[data-qa="message_input"], .ql-editor[contenteditable="true"]',
+
+  // "Sync this event" (user 2026-11-06). Verified in the spons-moss samples: the reply bar under a parent post,
+  // the sidebar's channel items, and the message container that carries the ts outside any pane-specific class.
+  /** The "N replies · Last reply …" bar under a parent post. */
+  replyBar: '[data-qa="reply_bar"]',
+  /** The button in the reply bar that opens the thread pane; text "N replies"; aria-expanded="true" while open. */
+  replyCount: '[data-qa="reply_bar_count"]',
+  /** Holds the newest reply's ts in data-ts. */
+  lastReply: '[data-qa="reply_bar_hover_last_reply"]',
+  /** One channel in the sidebar; the id is in data-qa-channel-sidebar-channel-id. */
+  sidebarChannel: '[data-qa="channel-sidebar-channel"]',
+  sidebarChannelIdAttr: "data-qa-channel-sidebar-channel-id",
+  /** The channel's name, as data-qa="channel_sidebar_name_<name>". */
+  sidebarChannelName: '[data-qa^="channel_sidebar_name_"]',
+  sidebar: '[data-qa="channel-sidebar"]',
+  /** Every rendered message, in any pane; its ts is in data-msg-ts. */
+  messageContainer: '[data-qa="message_container"]',
+  messageTsAttr: "data-msg-ts",
+  /** The primary view's message pane; the thread pane is anything outside it. */
+  messagePane: '[data-qa="message_pane"]',
+
+  // Thread pane. UNVERIFIED until the first sync saves pane samples (fixtures/slack-dom/*--thread-*.html): these
+  // candidates are tried first, then the pane is found without them (thread.ts: the subtree outside the message
+  // pane that renders the parent's message container).
+  threadPane: '[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"], [data-qa="secondary_view"]',
+  threadClose: '[data-qa="close_flexpane"], [data-qa="flexpane_close_button"], button[aria-label="Close"], button[aria-label="Close thread"]',
 } as const;
 
 /** Sender IDs that are bots even without a badge. */
@@ -51,6 +77,12 @@ export const BOT_SENDER_IDS = new Set(["USLACKBOT"]);
 
 /** Text fallbacks for rows SEL doesn't mark. `system` is only tried on rows without a message body. */
 export const TEXT = {
+  /** The reply bar's button text, when data-qa is missing (D5 fallback). */
+  replyCount: /^(\d+)\s+repl(?:y|ies)$/i,
+  /** UNVERIFIED: a control in the thread pane that loads replies it isn't showing yet. */
+  moreReplies: /^(?:show|load|view|see)\s+(?:\d+\s+)?(?:more|older|earlier|newer|other|previous)\s+repl(?:y|ies)\b|^\d+\s+more\s+repl(?:y|ies)\b/i,
+  /** UNVERIFIED: the label on a reply that was also sent to the channel. */
+  alsoSent: /\balso sent to (?:the channel|#)/i,
   channelStart: /\bThis is the very beginning of the\b|\bthe very beginning of #/i,
   /** Join/leave/rename/topic/purpose rows (export subtypes channel_join, channel_name, channel_topic, channel_purpose),
    *  and deleted-parent tombstones (subtype tombstone). */

@@ -103,6 +103,8 @@ import {
   useEvent,
 } from "./event.ts";
 import { scrubTokens, total } from "./domscrub.ts";
+import { BUNDLE_DIR, summarizeSync, wholeFiles, type SyncLogLite } from "./syncbundle.ts";
+import { threadRunFromRaw, type ThreadRaw } from "../extension/src/thread.ts";
 import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
 import type { EventConfig } from "./classify.ts";
 import {
@@ -141,7 +143,7 @@ import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestric
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, PageSnapshot } from "./schema.ts";
-import { PAGE_ACCESS, pageFileName, parsePageSnapshot, parseThreadCaptureFile, type Item, type PageAccess } from "./schema.ts";
+import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parsePageSnapshot, parseThreadCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -197,6 +199,13 @@ const USAGE = `usage:
   bun run hr prefill --repo https://github.com/<owner>/<repo>
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
+  bun run hr sync-ingest [~/Downloads/hackrecon/sync/<stamp>]
+      Brings in a "Sync this event" bundle (the newest by default): captures to ${CAPTURES_DIR}/sync-<stamp>/,
+      thread pane samples (scrubbed again) to ${SLACK_DOM_FIXTURES_DIR}/, and prints what the sync did.
+      Then: bun run hr compare ${CAPTURES_DIR}/sync-<stamp>
+  bun run hr rebuild-threads ${CAPTURES_DIR}/sync-<stamp>
+      Rebuilds each <channel_id>.threads.json from its .threads.raw.json with the current selectors.ts (the
+      extension's own first version is kept once as .threads.ext.json).
   bun run hr scrub-dom [files…]
       Strips Slack session tokens (xoxc-, xoxd-, bearer, JWT, signed file URLs) from saved DOM samples in
       ${SLACK_DOM_FIXTURES_DIR}/, in place. Prints counts only. Run it after saving any sample.
@@ -230,7 +239,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "scrub-dom", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -253,6 +262,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "prefill") return prefillCli(rest);
   if (cmd === "prefill-eval") return prefillEval(rest);
   if (cmd === "scrub-dom") return scrubDom(rest);
+  if (cmd === "sync-ingest") return syncIngest(rest);
+  if (cmd === "rebuild-threads") return rebuildThreads(rest);
   if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
@@ -306,6 +317,86 @@ function compare(args: string[]): number {
     console.log(`\nwrote ${fromCaller(values.json)}`);
   }
   return reports.some((r) => !r.pass.recall) || (threads && !threads.totals.pass) ? 1 : 0;
+}
+
+function syncIngest(args: string[]): number {
+  const inbox = join(homedir(), "Downloads", "hackrecon", "sync");
+  const dir = args[0] ? fromCaller(args[0]) : existsSync(inbox) ? readdirSync(inbox).filter((d) => BUNDLE_DIR.test(d)).sort().map((d) => join(inbox, d)).pop() : undefined;
+  if (!dir || !existsSync(dir)) {
+    console.error(`No sync bundle in ${inbox}/. Run "Sync this event" in the extension first.`);
+    return 2;
+  }
+  const stamp = dir.split("/").pop()!;
+  const out = join(CAPTURES_DIR, `sync-${stamp}`);
+  mkdirSync(out, { recursive: true });
+  mkdirSync(SLACK_DOM_FIXTURES_DIR, { recursive: true });
+  const read = (sub: string, parts: string[]) => Buffer.concat(parts.map((p) => readFileSync(join(dir, sub, p))));
+  let bad = 0;
+  for (const sub of ["captures", "slack-dom"]) {
+    if (!existsSync(join(dir, sub))) continue;
+    for (const f of wholeFiles(readdirSync(join(dir, sub)))) {
+      if (f.missing) {
+        console.error(`${sub}/${f.name}: parts ${f.missing.join(", ")} missing; skipped`);
+        bad++;
+        continue;
+      }
+      const text = read(sub, f.parts).toString("utf8");
+      if (sub === "slack-dom") {
+        const { html, found } = scrubTokens(text);
+        writeFileSync(join(SLACK_DOM_FIXTURES_DIR, f.name), html);
+        if (total(found)) console.log(`slack-dom/${f.name}: stripped ${total(found)} token${total(found) === 1 ? "" : "s"} the extension missed`);
+        continue;
+      }
+      try {
+        const v = JSON.parse(text);
+        if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
+        writeFileSync(join(out, f.name), text);
+      } catch (e) {
+        console.error(`captures/${f.name}: ${(e as Error).message}; skipped`);
+        bad++;
+      }
+    }
+  }
+  for (const f of captureFiles([out])) {
+    try {
+      loadCapture(f);
+    } catch (e) {
+      console.error(`${f}: ${(e as Error).message}`);
+      bad++;
+    }
+  }
+  const logPath = join(dir, "sync.json");
+  if (existsSync(logPath)) {
+    writeFileSync(join(out, "sync.json"), readFileSync(logPath));
+    for (const l of summarizeSync(JSON.parse(readFileSync(logPath, "utf8")) as SyncLogLite)) console.log(l);
+  } else console.log("no sync.json in the bundle (the sync may still be running, or stopped before its first channel)");
+  console.log(`\ncaptures in ${out}/; samples in ${SLACK_DOM_FIXTURES_DIR}/. Next: bun run hr compare ${out}`);
+  return bad ? 1 : 0;
+}
+
+async function rebuildThreads(args: string[]): Promise<number> {
+  const dir = args[0] ? fromCaller(args[0]) : "";
+  if (!dir || !existsSync(dir)) {
+    console.error("usage: bun run hr rebuild-threads captures/sync-<stamp>");
+    return 2;
+  }
+  const { parseHTML } = await import("linkedom");
+  const toRows = (html: string) => [...(parseHTML(`<html><body><div id="r">${html}</div></body></html>`).document.getElementById("r")?.children ?? [])] as unknown as Element[];
+  let n = 0;
+  for (const f of readdirSync(dir).filter((f) => /^[CG][A-Z0-9]+\.threads\.raw\.json$/.test(f)).sort()) {
+    const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as { run_id: string; channel_id: string; channel_name: string; started_at: string; finished_at: string; base: string; threads: ThreadRaw[] };
+    const ctx = { channelId: raw.channel_id, channelName: raw.channel_name, runId: raw.run_id, capturedAt: raw.finished_at, base: raw.base };
+    const file: ThreadCaptureFile = { schema_version: SCHEMA_VERSION, kind: "threads", run_id: raw.run_id, source: "extension", channel_id: raw.channel_id, channel_name: raw.channel_name, started_at: raw.started_at, finished_at: raw.finished_at, budget: "uncapped", threads: raw.threads.map((t) => threadRunFromRaw(t, ctx, toRows)) };
+    parseThreadCaptureFile(JSON.parse(JSON.stringify(file)), f);
+    const target = join(dir, `${raw.channel_id}.threads.json`);
+    const kept = join(dir, `${raw.channel_id}.threads.ext.json`);
+    if (existsSync(target) && !existsSync(kept)) renameSync(target, kept);
+    writeFileSync(target, JSON.stringify(file, null, 2));
+    n++;
+    console.log(`${raw.channel_name}: ${file.threads.length} threads, ${file.threads.reduce((a, t) => a + t.replies.length, 0)} replies`);
+  }
+  console.log(`rebuilt ${n} thread files in ${dir}`);
+  return n ? 0 : 2;
 }
 
 function scrubDom(args: string[]): number {

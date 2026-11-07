@@ -4,6 +4,7 @@
 // UNVERIFIED in Chrome until step 5's Slack session: the settle timing and the Cloudflare wait are untested.
 import { pageFileName } from "../../pipeline/schema.ts";
 import { DEVPOST_EVENT_URL } from "./autopages.ts";
+import { SYNC_FILE } from "./ui.ts";
 
 const SETTLE_POLL_MS = 1000;
 const SETTLE_MAX_MS = 25_000;
@@ -61,7 +62,19 @@ async function capturePage(url: string): Promise<string> {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[] }, _sender, reply) => {
+chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string }, sender, reply) => {
+  if (msg.type === "save-file") {
+    // Only our own content script, and only data: URLs it built; the path is checked again here.
+    if (sender.id !== chrome.runtime.id || !msg.filename || !SYNC_FILE.test(msg.filename) || msg.filename.includes("..") || !msg.url?.startsWith("data:")) {
+      reply({ error: "refused: not a sync file" });
+      return;
+    }
+    chrome.downloads
+      .download({ url: msg.url, filename: msg.filename, conflictAction: "overwrite", saveAs: false })
+      .then(() => reply({}))
+      .catch((e: Error) => reply({ error: e.message }));
+    return true;
+  }
   if (msg.type !== "capture-pages" || !msg.urls?.length) return;
   // One page at a time, so a sync is a handful of ordinary page loads, not a burst.
   (async () => {
