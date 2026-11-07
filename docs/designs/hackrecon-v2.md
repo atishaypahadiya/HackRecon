@@ -11,6 +11,7 @@ Predecessor: `docs/designs/hackrecon-demo-scope.md` (v1, decisions D1–D26). It
 
 - Quotes on Claim, Plan and Ship are the post's plain text, names included (`board.ts` excerpts, hr.ts `shown`). Model inputs (classifier, grouping, prelabel) are still built redacted; changing them re-runs those passes and is listed in TODOS.
 - Hacker-only channels are ordinary Sync targets (after the config channels); sync-ingest no longer refuses their text. The authors-only reader stays for files already captured.
+- Demo run (2026-11-07, board at `?now=2026-10-24T12:00-07:00`, 390 and 1440 wide, no console errors): repo link → 17 drafts from Hindsight @ db92f7d → Plan in 8.1 s cold (tracks at 5.0 s; 149 ms cached): 4 likely tracks + 1 possible, the Best Actor gap with its repo lines, 2 credits, the Anthropic workshop at 1 PM, 4 sponsors' booth questions and reps → Ship: the three entered tracks state nothing to check; adding Best Actor shows its gap. Two fixes: Plan's sections and its Next-for-you times now take the board's review clock (Sessions was empty and the banner showed Sunday's 9:30 extension on Saturday); Ship already did.
 - Canon: the 2026-11-07 `hr sync` re-extraction ($2.76, not announced in advance) dropped two entry steps the page still states (GoDaddy's "Register your domain name", Apify's "Building an actor"); the 2026-11-06 records were restored and today's are kept outside the repo.
 
 ## The brief (user, 2026-10-28, verbatim)

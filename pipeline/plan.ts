@@ -5,6 +5,7 @@
 // Rules (user, verbatim): "no suggestion without a verified source quote; never claims eligibility; updates
 // live with 'new' markers; never sends anything." Fit words are "likely fits" / "possible", never "eligible".
 import type Anthropic from "@anthropic-ai/sdk";
+import { permalinkTs } from "./board.ts";
 import type { EventConfig } from "./classify.ts";
 import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, productMentioned, trackCards, type Evidence, type Ranked, type SponsorAliases, type TrackCard } from "./fit.ts";
 import { callChecked } from "./model.ts";
@@ -341,7 +342,8 @@ export interface PlanDeadline {
 /** What Plan knows before the user types: the track count ("52 tracks on Devpost"), and the times the Next for you
  *  line can show. Times are the event config's schedule items that nothing supersedes (Slack-sourced, so they carry
  *  Cal Hacks' 9:30 extension); canon's deadlines only when there is no schedule. Merging the two with the D13 merge
- *  line is Ship's (P9). */
+ *  line is Ship's (P9). With `nowMs` (the board's review clock), an item counts once its post exists, and a
+ *  superseded one counts until the post replacing it exists, so a replay never shows a time before it was posted. */
 export interface PlanMeta {
   event: string;
   timezone: string;
@@ -352,10 +354,13 @@ export interface PlanMeta {
   deadlines: PlanDeadline[];
 }
 
-export function planMeta(entities: Entity[], e: EventConfig): PlanMeta {
+export function planMeta(entities: Entity[], e: EventConfig, nowMs?: number): PlanMeta {
   const tracks = entities.filter((x) => x.kind === "track");
   const captured = entities.map((x) => x.name.source.captured_at).filter(Boolean).sort();
-  const schedule = (e.schedule ?? []).filter((x) => !x.superseded_by && x.at).map((x, k) => ({ id: `schedule:${k}`, name: x.what, at: x.at, quote: x.what, url: x.source ?? "" }));
+  const all = e.schedule ?? [];
+  const posted = (x: { source?: string }) => nowMs === undefined || (permalinkTs(x.source ?? "") ?? 0) * 1000 <= nowMs;
+  const live = (x: (typeof all)[number]) => posted(x) && !(x.superseded_by && all.some((y) => y.what === x.superseded_by && posted(y)));
+  const schedule = all.flatMap((x, k) => (x.at && live(x) ? [{ id: `schedule:${k}`, name: x.what, at: x.at, quote: x.what, url: x.source ?? "" }] : []));
   const canon = entities
     .filter((x) => x.kind === "rule" && typeof x.fields.deadline?.value === "string")
     .map((x) => ({ id: x.id, name: x.name.value ?? "", at: String(x.fields.deadline!.value), quote: x.fields.deadline!.source.quote, url: x.fields.deadline!.source.url }));

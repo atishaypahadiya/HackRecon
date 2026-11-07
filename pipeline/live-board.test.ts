@@ -78,6 +78,9 @@ describe("a synthetic sync diff", () => {
   test("the page inlines live.js and runs its check every minute", () => {
     expect(readFileSync(BOARD_PAGE, "utf8")).toMatch(/setInterval\(\(\) => liveTick\(\)[^\n]*60000\)/);
   });
+  test("the page sends its review clock (?now) with the plan request, as with Ship's checklist", () => {
+    expect(readFileSync(BOARD_PAGE, "utf8")).toContain("`/plan/stream?now=${encodeURIComponent(at)}`");
+  });
   test("the page inlines live.js", () => {
     expect(readFileSync(BOARD_PAGE, "utf8")).toContain("<!-- live.js -->");
   });

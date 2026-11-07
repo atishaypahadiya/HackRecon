@@ -16,6 +16,7 @@ const ALLOWED: Partial<Record<keyof Fingerprint, string>> = {};
 /** Field-level differences inside a field that is otherwise compared exactly, with the decision. */
 const ALLOWED_WITHIN = {
   "offers[].id": "OV5 (D21): ids come from each offer's first post; compared through board.json's v1_ids map",
+  "offers[].excerpt": "user 2026-11-07: quotes show the post as written, names included (v1 redacted them); every other offer field is still exact",
 };
 
 const key = readFingerprintKey(DIR);
@@ -41,7 +42,10 @@ describe.skipIf(!ready)("v1 Claim board fingerprint (D14)", () => {
 
   for (const field of Object.keys(want) as (keyof Fingerprint)[]) {
     test(ALLOWED[field] ? `${field} (allowed to differ: ${ALLOWED[field]})` : `${field} unchanged`, () => {
-      if (!ALLOWED[field]) expect(got[field]).toEqual(want[field]);
+      if (ALLOWED[field]) return;
+      if (field !== "offers") return expect(got[field]).toEqual(want[field]);
+      const noExcerpt = (xs: Fingerprint["offers"]) => xs.map(({ excerpt: _, ...o }) => o);
+      expect(noExcerpt(got.offers)).toEqual(noExcerpt(want.offers));
     });
   }
 

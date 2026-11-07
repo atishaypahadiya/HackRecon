@@ -973,6 +973,8 @@ P.live = { marks: new Map(), was: new Map(), next: null, n: 0, urgent: [], seen:
 const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
 const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
 // ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
+// /plan/meta as of the same clock, so Next for you never shows a time posted after it.
+const metaUrl = () => { const q = new URLSearchParams(location.search).get("now"); return q ? `/plan/meta?now=${encodeURIComponent(q)}` : "/plan/meta"; };
 const nowMs = () => { const q = new URLSearchParams(location.search).get("now"); const t = q ? Date.parse(q) : NaN; return Number.isNaN(t) ? Date.now() : t; };
 const pfmt = (iso, o) => new Date(iso).toLocaleString("en-US", { timeZone: P.meta.timezone, ...o });
 const firstSentence = (s) => s.split(/(?<=[.!?])\s+|\n+/)[0] || s;
@@ -1168,9 +1170,11 @@ async function runPlan() {
     paintResults();
   }
 }
-/** POST /plan/stream, read line by line; `on` gets each section as the server sends it. */
+/** POST /plan/stream, read line by line; `on` gets each section as the server sends it. Passes the page's
+ *  ?now (the review clock) so sessions, credits and reps are as of that moment, as Ship's checklist is. */
 async function readPlan(input, on, signal, stale = () => false) {
-  const r = await fetch("/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(input), signal });
+  const at = new URLSearchParams(location.search).get("now");
+  const r = await fetch(at ? `/plan/stream?now=${encodeURIComponent(at)}` : "/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(input), signal });
   if (!r.ok || !r.body) throw new Error(String(r.status));
   const rd = r.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = "";
@@ -1204,7 +1208,7 @@ async function liveTick() {
   const seq = P.seq;
   const r = await HRLive.check({
     meta: P.meta,
-    getMeta: () => fetch("/plan/meta", { cache: "no-store" }).then((x) => x.json()),
+    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()),
     onMeta: (n, du) => {
       P.meta = n;
       P.live.urgent = mergeUrgent(du);
@@ -1530,7 +1534,7 @@ function openDeadline(from) {
 }
 setInterval(() => { if (tab === "ship") paintShip(); }, 30000);
 
-fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((m) => {
+fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
   P.meta = m;
   try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
   try { const e = JSON.parse(store.get(enterKey()) || "[]"); S.entered = Array.isArray(e) ? e.filter((x) => typeof x === "string") : []; } catch { S.entered = []; }

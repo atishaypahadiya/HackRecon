@@ -899,13 +899,17 @@ async function board(args: string[]): Promise<number> {
         }
         const input = parsePlanBody(body);
         if ("error" in input) return json(input, 400);
+        // ?now: the board's review clock (as /ship/list), so P3–P5 join as of that moment; otherwise now.
+        const at = new URL(req.url).searchParams.get("now");
+        const nowMs = at ? Date.parse(at) : Date.now();
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
         const ctx = planContext();
         const enc = new TextEncoder();
         let open = true;
         const stream = new ReadableStream<Uint8Array>({
           async start(ctrl) {
             // Read to the end even if the page went away (it typed again): finished model calls are still cached.
-            await runPlanStream(input, ctx, { via: "board" }, (e) => {
+            await runPlanStream(input, ctx, { via: "board", nowMs }, (e) => {
               if (!open) return;
               // Errors stay in the server log; the page shows its own sentence.
               const out =
@@ -1002,7 +1006,11 @@ async function board(args: string[]): Promise<number> {
       }
       if (path === "/plan/meta") {
         const { entities, event } = planContext();
-        return json({ ...planMeta(entities, event), version: dataVersion(), stale: stalePages() });
+        // ?now: the board's review clock, as /ship/list; a replay never shows a time before its post.
+        const at = new URL(req.url).searchParams.get("now");
+        const nowMs = at ? Date.parse(at) : undefined;
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages() });
       }
       if (path === "/")
         return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
@@ -2298,7 +2306,7 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
       return { sponsors: sp, ...planCredits(board?.offers ?? [], sp, new Map(messages.map((m) => [m.permalink, shown(m)])), nowSec) };
     },
     sessions: (tracks) => {
-      const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event).deadlines);
+      const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event, nowMs).deadlines);
       return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline, shown) };
     },
     people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec, shown, reps),
