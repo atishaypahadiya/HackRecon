@@ -341,7 +341,7 @@ export interface PlanDeadline {
 /** What Plan knows before the user types: the track count ("52 tracks on Devpost"), and the times the Next for you
  *  line can show. Times are the event config's schedule items that nothing supersedes (Slack-sourced, so they carry
  *  Cal Hacks' 9:30 extension); canon's deadlines only when there is no schedule. Merging the two with the D13 merge
- *  line is Ship's (P6). */
+ *  line is Ship's (P9). */
 export interface PlanMeta {
   event: string;
   timezone: string;

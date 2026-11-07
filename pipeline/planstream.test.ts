@@ -82,4 +82,21 @@ describe("planStream (P2, D4: sections stream in when ready)", () => {
     expect(ev.map((e) => e.section)).toEqual(["tracks", "booths", "gaps", "done"]);
     expect(ev[2]).toMatchObject({ error: "failed" });
   });
+
+  test("P3–P5 come after gaps, each on its own; a failed ranking settles them too", async () => {
+    const c = clock();
+    const joins = {
+      credits: () => ({ sponsors: [], credits: [], dropped: 0 }),
+      sessions: () => ({ deadline: null, sessions: [] }),
+      people: () => {
+        throw new Error("boom");
+      },
+    };
+    const base = { repo: null, repoLines: () => [], booths: () => [], joins };
+    const ok = await collect({ ...base, tracks: () => c.after(10, tracksOk("cache")), gaps: () => c.after(10, { error: "model down" }) }, c);
+    expect(ok.map((e) => [e.section, "error" in e])).toEqual([["tracks", false], ["booths", false], ["gaps", true], ["credits", false], ["sessions", false], ["people", true], ["done", false]]);
+    const d = clock();
+    const bad = await collect({ ...base, tracks: () => d.after(10, { error: "no key" }), gaps: () => d.after(1, gapsOk(0)) }, d);
+    expect(bad.filter((e) => "error" in e).map((e) => e.section)).toEqual(["tracks", "booths", "gaps", "credits", "sessions", "people"]);
+  });
 });

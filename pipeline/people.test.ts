@@ -6,17 +6,29 @@ import { rolesById } from "./roles.ts";
 import type { Message } from "./schema.ts";
 
 const av = (dhash: string, sha256 = dhash) => ({ sha256, dhash });
+const custom = { custom_image: true };
 const ones = "f".repeat(64), zeros = "0".repeat(64);
 const near = "f".repeat(62) + "00"; // 8 bits from ones
 
 describe("linkEvidence: strong evidence only, in the user's order (2026-11-07)", () => {
   test("email first, then the avatar (bytes, or within 8 of 256 hash bits), then real name + title + company", () => {
     expect(linkEvidence({ id: "A", email: "Raj@Fetch.ai " }, { id: "B", email: "raj@fetch.ai" })).toMatchObject({ kind: "email" });
-    expect(linkEvidence({ id: "A", avatar: av(ones, "x") }, { id: "B", avatar: av(zeros, "x") })).toMatchObject({ kind: "avatar", sha256_equal: true });
-    expect(linkEvidence({ id: "A", avatar: av(ones) }, { id: "B", avatar: av(near) })).toEqual({ kind: "avatar", sha256_equal: false, dhash_bits_differing: 8, of: 256 });
-    expect(linkEvidence({ id: "A", avatar: av(ones) }, { id: "B", avatar: av("f".repeat(61) + "000") })).toBeNull();
+    expect(linkEvidence({ id: "A", ...custom, avatar: av(ones, "x") }, { id: "B", ...custom, avatar: av(zeros, "x") })).toMatchObject({ kind: "avatar", sha256_equal: true });
+    expect(linkEvidence({ id: "A", ...custom, avatar: av(ones) }, { id: "B", ...custom, avatar: av(near) })).toEqual({ kind: "avatar", sha256_equal: false, dhash_bits_differing: 8, of: 256 });
+    expect(linkEvidence({ id: "A", ...custom, avatar: av(ones) }, { id: "B", ...custom, avatar: av("f".repeat(61) + "000") })).toBeNull();
     const p = { real_name: "Rajashekar Vennavelli", title: "Senior AI Engineer", company: "Fetch.ai" };
     expect(linkEvidence({ id: "A", ...p }, { id: "B", ...p })).toMatchObject({ kind: "profile" });
+  });
+
+  test("default avatars never link: two different users with the same generated avatar stay apart", () => {
+    const def = (id: string, real_name: string): SnapshotUser => ({ id, profile: { real_name, is_custom_image: false, display_name: real_name } });
+    const [a, b] = [def("UANA", "Ana Ruiz"), def("UBEN", "Ben Okafor")].map(profileEvidence);
+    // Identical bytes and hash, as Slack's generated defaults can be.
+    expect(linkEvidence({ ...a!, avatar: av(ones, "same") }, { ...b!, avatar: av(ones, "same") })).toBeNull();
+    // One custom, one default: still no link.
+    expect(linkEvidence({ ...a!, custom_image: true, avatar: av(ones, "same") }, { ...b!, avatar: av(ones, "same") })).toBeNull();
+    // An avatar with no is_custom_image at all is not evidence either.
+    expect(linkEvidence({ id: "A", avatar: av(ones) }, { id: "B", avatar: av(ones) })).toBeNull();
   });
 
   test("never a name alone: real name + title without a company, or a real name alone, links nothing", () => {

@@ -22,6 +22,9 @@ export interface AccountEvidence {
   email?: string;
   /** sha256 of the image bytes and its 256-bit difference hash, both hex. */
   avatar?: { sha256: string; dhash: string };
+  /** users.json's is_custom_image. Only a custom image is evidence: Slack's generated default avatars repeat across
+   *  different people (user 2026-11-07). */
+  custom_image?: boolean;
   real_name?: string;
   title?: string;
   company?: string;
@@ -70,13 +73,13 @@ export interface SnapshotUser {
 /** The evidence one snapshot account offers, avatar aside (it needs a fetch: avatarHashes). */
 export function profileEvidence(u: SnapshotUser): AccountEvidence {
   const p = u.profile ?? {};
-  return { id: u.id, email: p.email || undefined, real_name: p.real_name || undefined, title: p.title || undefined, company: p.company || undefined };
+  return { id: u.id, email: p.email || undefined, custom_image: p.is_custom_image === true, real_name: p.real_name || undefined, title: p.title || undefined, company: p.company || undefined };
 }
 
 /** The first rule that holds for the pair, in the user's order, or null. */
 export function linkEvidence(a: AccountEvidence, b: AccountEvidence): LinkEvidence | null {
   if (a.email && b.email && norm(a.email) === norm(b.email)) return { kind: "email", email_sha256: sha(norm(a.email)).slice(0, 16) };
-  if (a.avatar && b.avatar) {
+  if (a.avatar && b.avatar && a.custom_image === true && b.custom_image === true) {
     const d = hammingHex(a.avatar.dhash, b.avatar.dhash);
     if (a.avatar.sha256 === b.avatar.sha256 || d <= AVATAR_MAX_BITS) return { kind: "avatar", sha256_equal: a.avatar.sha256 === b.avatar.sha256, dhash_bits_differing: d, of: 256 };
   }
