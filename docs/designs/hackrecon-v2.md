@@ -1499,7 +1499,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
 ### Step 4 progress (2026-11-06)
 
 - **P2 / P7, Tracks section and dogfood.** `pipeline/plan.ts` builds Plan's Tracks section with the same ranker, quote check and cache as fit-eval, so the gate's numbers describe what Plan shows. `hr plan --from fixtures/dogfood/hindsight.json` on real canon:
-  - **Results:** likely fits for [Anthropic] Claude for Public Benefit, [Apify] Best Use of Apify and [Factory] Best Use of the Factory Droid SDK; also possible: [Figma] Best Design and [Apify] Best Actor. All 4 tracks Hindsight targeted appear. They were targeted, not won (no track prizes), so this isn't a win label.
+  - **Results:** likely fits for [Anthropic] Claude for Public Benefit, [Apify] Best Use of Apify and [Factory] Best Use of the Factory Droid SDK; also possible: [Figma] Best Design and [Apify] Best Actor. All 4 tracks Hindsight targeted appear. They were targeted, not won (no track prizes), so this isn't a win label. (Entered, per the user on 2026-11-06: Claude for Public Benefit, Factory Droid SDK and Best Use of Apify; not Best Actor, and Figma wasn't submitted.)
   - **Time to the section:** 4,955 ms uncached (n = 1, Sonnet, $0.02), 1 ms cached. Under the 8 s target on one sample; more samples come with the board endpoint.
   - **The three open items, done as the user specified (2026-11-06), in one change. It FAILS the fit gate. Not committed; awaiting the user.**
     - **What changed:**
@@ -1612,6 +1612,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - One gap on [Apify] Best Actor: "Best Actor asks for building an actor; the repository's apps/actor README says its own Actor is not used and Radar runs Apify's existing Cheerio Scraper."
       - It cites the page's "We have a Best Actor award for building an actor for this event.", `apps/actor/README.md:7` "Not used: Radar runs Apify's Cheerio Scraper (DECISIONS.md D-002)." and `README.md:142` "Apify's existing Cheerio Scraper Actor fetches curated calendars and listings."
       - Without the repo the same check finds none: the description and stack don't say how Apify is run. The "none found" line says that doesn't mean the requirements are met.
+      - **What this shows (corrected 2026-11-06):** Hindsight entered [Apify] Best Use of Apify, not Best Actor. The team didn't build an Actor and didn't enter the Actor track. So the gap check agrees with the team's own choice; it did not cost them a track. The demo claim is that the check finds, from the code alone, the reason a team would skip Best Actor. It is not that it saved a submission.
     - **Ranking moved with the used-fors:** the new stack lines changed the ranker's request (a new cache key). Likely is unchanged; the possible Figma track is now [Figma] Best Use Case instead of Best Design.
     - **Board:**
       - The input has an optional "Repo link" field.
@@ -1624,10 +1625,11 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
     - **CLI:** each track's gaps print under its row, as on the board. A likely track with stated requirements and no gap says "Gaps: none found" with the not-a-verdict line.
     - **Booths from gaps:** the gap check now also returns `instead`, a verb phrase after "We", linted like the sentence. A track with a gap asks "We <instead>; what does ‘<requirement>’ need from us?", grounded in the gap's quotes. A sponsor's questions are one block (one Copy), and a shared opening is said once.
       - Hindsight's Apify block: "We run Apify's prebuilt Cheerio Scraper from the Store instead of an Actor of our own; what does ‘We have a Best Actor award for building an actor for this event’ need from us? We use Apify to scrape campus calendars, club feeds, hackathon listings and university guide pages; what does ‘Best Use of Apify’ reward beyond that?"
-    - **Ship recheck on Hindsight** (`hr ship --enter "Best Actor, Claude for Public Benefit, Factory Droid SDK, Best Use of Apify"`; the four likely tracks stand in for the entered set, since the fixture doesn't record which tracks were entered):
+    - **Ship recheck on Hindsight, engine check** (`hr ship --enter "Best Actor, Claude for Public Benefit, Factory Droid SDK, Best Use of Apify"`). These four likely tracks were a stand-in set chosen to exercise the engine. They are not what Hindsight entered:
       - Hindsight @ db92f7d, checked Fri Nov 6, 3:23 PM PST.
       - 2 requirements and entry steps, 115 repo lines, 1 open gap (Best Actor) with 3 repo quotes. The other three tracks state no requirements.
       - The second run reused the result ("the commit hasn't changed since").
+    - **Hindsight's real entered set (user 2026-11-06, now `entered` in the fixture):** Claude for Public Benefit, Factory Droid SDK and Best Use of Apify. Figma was selected but not submitted. `hr ship` with that set: none of the three states a requirement or entry step, so there is nothing to check, and Ship says so rather than "none found". The Best Actor gap never applied, because the team didn't enter that track.
     - **Cached gaps** now re-point their repo links at the commit just read, so a cache hit on a new commit doesn't link to the old one.
     - **TODOS:** repo lines are picked by product name, so requirements naming none (voice, deployment, open source) can't find counter-evidence yet.
 
