@@ -1744,6 +1744,24 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
       - recall@3: 60.5% (B) → 58.0% (C); 5 lost, 3 gained; McNemar p = 0.73.
       - recall@5: 74.1% (B) → 70.4% (C); 6 lost, 3 gained; McNemar p = 0.51.
       - No significant difference either way. C's recall@5 of 70.4% is above the 67% gate floor.
+  - **Sponsor-product pass (user 2026-11-06):**
+    - **What it does:** for each sponsor product on the event page, `config/products.json` lists the names people use, the npm, PyPI and crates.io packages (each checked to exist on its registry), the API hosts, and distinctive code terms. The repo is searched in code with no model call. A product found that the draft lacks is added with its file:line and no used-for. The same table maps Built With tags in scoring ("anthropic" → Claude API).
+    - **What counts as evidence:** dependency lines, real import statements matched per language, API hosts in code or config, and terms in code files only.
+      - README and docs don't count. Neither do mock, seed, fixture and data folders, tool settings (.claude/, .github/), or lockfiles.
+      - Generic words are left out (claude, gemini, azure, jira, timescale, convex, snowflake, llama, droid, moss), so those products are found by package and host only.
+      - Mana has no package, host or distinctive term, so nothing can be found for it.
+    - **Bugs fixed before the run, found by reading every added product's first line:**
+      - A scoped package (`@factory/droid-sdk`) left an empty Python import pattern, which matched every `from . import`. That was 23 bogus Droid hits.
+      - Docstrings like "from Cartesia" matched as imports.
+      - A booth list in mock data matched seven sponsors.
+    - **Result on the cached drafts (79 repos; $0.47 for 38 new fit rankings):** 66 products added to 38 projects.
+    - **(a) Built With recall:**
+      - Model draft: strict 50.8%, loose 62.3%, loose + alias table 65.5% (773/1180).
+      - With the pass: strict 53.1%, loose 64.5%, loose + alias table 68.3% (806/1180).
+    - **(b) Fit vs run B on the same 81 pairs, C − B with a 95% interval (Agresti–Min paired):**
+      - Model draft (C): @3 −2.5 points (−9.5 to +4.7); @5 −3.7 (−11.0 to +3.8).
+      - With the pass (C+): @3 58.0%, −2.5 (−8.6 to +3.8); @5 71.6%, −2.5 (−9.5 to +4.7).
+      - The pass recovers one @5 pair. Every interval contains 0. At n = 81 the data can't rule out a loss of up to about 10 points against the team's own Built With list, or a small gain.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
