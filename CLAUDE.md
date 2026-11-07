@@ -23,6 +23,7 @@
 - Push only to the current feature branch. Never push to `main` directly; work reaches `main` only through a PR.
 - Open the PR once the work is verified (tests, typecheck and extension build pass, plus any live check the work calls for). CI must be green before a merge.
 - Commit and push doc and plan changes (docs/designs/*, TODOS.md) without asking. Commit and push product code without asking when `bun test` passes; if it fails, show the failures and ask first.
+- Merge your own PR without asking once CI is green and the full local run passes (`bun test`, `tsc --noEmit`, `bun run build:ext`); tell the user after, with the PR link. Ask first for a PR that deletes data, changes the extension's permissions or the Slack read-only allowlist (`READ_METHODS`), or touches the cost guard (`pipeline/costguard.ts` or its callers' limits).
 - Delete a branch locally and on origin once its PR is merged.
 
 ## Skill routing
