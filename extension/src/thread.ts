@@ -188,9 +188,11 @@ export interface SyncConfig {
   authors_only?: string[];
   /** Each sponsor and its names (sponsors.json), for signal 2b's match in hacker-only channels (selfid.ts). */
   sponsors?: { id: string; names: string[] }[];
+  /** The event's track names (canon), for finding the prize checkboxes on the user's own submission (devpostdraft.ts). */
+  devpost_tracks?: string[];
 }
 
-export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; aliases?: string[] }>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }): SyncConfig {
+export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; aliases?: string[] }>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }, tracks: string[] = []): SyncConfig {
   const names = new Map<string, Set<string>>();
   for (const s of Object.values(sponsors)) if (s.sponsor && s.sponsor !== "event") names.set(s.sponsor, new Set([...(names.get(s.sponsor) ?? []), s.sponsor, ...(s.aliases ?? [])]));
   return {
@@ -198,6 +200,7 @@ export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; alia
     channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])],
     authors_only: event.hacker_only_channels ?? [],
     sponsors: [...names].map(([id, n]) => ({ id, names: [...n] })),
+    devpost_tracks: tracks,
   };
 }
 

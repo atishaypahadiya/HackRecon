@@ -10,7 +10,16 @@ let L: {
   diff: (a: unknown, b: unknown) => Diff;
   urgent: (d: Diff, a: unknown, b: unknown, now: number) => { why: string; key: string; label: string; at: number | null; was?: number }[];
   present: (shown: Plan, next: Plan) => Plan;
+  check: (o: {
+    meta: Meta | null;
+    getMeta: () => Promise<Meta>;
+    onMeta?: (m: Meta, urgent: { why: string; label: string }[]) => void;
+    shown: () => Plan | null;
+    loadPlan: () => Promise<Plan | null>;
+    nowMs: () => number;
+  }) => Promise<null | { meta: Meta; urgent: { why: string }[]; update: null | { next: Plan; present: Plan; diff: Diff; urgent: { why: string; label: string }[]; marks: { key: string; mark: string; was: { start?: string; reason?: string } | null }[] } }>;
 };
+type Meta = { version?: string; deadlines: { id: string; name: string; at: string }[] };
 beforeAll(async () => {
   await import("../board/live.js");
   L = (globalThis as unknown as { HRLive: typeof L }).HRLive;
@@ -66,7 +75,59 @@ describe("a synthetic sync diff", () => {
     const gone = L.present(before, { ...after, credits: { credits: [] } });
     expect(gone.credits.credits.map((c) => c.offer_id)).toEqual(["o:1"]);
   });
+  test("the page inlines live.js and runs its check every minute", () => {
+    expect(readFileSync(BOARD_PAGE, "utf8")).toMatch(/setInterval\(\(\) => liveTick\(\)[^\n]*60000\)/);
+  });
   test("the page inlines live.js", () => {
     expect(readFileSync(BOARD_PAGE, "utf8")).toContain("<!-- live.js -->");
+  });
+});
+
+describe("the background check (HRLive.check), on the same synthetic sync", () => {
+  const v1 = { ...metaBefore, version: "v1" }, v2 = { ...metaAfter, version: "v2" };
+  const run = (o: { meta?: Meta; next?: Meta; shown?: Plan | null; load?: () => Promise<Plan | null> }) => {
+    const calls: string[] = [];
+    const p = L.check({
+      meta: o.meta ?? v1,
+      getMeta: async () => (calls.push("meta"), o.next ?? v2),
+      onMeta: (m, u) => calls.push(`onMeta ${m.version} ${u.map((x) => x.why).join(",")}`),
+      shown: () => (o.shown === undefined ? before : o.shown),
+      loadPlan: o.load ?? (async () => (calls.push("plan"), after)),
+      nowMs: () => NOW,
+    });
+    return { p, calls };
+  };
+  test("nothing moved: no plan is rebuilt, nothing is called", async () => {
+    const { p, calls } = run({ next: v1 });
+    expect(await p).toBeNull();
+    expect(calls).toEqual(["meta"]);
+  });
+  test("a sync: the moved-up deadline reaches Next for you before the plan is rebuilt; then markers, old rows and urgent items", async () => {
+    const { p, calls } = run({});
+    const r = (await p)!;
+    expect(calls).toEqual(["meta", "onMeta v2 earlier", "plan"]);
+    const u = r.update!;
+    expect(u.marks.map((m) => [m.key, m.mark])).toEqual([["credits:o:2", "New"], ["tracks:t:b", "Changed"], ["sessions:https://x.slack.com/p1|Fetch.ai", "Changed"]]);
+    expect(u.marks[2]!.was?.start).toBe("2026-10-25T10:00:00-07:00");
+    expect(u.marks[1]!.was?.reason).toBe("fits");
+    expect(u.urgent.map((x) => [x.why, x.label])).toEqual([["earlier", "Devpost submission deadline moved up"], ["starts soon", "Fetch.ai office hours moved to 8:15am"]]);
+    expect(u.present.credits.credits.map((c) => c.offer_id)).toEqual(["o:1", "o:2"]);
+    expect(u.next.credits.credits.map((c) => c.offer_id)).toEqual(["o:2", "o:1"]);
+    expect(u.diff.count).toBe(3);
+  });
+  test("no plan made yet: the deadline still goes to Next for you; nothing is rebuilt", async () => {
+    const { p, calls } = run({ shown: null });
+    expect((await p)!.update).toBeNull();
+    expect(calls).toEqual(["meta", "onMeta v2 earlier"]);
+  });
+  test("a failed rebuild keeps what's shown", async () => {
+    const { p } = run({ load: async () => null });
+    expect((await p)!.update).toBeNull();
+    const t = run({ load: () => Promise.reject(new Error("offline")) });
+    expect((await t.p)!.update).toBeNull();
+  });
+  test("an unreachable server is a quiet no-op", async () => {
+    const r = await L.check({ meta: v1, getMeta: () => Promise.reject(new Error("down")), shown: () => before, loadPlan: async () => after, nowMs: () => NOW });
+    expect(r).toBeNull();
   });
 });

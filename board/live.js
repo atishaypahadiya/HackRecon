@@ -72,5 +72,39 @@
     return out;
   }
 
-  g.HRLive = { rows, diff, urgent, present };
+  const EMPTY = { added: [], changed: [], removed: [], count: 0 };
+
+  /** The row a key names in a plan result (for old → new). */
+  function item(res, section, key) {
+    if (section === "tracks") return res?.tracks?.find((t) => t.track_id === key);
+    if (section === "credits") return res?.credits?.credits.find((c) => c.offer_id === key);
+    if (section === "sessions") return res?.sessions?.sessions.find((x) => `${x.source_url}|${x.sponsor}` === key);
+    return res?.people?.people.flatMap((p) => p.reps.map((r) => ({ ...r, sponsor: p.sponsor }))).find((r) => `${r.sponsor}|${r.person}` === key);
+  }
+
+  /** The background check the board runs every minute (D5). Reads /plan/meta (`getMeta`); when its version moved,
+   *  hands the new meta and any deadline moved earlier to `onMeta` at once (with or without a plan), then rebuilds the
+   *  plan off screen (`loadPlan`, null on any failure) and returns what changed: the sync's own result, the result
+   *  as shown while updates wait, the markers (with each changed row's old version) and the urgent items. Returns
+   *  null when nothing moved. */
+  async function check(o) {
+    let next;
+    try {
+      next = await o.getMeta();
+    } catch {
+      return null;
+    }
+    if (!o.meta || !next || next.version === o.meta.version) return null;
+    const metaUrgent = urgent(EMPTY, o.meta, next, o.nowMs());
+    o.onMeta?.(next, metaUrgent);
+    const shown = o.shown();
+    const res = shown ? await o.loadPlan().catch(() => null) : null;
+    if (!shown || !res) return { meta: next, urgent: metaUrgent, update: null };
+    const d = diff(shown, res), u = urgent(d, o.meta, next, o.nowMs());
+    if (!d.count && !d.removed.length && !u.length) return { meta: next, urgent: metaUrgent, update: null };
+    const marks = [...d.added.map((r) => ({ key: `${r.section}:${r.key}`, mark: "New", was: null })), ...d.changed.map((r) => ({ key: `${r.section}:${r.key}`, mark: "Changed", was: item(shown, r.section, r.key) }))];
+    return { meta: next, urgent: metaUrgent, update: { next: res, present: present(shown, res), diff: d, urgent: u, marks } };
+  }
+
+  g.HRLive = { rows, diff, urgent, present, item, check };
 })(typeof window !== "undefined" ? window : globalThis);
