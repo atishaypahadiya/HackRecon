@@ -70,6 +70,14 @@ export interface MentionPost {
   text: string;
   mentions: { id: string; label: string }[];
   permalink: string;
+  /** A thread reply (sent to the channel or not). Restricted-posting channels still let anyone reply in threads, so
+   *  a reply carries channel authority never; only its author's own authority. */
+  reply: boolean;
+}
+
+/** D19 authority for signal 2: an authority account anywhere, or a top-level post in an authority channel. */
+export function mentionAuthority(authorityIds: Set<string>, authorityChannels: Set<string>): (p: MentionPost) => boolean {
+  return (p) => authorityIds.has(p.author_id) || (!p.reply && authorityChannels.has(p.channel_name));
 }
 
 /** Signal 2. A mention's label (the mentioned person's own display name) is cut from the line before sponsor names

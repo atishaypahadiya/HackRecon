@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { personKeys } from "./people.ts";
 import type { Sponsors } from "./pool.ts";
-import { emailReps, HACKER_ONLY, likelyReps, mentionReps, repEvidence, repIndex, signalLabels, type MentionPost } from "./reps.ts";
+import { emailReps, HACKER_ONLY, likelyReps, mentionAuthority, mentionReps, repEvidence, repIndex, signalLabels, type MentionPost } from "./reps.ts";
 import { rolesById } from "./roles.ts";
 import type { Item, Message } from "./schema.ts";
 
@@ -32,7 +32,7 @@ describe("signal 1: profile email on the sponsor's domain", () => {
 });
 
 describe("signal 2: an authority account mentions the user ID beside the sponsor's name", () => {
-  const post = (author_id: string, text: string, mentions: { id: string; label: string }[], channel_name = "0-announcements"): MentionPost => ({ author_id, channel_name, text, mentions, permalink: `p/${text.length}` });
+  const post = (author_id: string, text: string, mentions: { id: string; label: string }[], channel_name = "0-announcements", reply = false): MentionPost => ({ author_id, channel_name, text, mentions, permalink: `p/${text.length}`, reply });
   const authority = (p: MentionPost) => p.author_id === "UORG";
   const organizer = (id: string) => id === "UORG" || id === "UORG2";
   test("same line, one sponsor named outside the mention's label", () => {
@@ -50,6 +50,15 @@ describe("signal 2: an authority account mentions the user ID beside the sponsor
     );
     expect(r.hits.map((h) => [h.id, h.sponsor])).toEqual([["UP", "Apify"]]);
     expect(r.ambiguous).toBe(1);
+  });
+});
+
+describe("signal 2's authority: a reply in an authority channel carries none", () => {
+  test("top-level posts there count; anyone's thread reply there doesn't; an authority account's reply does", () => {
+    const auth = mentionAuthority(new Set(["UORG"]), new Set(["0-announcements"]));
+    const p = (author_id: string, reply: boolean): MentionPost => ({ author_id, channel_name: "0-announcements", text: "@me from Apify", mentions: [{ id: "UHACK", label: "@me" }], permalink: "p", reply });
+    expect([auth(p("UANY", false)), auth(p("UHACK", true)), auth(p("UORG", true))]).toEqual([true, false, true]);
+    expect(mentionReps([p("UHACK", true)], sponsors, auth, () => false).hits).toEqual([]);
   });
 });
 
