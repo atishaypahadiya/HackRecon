@@ -267,7 +267,8 @@
   .pmain:hover .pn { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
   .pn { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
   .pr { display: block; margin-top: 4px; max-width: 75ch; }
-  .pg { font-weight: 600; }
+  /* The label carries the warning (amber, 5.3:1 on a tile); the sentence reads at body weight like the reason. */
+  .pg b { font-weight: 650; color: var(--warning); }
   .also { margin: 6px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
   .also + .prows .prow:first-child { border-top: 0; }
   .pmeta a, .bq .pmeta a { color: var(--text); text-underline-offset: 3px; position: relative; }
@@ -1055,7 +1056,7 @@ function trackRow(t) {
   const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
   const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
-  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg">Gap: ${esc(g.gap)}</span>`).join("");
+  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}</span>`).join("");
   return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
 }
 function paintResults() {
