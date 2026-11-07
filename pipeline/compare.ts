@@ -1,7 +1,7 @@
 // Day-1 capture check (D8): keyed recall by ts against the slackdump baseline, plus author match.
 import type { NonPost } from "./rows.ts";
-import type { CaptureFile } from "./schema.ts";
-import { expectedAuthorNames, isTopLevel, normName, readChannel, rowClass, type SlackExport } from "./export.ts";
+import type { CaptureFile, ThreadCaptureFile } from "./schema.ts";
+import { expectedAuthorNames, isTopLevel, normName, readChannel, rowClass, type ExportMessage, type SlackExport } from "./export.ts";
 
 export const RECALL_MIN = 0.9;
 export const AUTHOR_MIN = 0.95;
@@ -151,6 +151,141 @@ export function compareChannel(
       time: duration <= TIME_MAX_S,
     },
   };
+}
+
+// Step 1 thread check (D5): keyed recall of thread replies by ts against the export, the same bar as channels.
+// The baseline is every reply that isn't also sent to the channel: 494 in the locked 25. Sent-to-channel copies
+// are already measured by the channel check, so here they're only counted.
+
+export interface ThreadMissed {
+  ts: string;
+  thread_ts: string;
+  /** not_attempted: the file has no entry for the parent; not_opened: its pane never opened; in_pane: the pane
+   *  was read and this reply wasn't in it. */
+  why: "not_attempted" | "not_opened" | "in_pane";
+  permalink: string;
+  author: string;
+  text: string;
+}
+
+export interface ThreadExtra {
+  ts: string;
+  thread_ts: string;
+  /** wrong_parent: the export has this reply under another parent; top_level: the export has it as a channel post. */
+  why: "wrong_parent" | "top_level" | "after_export" | "not_in_export";
+  text: string;
+}
+
+export interface ThreadReport {
+  channel_id: string;
+  channel_name: string;
+  duration_s: number;
+  /** Parents with at least one reply in the export, and how many of them the file covers. */
+  threads_in_export: number;
+  threads_attempted: number;
+  threads_opened: number;
+  stop_reasons: Record<string, number>;
+  export_replies: number;
+  matched: number;
+  recall: number;
+  broadcasts_seen: number;
+  /** Parents whose rendered "N replies" differs from the export's reply_count (deleted or later replies). */
+  count_mismatches: { thread_ts: string; shown: number; export: number }[];
+  missed: ThreadMissed[];
+  extras: ThreadExtra[];
+  author: { checked: number; matched: number; rate: number; mismatches: { ts: string; captured: string; expected: string[] }[] };
+  pass: { recall: boolean; author: boolean };
+}
+
+const isReply = (m: ExportMessage) => !isTopLevel(m) && m.subtype !== "thread_broadcast";
+
+export function compareThreads(cap: ThreadCaptureFile, exp: SlackExport, exportCutoffTs: number, origin = "https://app.slack.com"): ThreadReport {
+  const name = exp.channelsById.get(cap.channel_id);
+  if (!name) throw new Error(`${cap.channel_id} (${cap.channel_name}) is not in the export's channels.json`);
+  const all = readChannel(exp, name);
+  const byTs = new Map(all.map((m) => [m.ts, m]));
+  const replies = all.filter(isReply);
+  const parents = new Set(replies.map((m) => m.thread_ts!));
+  const runs = new Map(cap.threads.map((t) => [t.thread_ts, t]));
+  const captured = new Map(cap.threads.flatMap((t) => t.replies.filter((r) => r.subtype !== "thread_broadcast").map((r) => [r.ts, r] as const)));
+
+  // A reply counts only under its own parent; one filed under another parent is an extra (wrong_parent).
+  const found = (m: ExportMessage) => captured.get(m.ts)?.thread_ts === m.thread_ts;
+  const missed: ThreadMissed[] = replies
+    .filter((m) => !found(m))
+    .map((m) => {
+      const run = runs.get(m.thread_ts!);
+      return {
+        ts: m.ts,
+        thread_ts: m.thread_ts!,
+        why: !run ? ("not_attempted" as const) : run.stop_reason === "not_opened" ? ("not_opened" as const) : ("in_pane" as const),
+        permalink: `${origin}/archives/${cap.channel_id}/p${m.ts.replace(".", "")}?thread_ts=${m.thread_ts}&cid=${cap.channel_id}`,
+        author: expectedAuthorNames(exp, m)[0] ?? m.user ?? "",
+        text: snippet(m.text ?? ""),
+      };
+    });
+
+  const extras: ThreadExtra[] = [];
+  for (const [ts, r] of captured) {
+    const e = byTs.get(ts);
+    if (e && isReply(e) && e.thread_ts === r.thread_ts) continue;
+    const why = e ? (isTopLevel(e) ? "top_level" : "wrong_parent") : Number(ts) > exportCutoffTs ? "after_export" : "not_in_export";
+    extras.push({ ts, thread_ts: r.thread_ts!, why, text: snippet(r.text) });
+  }
+
+  const mismatches: ThreadReport["author"]["mismatches"] = [];
+  let checked = 0;
+  for (const e of replies) {
+    const c = found(e) ? captured.get(e.ts) : undefined;
+    const expected = c ? expectedAuthorNames(exp, e) : [];
+    if (!c || !expected.length) continue;
+    checked++;
+    if (!expected.some((n) => normName(n) === normName(c.author_name))) mismatches.push({ ts: e.ts, captured: c.author_name, expected });
+  }
+
+  const count_mismatches = cap.threads
+    .filter((t) => t.reply_count_shown !== null && byTs.get(t.thread_ts)?.reply_count !== undefined && t.reply_count_shown !== byTs.get(t.thread_ts)!.reply_count)
+    .map((t) => ({ thread_ts: t.thread_ts, shown: t.reply_count_shown!, export: byTs.get(t.thread_ts)!.reply_count! }));
+  const stop_reasons: Record<string, number> = {};
+  for (const t of cap.threads) stop_reasons[t.stop_reason] = (stop_reasons[t.stop_reason] ?? 0) + 1;
+  const matched = replies.length - missed.length;
+  const recall = replies.length ? matched / replies.length : 1;
+  const rate = checked ? (checked - mismatches.length) / checked : 1;
+  return {
+    channel_id: cap.channel_id,
+    channel_name: name,
+    duration_s: Math.round((Date.parse(cap.finished_at) - Date.parse(cap.started_at)) / 1000),
+    threads_in_export: parents.size,
+    threads_attempted: [...parents].filter((p) => runs.has(p)).length,
+    threads_opened: [...parents].filter((p) => runs.has(p) && runs.get(p)!.stop_reason !== "not_opened").length,
+    stop_reasons,
+    export_replies: replies.length,
+    matched,
+    recall,
+    broadcasts_seen: cap.threads.reduce((n, t) => n + t.replies.filter((r) => r.subtype === "thread_broadcast").length, 0),
+    count_mismatches,
+    missed,
+    extras,
+    author: { checked, matched: checked - mismatches.length, rate, mismatches },
+    pass: { recall: recall >= RECALL_MIN, author: rate >= AUTHOR_MIN },
+  };
+}
+
+/** Recall over every reply in the given channels' export: the step-1 gate is this number for the locked 25. A
+ *  channel with no thread file counts all its replies as missed. */
+export function threadTotals(exp: SlackExport, channels: string[], reports: ThreadReport[]) {
+  const byName = new Map(reports.map((r) => [r.channel_name, r]));
+  let replies = 0, matched = 0;
+  const uncaptured: string[] = [];
+  for (const ch of channels) {
+    const r = byName.get(ch);
+    if (r) { replies += r.export_replies; matched += r.matched; continue; }
+    const n = readChannel(exp, ch).filter(isReply).length;
+    replies += n;
+    if (n) uncaptured.push(ch);
+  }
+  const recall = replies ? matched / replies : 1;
+  return { replies, matched, recall, uncaptured, pass: recall >= RECALL_MIN };
 }
 
 function workspaceOrigin(cap: CaptureFile): string {

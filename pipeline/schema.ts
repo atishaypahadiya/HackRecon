@@ -122,6 +122,65 @@ export interface CaptureFile {
   messages: Message[];
 }
 
+/** Step 1 (D5, D17): thread replies, downloaded as `<channel_id>.threads.json` beside the channel's capture. One
+ *  entry per parent whose "N replies" the extension opened, or tried to; the channel capture itself is unchanged. */
+export const THREAD_STOP_REASONS = ["parent_seen", "no_new_keys", "user_stopped", "max_steps", "not_opened"] as const;
+export type ThreadStopReason = (typeof THREAD_STOP_REASONS)[number];
+
+export interface ThreadRun {
+  /** The parent's ts. */
+  thread_ts: Ts;
+  /** The parent row's "N replies" as rendered; null when the row showed no count. */
+  reply_count_shown: number | null;
+  /** parent_seen: the pane was scrolled up to the rendered parent (the primary stop); no_new_keys: the 5 x 1.5 s
+   *  fallback; not_opened: the pane never opened (the reason is in `note`). */
+  stop_reason: ThreadStopReason;
+  note?: string;
+  /** Replies as rendered in the pane, each with thread_ts = the parent. Sent-to-channel copies keep subtype. */
+  replies: Message[];
+}
+
+export interface ThreadCaptureFile {
+  schema_version: typeof SCHEMA_VERSION;
+  kind: "threads";
+  run_id: string;
+  source: "extension";
+  channel_id: string;
+  channel_name: string;
+  started_at: string;
+  finished_at: string;
+  /** "uncapped" for the one-time fixture capture (D17); a number for a live sync's budget. */
+  budget: "uncapped" | number;
+  threads: ThreadRun[];
+}
+
+export function threadCaptureName(channelId: string): string {
+  return `${channelId}.threads.json`;
+}
+
+/** Throws with a path-qualified reason if `v` isn't a ThreadCaptureFile. */
+export function parseThreadCaptureFile(v: unknown, where = "threads"): ThreadCaptureFile {
+  const o = obj(v, where);
+  if (o.schema_version !== SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${SCHEMA_VERSION}`);
+  if (o.kind !== "threads") fail(`${where}.kind`, 'expected "threads"');
+  if (o.source !== "extension") fail(`${where}.source`, 'expected "extension"');
+  for (const k of ["run_id", "channel_id", "channel_name", "started_at", "finished_at"]) str(o[k], `${where}.${k}`);
+  if (o.budget !== "uncapped") num(o.budget, `${where}.budget`);
+  arr(o.threads, `${where}.threads`).forEach((t, i) => {
+    const w = `${where}.threads[${i}]`;
+    const x = obj(t, w);
+    tsStr(x.thread_ts, `${w}.thread_ts`);
+    if (x.reply_count_shown !== null) num(x.reply_count_shown, `${w}.reply_count_shown`);
+    if (!THREAD_STOP_REASONS.includes(x.stop_reason as ThreadStopReason)) fail(`${w}.stop_reason`, `not one of ${THREAD_STOP_REASONS.join("|")}`);
+    if (x.note !== undefined) str(x.note, `${w}.note`);
+    arr(x.replies, `${w}.replies`).forEach((m, j) => {
+      checkMessage(m, `${w}.replies[${j}]`, o.channel_id as string);
+      if ((m as Message).thread_ts !== x.thread_ts) fail(`${w}.replies[${j}].thread_ts`, `expected ${x.thread_ts as string}`);
+    });
+  });
+  return o as unknown as ThreadCaptureFile;
+}
+
 export function messageId(channelId: string, ts: Ts): string {
   return `${channelId}:${ts}`;
 }

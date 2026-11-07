@@ -17,6 +17,9 @@ export interface ExportMessage {
   /** Set on app posts. Without a subtype and without a user_profile (e.g. the GitHub app) the web client shows the
    *  app as the sender, with the APP badge; with a user_profile it's a person posting through an app, shown as them. */
   bot_id?: string;
+  /** On a thread parent: how many replies Slack counted, and the newest one's ts. */
+  reply_count?: number;
+  latest_reply?: string;
 }
 
 export interface ExportUser {
