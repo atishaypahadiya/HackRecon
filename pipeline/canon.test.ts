@@ -1,0 +1,325 @@
+import { describe, expect, test } from "bun:test";
+import { parseHTML } from "linkedom";
+import { snapshotPage } from "../extension/src/page.ts";
+import { checkCanon, checkJudge, deadlineInQuote, entityId, keepDropped, keyed, numbersIn, rematch, similarity, type RawEntity } from "./canon.ts";
+import { coverage, figuresIn, moneyValue, statedTotal } from "./coverage.ts";
+import { redactSnapshot, needsRedaction } from "./pages.ts";
+import type { Entity } from "./schema.ts";
+
+// A two-prize Devpost-shaped page: total = 500×1 + 300×2 = 1100.
+const HTML = `<h1>Mini Hacks</h1>
+<article id="challenge-requirements"><h3>Requirements</h3><ul><li>You must submit your hack by October 25th @ 9<span>&nbsp;AM&nbsp;</span>PST.</li></ul></article>
+<article id="prizes"><h3>Prizes</h3><div id="prizes-overview"><div>$<span>1,100</span>+ in prizes</div></div>
+<div id="prize_1"><h6><div>Mini Hacks Overall</div></h6><div class="prize-value">$500 in cash</div><div>1 winner</div><p>Laptop for each member</p></div>
+<div id="prize_2"><h6><div>[Acme] Best Use of Acme</div></h6><div class="prize-value">$300 in cash</div><div>2 winners</div><p>1st place: $200 / 2nd place: $100</p></div>
+</article>
+<article id="judging-criteria"><h3>Judging Criteria</h3><ul><li><strong>Creativity</strong><br>Original ideas.</li></ul></article>`;
+const snap = snapshotPage(parseHTML(`<html><body>${HTML}</body></html>`).document as unknown as Document, {
+  url: "https://mini.devpost.com/",
+  captured_at: "2026-11-06T00:00:00Z",
+  access: "public",
+  captured_by: "fixture",
+});
+const at = (text: string) => snap.blocks.find((b) => b.text === text || b.text.startsWith(text))!.i;
+
+const good = (): RawEntity[] => [
+  { ref: "t1", kind: "track", sponsor: "event", name: { value: "Mini Hacks Overall", block: at("Mini Hacks Overall"), quote: "Mini Hacks Overall" }, fields: [
+    { field: "cash_value_usd", value: "500", block: at("$500 in cash"), quote: "$500 in cash" },
+    { field: "winners", value: "1", block: at("1 winner"), quote: "1 winner" },
+  ] },
+  { ref: "p1", kind: "prize", sponsor: "event", name: { value: "Mini Hacks Overall", block: at("Mini Hacks Overall"), quote: "Mini Hacks Overall" }, fields: [
+    { field: "track", value: "t1", block: 0, quote: "" },
+    { field: "award_text", value: "Laptop for each member", block: at("Laptop"), quote: "Laptop for each member" },
+  ] },
+  { ref: "t2", kind: "track", sponsor: "Acme", name: { value: "[Acme] Best Use of Acme", block: at("[Acme]"), quote: "[Acme] Best Use of Acme" }, fields: [
+    { field: "cash_value_usd", value: "300", block: at("$300 in cash"), quote: "$300 in cash" },
+    { field: "winners", value: "2", block: at("2 winners"), quote: "2 winners" },
+  ] },
+  { ref: "p2", kind: "prize", sponsor: "Acme", name: { value: "1st place", block: at("1st place"), quote: "1st place" }, fields: [
+    { field: "track", value: "t2", block: 0, quote: "" },
+    { field: "place", value: "1st place", block: at("1st place"), quote: "1st place" },
+    { field: "amount_usd", value: "200", block: at("1st place"), quote: "1st place: $200" },
+  ] },
+  { ref: "p3", kind: "prize", sponsor: "Acme", name: { value: "2nd place", block: at("1st place"), quote: "2nd place" }, fields: [
+    { field: "track", value: "t2", block: 0, quote: "" },
+    { field: "place", value: "2nd place", block: at("1st place"), quote: "2nd place" },
+    { field: "amount_usd", value: "100", block: at("1st place"), quote: "2nd place: $100" },
+  ] },
+  { ref: "c1", kind: "criterion", sponsor: "event", name: { value: "Creativity", block: at("Creativity"), quote: "Creativity" }, fields: [{ field: "description", value: "Original ideas.", block: at("Creativity"), quote: "Original ideas." }] },
+  { ref: "r1", kind: "rule", sponsor: "event", name: { value: "submit your hack", block: at("You must submit"), quote: "submit your hack" }, fields: [
+    { field: "text", value: "You must submit your hack by October 25th @ 9 AM PST.", block: at("You must submit"), quote: "You must submit your hack by October 25th @ 9 AM PST." },
+    { field: "rule_kind", value: "submission", block: at("You must submit"), quote: "You must submit your hack" },
+    { field: "applies_to", value: "all", block: 0, quote: "" },
+    { field: "deadline", value: "2026-10-25T09:00-07:00", block: at("You must submit"), quote: "by October 25th @ 9 AM PST" },
+  ] },
+];
+const ok = (raw: RawEntity[]) => {
+  const r = checkCanon({ entities: raw }, snap, "h");
+  if ("error" in r) throw new Error(r.error);
+  return r.entities;
+};
+const err = (raw: RawEntity[]) => {
+  const r = checkCanon({ entities: raw }, snap, "h");
+  return "error" in r ? r.error : "";
+};
+
+describe("checkCanon", () => {
+  test("accepts a verified answer and maps refs to D7 ids", () => {
+    const es = ok(good());
+    const t2 = es.find((e) => e.name.value === "[Acme] Best Use of Acme")!;
+    expect(t2.id).toBe("track:https://mini.devpost.com#mini-hacks/prizes/acme-best-use-of-acme");
+    const p2 = es.find((e) => e.name.value === "1st place")!;
+    expect(p2.fields.track_id!.value).toBe(t2.id);
+    expect(p2.fields.amount_usd!.value).toBe(200);
+    expect(p2.id).toBe("prize:https://mini.devpost.com#mini-hacks/prizes/acme-best-use-of-acme/1st-place");
+    expect(p2.fields.amount_usd!.source).toMatchObject({ kind: "page", quote: "1st place: $200", snapshot_hash: "h", block: at("1st place") });
+  });
+
+  test("a quote that isn't in its block fails", () => {
+    const raw = good();
+    raw[0]!.fields[0]!.quote = "$5,000 in cash";
+    expect(err(raw)).toContain('quote "$5,000 in cash" is not in block');
+  });
+
+  test("a number in the value that isn't in the quote fails", () => {
+    const raw = good();
+    raw[3]!.fields[2]!.value = "250";
+    expect(err(raw)).toContain("250 not in its quote");
+  });
+
+  test("a deadline whose hour isn't in the quote fails", () => {
+    const raw = good();
+    raw[6]!.fields[3]!.value = "2026-10-25T09:30-07:00";
+    expect(err(raw)).toBe("");
+    raw[6]!.fields[3]!.value = "2026-10-25T10:00-07:00";
+    expect(err(raw)).toContain("month, day or hour");
+  });
+
+  test("bad enum, unknown field for the kind, dangling ref, prize without track", () => {
+    const raw = good();
+    raw[6]!.fields[1]!.value = "vibes";
+    raw[5]!.fields.push({ field: "winners", value: "1", block: 0, quote: "Mini Hacks" });
+    raw[1]!.fields[0]!.value = "t9";
+    raw[4]!.fields = raw[4]!.fields.filter((f) => f.field !== "track");
+    const e = err(raw);
+    expect(e).toContain('"vibes" is not one of submission|eligibility|conduct');
+    expect(e).toContain("not a criterion field");
+    expect(e).toContain('"t9" is not a ref');
+    expect(e).toContain("a prize needs its track");
+  });
+
+  test("a prize's id comes from its track and place, not the name the model gave it", () => {
+    const raw = good();
+    raw[3]!.name = { value: "Acme first prize", block: at("1st place"), quote: "1st place: $200" };
+    expect(ok(raw).find((e) => e.name.value === "Acme first prize")!.id).toBe("prize:https://mini.devpost.com#mini-hacks/prizes/acme-best-use-of-acme/1st-place");
+    expect(ok(good()).find((e) => e.kind === "rule")!.id).toBe("rule:https://mini.devpost.com#mini-hacks/requirements/you-must-submit-your-hack-by-october-25th");
+  });
+
+  test("prizes sharing a place on one track are told apart by amount", () => {
+    const raw = good();
+    for (const i of [3, 4]) raw[i]!.fields = raw[i]!.fields.filter((f) => f.field !== "place");
+    const ids = ok(raw).filter((e) => e.kind === "prize" && e.sponsor === "Acme").map((e) => e.id.split("/").at(-1));
+    expect(ids).toEqual(["usd-200", "usd-100"]);
+  });
+
+  test("entry steps: track, step_kind and text required, step_kind is an enum; descriptions repeat (user 2026-11-06)", () => {
+    const step = (fields: RawEntity["fields"]): RawEntity => ({ ref: "s1", kind: "entry_step", sponsor: "Acme", name: { value: "Laptop", block: at("Laptop"), quote: "Laptop" }, fields });
+    const text = { field: "text", value: "Laptop for each member", block: at("Laptop"), quote: "Laptop for each member" };
+    const ok = checkCanon({ entities: [...good(), step([{ field: "track", value: "t2", block: 0, quote: "" }, { field: "step_kind", value: "submission_field", block: at("Laptop"), quote: "Laptop" }, text])] }, snap, "h");
+    if ("error" in ok) throw new Error(ok.error);
+    const s = ok.entities.find((e) => e.kind === "entry_step")!;
+    expect([s.fields.track_id?.value, s.fields.step_kind?.value, s.id.startsWith("entry_step:")]).toEqual([ok.entities.find((e) => e.name.value === "[Acme] Best Use of Acme")!.id, "submission_field", true]);
+    const bad = checkCanon({ entities: [...good(), step([{ field: "step_kind", value: "handshake", block: at("Laptop"), quote: "Laptop" }, text])] }, snap, "h") as { error: string };
+    expect(bad.error).toContain('"handshake" is not one of opt_in|supplemental_form|description_mention|submission_field');
+    expect(bad.error).toContain("an entry step needs track, step_kind and text");
+    const raw = good();
+    const d = (q: string) => ({ field: "description", value: q, block: at("1st place"), quote: q });
+    raw[2]!.fields.push(d("1st place"), d("2nd place"));
+    const two = checkCanon({ entities: raw }, snap, "h");
+    if ("error" in two) throw new Error(two.error);
+    expect(Object.keys(two.entities.find((e) => e.name.value === "[Acme] Best Use of Acme")!.fields).filter((k) => k.startsWith("descriptions"))).toEqual(["descriptions[0]", "descriptions[1]"]);
+  });
+  test("same heading path and name twice keeps both, numbered in page order", () => {
+    const raw = good();
+    raw.push({ ...raw[5]!, ref: "c2" });
+    const ids = ok(raw).filter((e) => e.kind === "criterion").map((e) => e.id);
+    expect(ids[1]).toBe(`${ids[0]}~2`);
+  });
+});
+
+describe("numbers and dates", () => {
+  test("numbersIn normalizes $1k, commas, ordinals", () => {
+    expect(numbersIn("$1k, $3,600 and 1st")).toEqual([1000, 3600, 1]);
+    expect(moneyValue("$1k")).toBe(1000);
+    expect(moneyValue("1,000 USD")).toBe(1000);
+  });
+  test("deadlineInQuote needs month, day and hour", () => {
+    expect(deadlineInQuote("2026-10-25T09:00-07:00", "October 25th @ 9 AM PST")).toBe(true);
+    expect(deadlineInQuote("2026-10-25T21:00-07:00", "Oct 25 at 9 PM")).toBe(true);
+    expect(deadlineInQuote("2026-11-25T09:00-08:00", "October 25th @ 9 AM")).toBe(false);
+  });
+  test("figuresIn finds amounts and dates", () => {
+    expect(figuresIn("Win $500 or 200 USD by October 25th, 10/26")).toEqual(["$500", "200 USD", "October 25th", "10/26"]);
+    expect(figuresIn("1st place: $2000, 2nd: $1,000.")).toEqual(["$2000", "$1,000"]);
+  });
+});
+
+describe("coverage (D15)", () => {
+  test("a complete extraction passes, with the stated total", () => {
+    expect(statedTotal(snap)!.usd).toBe(1100);
+    const r = coverage(snap, ok(good()));
+    expect(r.checks.map((c) => [c.name, c.pass])).toEqual([["prize_total", true], ["prize_blocks", true], ["prize_amounts", null], ["figures", null]]);
+    expect(r.pass).toBe(true);
+  });
+
+  test("a dropped winners line opens a gap and names the block", () => {
+    const es = ok(good()).map((e) => (e.name.value === "[Acme] Best Use of Acme" ? { ...e, fields: Object.fromEntries(Object.entries(e.fields).filter(([k]) => k !== "winners")) } : e));
+    const r = coverage(snap, es);
+    const total = r.checks.find((c) => c.name === "prize_total")!;
+    expect(total.pass).toBe(false);
+    expect(total.summary).toContain("gap $300");
+    expect(total.details).toEqual(["[Acme] Best Use of Acme: page $300 × 2 = $600; extracted $300 × none = $300"]);
+    expect(r.pass).toBe(false);
+  });
+
+  test("a prize block with no track fails prize_blocks", () => {
+    const all = ok(good());
+    const t1 = all.find((e) => e.name.value === "Mini Hacks Overall" && e.kind === "track")!.id;
+    const es = all.filter((e) => e.id !== t1 && e.fields.track_id?.value !== t1);
+    const c = coverage(snap, es).checks.find((c) => c.name === "prize_blocks")!;
+    expect(c.pass).toBe(false);
+    expect(c.details).toEqual(["Mini Hacks Overall (prize_1): no track"]);
+  });
+
+  test("figures outside every quote are listed unattached", () => {
+    const es = ok(good()).filter((e) => !(e.kind === "prize" && e.fields.place?.value === "2nd place"));
+    const c = coverage(snap, es).checks.find((c) => c.name === "figures")!;
+    expect(c.details.some((d) => d.includes("$100") && d.includes("prize block prize_2"))).toBe(true);
+    expect(c.details.some((d) => d.includes("$1,100"))).toBe(true); // the total line itself is no entity's quote
+  });
+
+  test("checkCanon sends a failed gating check back to the model (Mana, Cal Hacks 2026-11-06: 1 place, 0 prizes)", () => {
+    expect(err(good().filter((e) => e.ref !== "p1"))).toContain("prize_blocks");
+    expect(err(good().filter((e) => e.ref !== "p1"))).toContain("Mini Hacks Overall (prize_1): 1 stated place, 0 prizes extracted");
+    const raw = good();
+    raw[2]!.fields = raw[2]!.fields.filter((f) => f.field !== "winners");
+    expect(err(raw)).toContain("prize_total");
+  });
+
+  test("a page with no total or prize blocks: checks don't apply", () => {
+    const plain = { ...snap, blocks: snap.blocks.filter((b) => !b.anchor?.startsWith("prize")) .filter((b) => !b.text.includes("in prizes")).map((b, i) => ({ ...b, i })) };
+    const r = coverage(plain, []);
+    expect(r.checks.slice(0, 2).map((c) => c.pass)).toEqual([null, null]);
+    expect(r.pass).toBe(true);
+  });
+});
+
+describe("checkJudge", () => {
+  test("rejects unknown entity ids and blocks", () => {
+    const es: Entity[] = ok(good());
+    expect(checkJudge({ missing: [{ kind: "rule", block: 999, what: "x" }], misplaced: [{ entity_id: "nope", problem: "y" }] }, snap, es)).toEqual({
+      error: "missing: block 999 doesn't exist; misplaced: nope is not an entity id",
+    });
+    expect(checkJudge({ missing: [], misplaced: [{ entity_id: es[0]!.id, problem: "y" }] }, snap, es)).toMatchObject({ misplaced: [{ entity_id: es[0]!.id }] });
+  });
+});
+
+describe("redaction (D12)", () => {
+  test("only an explicit public flag skips it", () => {
+    expect(needsRedaction({ ...snap, access: "public" })).toBe(false);
+    expect(needsRedaction({ ...snap, access: "authenticated" })).toBe(true);
+    expect(needsRedaction({ ...snap, access: null })).toBe(true);
+  });
+  test("names, emails and phones are replaced, and counted", () => {
+    const s = { ...snap, blocks: [{ i: 0, path: [], text: "Ask Dana Reyes at dana@acme.io or (415) 555-0100" }] };
+    const r = redactSnapshot(s, (t) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: t.includes("Dana Reyes") ? 1 : 0 }));
+    expect(r.snapshot.blocks[0]!.text).toBe("Ask [person] at [email] or [phone]");
+    expect(r.replaced).toBe(3);
+  });
+  test("title, URL and link hrefs are scrubbed too; query and fragment dropped", () => {
+    const s = { ...snap, url: "https://hive.example.com/u/Dana Reyes?token=abc#x", title: "Dana Reyes's schedule", links: [{ text: "Dana Reyes", href: "https://x.com/a?sig=1", block: 0 }] };
+    const r = redactSnapshot(s, (t) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: 0 }));
+    expect([r.snapshot.url, r.snapshot.title, r.snapshot.links[0]]).toEqual(["https://hive.example.com/u/[person]", "[person]'s schedule", { text: "[person]", href: "https://x.com/a", block: 0 }]);
+  });
+  test("names in hyphenated host labels and path segments, and malformed escapes, don't get through", () => {
+    const red = (t: string) => ({ text: t.replace(/Dana Reyes/g, "[person]"), replaced: t.includes("Dana Reyes") ? 1 : 0 });
+    const s = { ...snap, url: "https://dana-reyes.hive.io/p/dana_reyes/%E0%A4%A?token=abc", links: [] };
+    expect(redactSnapshot(s, red).snapshot.url).toBe("https://[person].hive.io/p/[person]/%E0%A4%A");
+    expect(redactSnapshot({ ...s, url: "https://dana:hunter2@hive.io/x" }, red).snapshot.url).toBe("https://hive.io/x");
+  });
+});
+
+test("entityId leaves a track's heading as its leaf", () => {
+  expect(entityId("track", snap, at("Mini Hacks Overall"), "Mini Hacks Overall")).toBe("track:https://mini.devpost.com#mini-hacks/prizes/mini-hacks-overall");
+});
+
+describe("rematch (D7)", () => {
+  const es = () => ok(good());
+  const prev = () => keyed(es(), snap);
+  const rename = (e: Entity, id: string, quote?: string): Entity => ({ ...e, id, name: { ...e.name, source: { ...e.name.source, quote: quote ?? e.name.source.quote } } });
+
+  test("same ids: nothing renamed, nothing gone", () => {
+    expect(rematch(prev(), prev(), 0.8)).toEqual({ renamed: new Map(), gone: [] });
+  });
+
+  test("a moved entity with the same quote keeps its old id", () => {
+    const next = es().map((e) => (e.kind === "criterion" ? rename(e, "criterion:moved") : e));
+    const r = rematch(prev(), keyed(next, snap), 0.8);
+    expect([...r.renamed]).toEqual([["criterion:moved", es().find((e) => e.kind === "criterion")!.id]]);
+    expect(r.gone).toEqual([]);
+  });
+
+  test("a lightly edited quote matches above the threshold; a different one doesn't", () => {
+    const c = es().find((e) => e.kind === "criterion")!;
+    const light = rematch(prev(), keyed(es().map((e) => (e.id === c.id ? rename(e, "x", "Creativity!") : e)), snap), 0.8);
+    expect(light.renamed.get("x")).toBe(c.id);
+    const other = rematch(prev(), keyed(es().map((e) => (e.id === c.id ? rename(e, "x", "Technical depth") : e)), snap), 0.8);
+    expect(other.renamed.size).toBe(0);
+    expect(other.gone).toEqual([{ id: c.id, reason: "no match", best: expect.any(Number) }]);
+  });
+
+  test("two candidates above the threshold: listed as ambiguous, never guessed", () => {
+    const c = es().find((e) => e.kind === "criterion")!;
+    const next = [...es().filter((e) => e.id !== c.id), rename(c, "a"), rename(c, "b")];
+    const r = rematch(prev(), keyed(next, snap), 0.8);
+    expect(r.renamed.size).toBe(0);
+    expect(r.gone).toEqual([{ id: c.id, reason: "ambiguous", best: 1 }]);
+  });
+
+  test("similarity ignores case, spacing and punctuation", () => {
+    expect(similarity("Best  Use of Fetch.ai!", "best use of fetch ai")).toBe(1);
+    expect(similarity("abc", "xyz")).toBe(0);
+  });
+});
+
+// User 2026-11-07: the 2026-11-07 re-read of Cal Hacks' Devpost page lost two entry steps the page still stated
+// (GoDaddy's "Register your domain name", Apify's "Building an actor"); a re-read must keep them and say so.
+describe("a re-read never silently drops an entry step or a requirement", () => {
+  const src = (quote: string) => ({ kind: "page" as const, url: "https://mini.devpost.com/", quote, captured_at: "2026-11-06T00:00:00Z", snapshot_hash: "h", block: 0 });
+  const f = (value: string) => ({ value, source: src(value) });
+  const track = (id: string, reqs: string[]): Entity => ({ id, kind: "track", sponsor: "Acme", name: f("[Acme] Best Use of Acme"), fields: Object.fromEntries(reqs.map((r, i) => [`requirements[${i}]`, f(r)])), history: [], origin: "page" }) as Entity;
+  const step = (id: string, track_id: string, text: string): Entity => ({ id, kind: "entry_step", sponsor: "Acme", name: f(text), fields: { track_id: f(track_id), text: f(text) }, history: [], origin: "page" }) as Entity;
+  const onPage = "You must submit your hack by October 25th @ 9 AM PST.";
+  const before = [track("t1", [onPage, "Use Acme meaningfully."]), step("s1", "t1", onPage), step("s2", "t1", "Register your domain name")];
+
+  test("lost ones come back from the previous read, unchanged, and are listed; whether the page still says it is noted", () => {
+    const after = [track("t1", ["Use Acme meaningfully."])];
+    const r = keepDropped(before, after, snap);
+    expect(r.entities.find((e) => e.id === "s2")).toEqual(before[2]);
+    expect(r.entities.find((e) => e.id === "t1")!.fields).toMatchObject({ "requirements[0]": { value: "Use Acme meaningfully." }, "requirements[1]": { value: onPage } });
+    expect(r.kept).toEqual([
+      { kind: "entry_step", id: "s1", value: onPage, quote_on_page: true },
+      { kind: "entry_step", id: "s2", value: "Register your domain name", quote_on_page: false },
+      { kind: "requirement", id: "t1", value: onPage, quote_on_page: true },
+    ]);
+    expect(after).toEqual([track("t1", ["Use Acme meaningfully."])]); // inputs untouched
+  });
+  test("nothing is kept when the new read has them: same id, or the same text on the same track under a new id", () => {
+    const same = [track("t1", ["use acme   meaningfully.", onPage]), step("s1", "t1", onPage), step("s2-new", "t1", "Register your  domain name")];
+    expect(keepDropped(before, same, snap)).toEqual({ entities: same, kept: [] });
+  });
+  test("a first read has nothing to keep; a requirement whose track is gone isn't kept (it's in no_longer_on_page)", () => {
+    expect(keepDropped([], before, snap).kept).toEqual([]);
+    expect(keepDropped([track("t9", ["Only here."])], [], snap)).toEqual({ entities: [], kept: [] });
+  });
+});

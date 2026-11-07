@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="hr-token" content="">
 <title>HackRecon</title>
 <style>
   /* Tokens and rules: DESIGN.md ("Daylight glass"). */
@@ -180,12 +181,14 @@
   @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
   .dh { display: flex; align-items: flex-start; gap: 12px; padding: 16px 12px 12px 24px; border-bottom: 1px solid var(--line); }
   .dh h2 { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -.015em; flex: 1; min-width: 0; }
-  #dr-title:focus { outline: none; }
+  #dr-title:focus, #pd-h:focus { outline: none; }
   .dh .cap { display: block; font-weight: 500; letter-spacing: 0; margin-top: 2px; }
   .x { width: 44px; height: 44px; flex: none; border-radius: 10px; font-size: 24px; line-height: 1; color: var(--muted); }
   .x:hover { background: var(--ghost); color: var(--text); }
   .db { overflow: auto; padding: 4px 24px 40px; overscroll-behavior: contain; }
-  .db h3 { font-size: 12px; font-weight: 650; letter-spacing: .04em; color: var(--muted); margin: 24px 0 0; text-transform: uppercase; }
+  .db h3 { font-size: 13px; font-weight: 650; color: var(--muted); margin: 24px 0 0; }
+  .db h3 + .item { padding-top: 8px; }
+  .db h3 + .item > p:first-child { margin-top: 0; }
   .item { padding: 16px 0; border-top: 1px solid var(--line); }
   .db h3 + .item, .db > .item:first-child { border-top: 0; }
   .item .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 0; }
@@ -201,12 +204,131 @@
   .kv .s { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
   .kv .s a, .item .acts a:not(.claim) { color: var(--text); text-underline-offset: 3px; position: relative; }
   .kv .s a::before, .item .acts a:not(.claim)::before { content: ""; position: absolute; inset: -12px 0; }
-  .note { font-size: 13px; color: var(--muted); margin: 16px 0 0; }
+  .note { font-size: 13px; color: var(--muted); margin: 16px 0 0; overflow-wrap: anywhere; }
 
   /* Phone dock: the replay stays reachable while reading offers. */
   .dock { display: none; }
 
+  /* Tabs (DESIGN.md v2): text, ink underline on the active one, nothing else. */
+  [hidden] { display: none !important; }
+  .tabs { flex-basis: 100%; display: flex; gap: 4px; margin: 4px 0 -8px -10px; }
+  .tabs [role="tab"] { min-height: 44px; padding: 0 10px; font-size: 15px; font-weight: 600; color: var(--muted); box-shadow: inset 0 -2px 0 transparent; }
+  .tabs [role="tab"][aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
+  .on-plan .names, .on-plan .basis { display: none; }
+
+  /* Plan (v2 D2, D3, D7, D8, D12). Tracks is a tile that holds rows; the input and the band are one plain
+     surface (90% white, no border); the field never carries text. */
+  .plan { align-items: start; }
+  .band { grid-column: 1 / -1; background: var(--surface); border-radius: var(--r-tile); padding: var(--pad); min-width: 0; }
+  .plan .tracks { grid-column: 1 / -1; }
+  .plan .tracks:has(~ .credits) { grid-column: 1 / span 8; }
+  .plan .credits { grid-column: 9 / span 4; }
+  /* P3–P5: Sessions | Booths and reps, 1 : 2. People (reps) sit under their sponsor's questions. */
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; }
+  .pair .th { margin-bottom: 4px; }
+  .prow.flat { padding: 10px 0; }
+  .prow.flat .pn { font-size: 15px; }
+  .reps-l { list-style: none; margin: 8px 0 0; padding: 0; }
+  .reps-l li { padding: 8px 0 0; }
+  .reps-l .rn { font-weight: 650; }
+  .reps-l .pr { color: var(--muted); font-size: 14px; }
+  .bq p { max-width: 75ch; }
+  .pf { display: grid; gap: 16px; }
+  .pf .l { display: block; font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 0 6px; }
+  .pf textarea, .pf input { width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: #fff; border: 1px solid var(--dim); border-radius: var(--r-chip); }
+  .pf textarea { min-height: 72px; resize: vertical; field-sizing: content; }
+  .pf textarea:hover, .pf input:hover { border-color: rgba(21,23,28,.24); }
+  .pf ::placeholder { color: var(--muted); opacity: 1; }
+  .pf .opt { font-weight: 500; }
+  .pf .hint { display: block; margin-top: 6px; }
+  .si { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 44px; gap: 8px; margin-top: 8px; }
+  .si:first-child { margin-top: 0; }
+  .rm { width: 44px; height: 44px; border-radius: var(--r-chip); font-size: 22px; line-height: 1; color: var(--muted); }
+  .rm:hover, .add:hover, .edit:hover { color: var(--text); }
+  .add, .edit { min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted); }
+  .pf .go-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  /* P1b drafts from a repo: one row per draft, its source lines as quotes, Use / Skip */
+  .drafts { margin-top: 12px; }
+  .drafts .cap { display: block; margin: 0 0 4px; }
+  .dr { padding: 12px 0; border-top: 1px solid var(--line); }
+  .dr .dn { margin: 0; font-size: 15px; font-weight: 650; }
+  .dr .dt { margin: 2px 0 0; overflow-wrap: anywhere; }
+  .dr .dm { font-size: 13px; color: var(--muted); }
+  .dsrc { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+  .dsrc a, .dsrc span { font: 400 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+  .dsrc a { text-underline-offset: 3px; }
+  .dsrc a:hover { color: var(--text); }
+  .dsrc q { display: block; margin-top: 2px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 13px; quotes: none; overflow-wrap: anywhere; }
+  .dr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
+  .dr > :not(.skip) { grid-column: 1; max-width: 75ch; }
+  .dr .skip { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: -10px; min-width: 44px; text-align: right; }
+  /* Use all stays in reach while the list scrolls; the space below keeps it apart from Make my plan. */
+  .drafts { margin-bottom: 16px; }
+  .dgo { position: sticky; bottom: 0; z-index: 1; padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fff; }
+  .sum { display: flex; align-items: center; gap: 16px; }
+  .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sum .stk { color: var(--muted); }
+  #next { grid-column: 1 / -1; margin: 0; padding: 0 4px; font-size: 15px; font-weight: 650; }
+  #pupd { grid-column: 1 / -1; margin: -8px 0 0; padding: 0 4px; }
+  .upd { min-height: 44px; font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+  .prows, .bqs { list-style: none; margin: 0; padding: 0; }
+  .prow { border-top: 1px solid var(--line); padding-bottom: 10px; }
+  .prow:first-child { border-top: 0; }
+  .pmain { display: block; width: 100%; min-height: 44px; padding: 12px 0 2px; text-align: left; }
+  .pmain:hover .pn { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .pn { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; }
+  .pr { display: block; margin-top: 4px; max-width: 75ch; }
+  /* The label carries the warning (amber, 5.3:1 on a tile); the sentence reads at body weight like the reason. */
+  .pg b { font-weight: 650; color: var(--warning); }
+  .also { margin: 6px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+  .also + .prows .prow:first-child { border-top: 0; }
+  .pmeta a, .bq .pmeta a { color: var(--text); text-underline-offset: 3px; position: relative; }
+  .pmeta a::before { content: ""; position: absolute; inset: -14px -4px; }
+  .pmeta { margin-top: 4px; }
+  /* Checkbox (DESIGN.md v2): a styled native input; the label row is the 44px hit area. */
+  .ck { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; cursor: pointer; }
+  .ck input { appearance: none; flex: none; display: grid; place-content: center; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--muted); border-radius: 4px; background: #fff; cursor: pointer; }
+  .ck input:checked { background: var(--text); border-color: var(--text); }
+  .ck input:checked::after { content: ""; width: 9px; height: 5px; border: solid #fff; border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
+  .ck input:checked + span { opacity: .42; transition: opacity 200ms var(--ease); }
+  .bq { padding: 10px 0 6px; }
+  .bq b { display: block; font-size: 15px; font-weight: 650; }
+  .bq p { margin: 2px 0 6px; }
+  .bq p + p { margin-top: 8px; }
+  .bq .how { min-width: 0; height: 32px; margin-right: 12px; font: 650 13px/1 Manrope, sans-serif; }
+  .bq .how { position: relative; }
+  .bq .how::before { content: ""; position: absolute; inset: -6px 0; } /* 44px tall hit area, same 32px pill */
+  /* Ship (v2 D13): the countdown, Recheck gaps when a repo is linked, then one tile with three groups. */
+  .ship .slist { grid-column: 1 / -1; }
+  .sdl { display: block; width: 100%; min-height: 44px; text-align: left; font-size: 20px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+  .sdl:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+  .sgrp + .sgrp { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .sgrp .th { margin: 0 0 4px; }
+  .sgrp h3 { margin: 0; font-size: 17px; font-weight: 650; color: var(--text); }
+  .sgrp > .fold { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 44px; text-align: left; font-size: 17px; font-weight: 650; }
+  .sits { list-style: none; margin: 0; padding: 0; }
+  .sits li { padding: 2px 0 10px; }
+  .sits .ck { font-size: 15px; align-items: flex-start; padding-top: 12px; min-height: 32px; }
+  .sits .ck input { margin-top: 2px; }
+  .sits q, .sgap q { display: block; margin: 0 0 0 28px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 14px; quotes: none; max-width: 75ch; overflow-wrap: anywhere; }
+  .sits .pmeta { margin: 4px 0 0 28px; }
+  .stn { margin: 12px 0 0; font-size: 15px; font-weight: 650; }
+  .enter { border: 0; margin: 0 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 0 20px; }
+  .enter .ck input:checked + span { opacity: 1; } /* entering a track isn't finishing it */
+  .enter legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .enter > .fold { flex-basis: 100%; min-height: 44px; text-align: left; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .sgap { padding: 12px 0; border-top: 1px solid var(--line); }
+  .sgap:first-child { border-top: 0; }
+  .sgap p { margin: 0 0 6px; max-width: 75ch; }
+  .sgap .note { margin: 8px 0 4px; }
+  .sgap q { margin-left: 0; }
+  .item ul.dl { display: block; margin: 0; padding: 0; font: 500 14px/1.5 Manrope, sans-serif; color: var(--text); }
+  .item ul.dl li + li { margin-top: 6px; }
+  .item .ck + q { margin: 0 0 8px 28px; }
+  .pstate { margin: 4px 0; color: var(--muted); }
+
   @media (max-width: 1099px) {
+    .plan .tracks:has(~ .credits), .plan .credits { grid-column: 1 / -1; }
     .hero { grid-column: 1 / -1; grid-row: 1; }
     .value { grid-column: 1 / span 6; grid-row: 2; }
     .closes { grid-column: 7 / span 6; grid-row: 2; }
@@ -221,6 +343,15 @@
     .basis { width: 100%; margin: 0; }
     main { grid-template-columns: minmax(0, 1fr); padding-bottom: calc(136px + env(safe-area-inset-bottom)); }
     .hero, .value, .closes, .act, .stream, .reps { grid-column: 1; }
+    .plan { padding-bottom: 48px; }
+    .plan .tracks:has(~ .credits) { grid-column: 1; }
+    .plan .credits { grid-column: 1; order: 1; } /* phone order: input, Tracks, the band, Credits (D2) */
+    .pair { grid-template-columns: minmax(0, 1fr); }
+    .si { grid-template-columns: minmax(0, 1fr) 44px; }
+    .si .uf { grid-column: 1; grid-row: 2; }
+    .si { row-gap: 6px; }
+    .si + .si { margin-top: 18px; }
+    .on-plan .dock { display: none; }
     .hero { grid-row: 1; } .stream { grid-row: 2; } .closes { grid-row: 3; } .value { grid-row: 4; } .reps { grid-row: 5; } .act { grid-row: 6; }
     .lead { font-size: 18px; margin-bottom: 16px; }
     .act .controls { display: none; }
@@ -237,16 +368,63 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 </style>
 </head>
-<body>
+<body class="on-plan">
 <div class="field" aria-hidden="true"></div>
 <header>
   <h1 class="brand">HackRecon</h1>
   <span class="ev" id="ev"></span>
   <span class="names">Names hidden</span>
   <span class="basis" id="basis"></span>
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="t-plan" aria-controls="p-plan" aria-selected="true" tabindex="0">Plan</button>
+    <button role="tab" id="t-claim" aria-controls="p-claim" aria-selected="false" tabindex="-1">Claim</button>
+    <button role="tab" id="t-ship" aria-controls="p-ship" aria-selected="false" tabindex="-1">Ship</button>
+  </nav>
 </header>
 
-<main>
+<main class="plan" id="p-plan" role="tabpanel" aria-labelledby="t-plan">
+  <section class="band" id="pi" aria-labelledby="h-pi">
+    <h2 class="sr" id="h-pi">Your project</h2>
+    <div id="pi-body"></div>
+  </section>
+  <p id="next" hidden></p>
+  <p id="pupd" hidden><button type="button" class="upd" id="pupd-btn"></button></p>
+  <section class="tile tracks" id="pt" aria-labelledby="h-pt" hidden>
+    <div class="th"><h2 id="h-pt">Tracks to target</h2><span class="ctx m" id="pt-ctx"></span></div>
+    <div id="pt-body"></div>
+  </section>
+  <section class="tile credits" id="pc" aria-labelledby="h-pc" hidden>
+    <div class="th"><h2 id="h-pc">Credits</h2><span class="ctx m" id="pc-ctx"></span></div>
+    <div id="pc-body"></div>
+  </section>
+  <div class="band pair" id="pband" hidden>
+    <section aria-labelledby="h-ps" id="ps">
+      <div class="th"><h2 id="h-ps">Sessions</h2></div>
+      <div id="ps-body"></div>
+    </section>
+    <section aria-labelledby="h-pb" id="pb">
+      <div class="th"><h2 id="h-pb">Booths and reps</h2></div>
+      <div id="pb-body"></div>
+    </section>
+  </div>
+</main>
+
+<main class="plan ship" id="p-ship" role="tabpanel" aria-labelledby="t-ship" hidden>
+  <section class="band" aria-labelledby="h-sd">
+    <h2 class="sr" id="h-sd">Submission deadline</h2>
+    <div id="sd-body"></div>
+  </section>
+  <section class="band" id="sg" aria-labelledby="h-sg" hidden>
+    <h2 class="sr" id="h-sg">Recheck gaps</h2>
+    <div id="sg-body"></div>
+  </section>
+  <section class="tile slist" aria-labelledby="h-sl">
+    <h2 class="sr" id="h-sl">Checklist</h2>
+    <div id="sl-body"></div>
+  </section>
+</main>
+
+<main id="p-claim" role="tabpanel" aria-labelledby="t-claim" hidden>
   <section class="tile hero" data-drawer="offers" aria-labelledby="h-hero">
     <div class="th"><h2><button id="h-hero" data-drawer="offers">Offers found</button></h2><span class="ctx" id="hero-ctx"></span></div>
     <div class="big" id="hero-n"></div>
@@ -315,6 +493,8 @@
 <div class="tip" id="tip" aria-hidden="true"></div>
 <div class="sr" aria-live="polite" id="say"></div>
 
+<!-- prefill.js -->
+<!-- live.js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -331,6 +511,7 @@ let D, F, i = 0, timer = null, drawer = null, showMissed = false, DONE_KEY = "";
 let done = new Set();
 const days = [], dayOf = new Map(), offerByTs = new Map(), postIndex = new Map();
 let cols = 0;
+let tab = "plan";
 
 const fmt = (t, o) => new Date(t * 1000).toLocaleString("en-US", { timeZone: D.timezone, ...o });
 const dayTime = (t) => fmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
@@ -532,11 +713,15 @@ function paintReps(now) {
   $("rp-n").textContent = found;
   $("rp-cap").textContent = `of ${total} sponsors have a rep found · ${plural(cands, "candidate")}, none confirmed`;
   // One row per sponsor, candidates as pips. The full list fits beside the stream on desktop; narrower, top 6.
-  const by = new Map();
-  for (const r of D.reps) by.set(r.sponsor, (by.get(r.sponsor) ?? 0) + r.candidate_first.filter((t) => t <= now).length);
-  const rows = [...by].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  // Likely staff (rep_likely) never counts as a candidate; a sponsor with none says how many likely staff it has.
+  const by = new Map(), likely = new Map();
+  for (const r of D.reps) {
+    by.set(r.sponsor, (by.get(r.sponsor) ?? 0) + r.candidate_first.filter((t) => t <= now).length);
+    likely.set(r.sponsor, (likely.get(r.sponsor) ?? 0) + (D.rep_likely?.[r.channel] ?? []).filter((x) => x.first <= now).length);
+  }
+  const rows = [...by].sort((a, b) => b[1] - a[1] || likely.get(b[0]) - likely.get(a[0]) || a[0].localeCompare(b[0]));
   const cap = innerWidth >= 1100 ? rows.length : 6;
-  $("rp-list").innerHTML = rows.slice(0, cap).map(([sp, n]) => `<li><span>${esc(sp)}</span>${n ? `<span class="pips" role="img" aria-label="${plural(n, "candidate")}">${"<i></i>".repeat(Math.min(n, 8))}</span>` : `<span class="none">none yet</span>`}</li>`).join("") +
+  $("rp-list").innerHTML = rows.slice(0, cap).map(([sp, n]) => `<li><span>${esc(sp)}</span>${n ? `<span class="pips" role="img" aria-label="${plural(n, "candidate")}">${"<i></i>".repeat(Math.min(n, 8))}</span>` : `<span class="none">${likely.get(sp) ? `${likely.get(sp)} likely staff` : "none yet"}</span>`}</li>`).join("") +
     (rows.length > cap ? `<li class="more-r"><span>${rows.length - cap} more sponsors in the full list</span></li>` : "");
 }
 
@@ -579,9 +764,27 @@ function drawerContent(kind, now, prev) {
        <h3>Event · ${evs.length}</h3>${evs.map((e) => `<div class="kv"><span>${esc(e.what)}</span><span class="r">${limitTime(e.at, now)}${e.until ? `–${fmt(e.until, { hour: "numeric", minute: "2-digit" })}` : ""}</span><span class="s"><a href="${esc(e.source)}" target="_blank" rel="noopener">announcement ↗</a></span></div>`).join("") || `<p class="note">None announced yet.</p>`}`];
   }
   if (kind === "reps") {
-    const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length })).sort((a, b) => b.c - a.c || b.offers - a.offers || b.posts - a.posts);
-    return ["Reps", "Sponsor-side posters in each sponsor channel. Names are hidden here; confirm a candidate yourself before you message anyone.",
-      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel</span></div>`).join("")];
+    // rep_accounts: Slack accounts behind each candidate, aligned with candidate_first (one person, two accounts, is one rep).
+    const multi = (r) => (D.rep_accounts?.[r.channel] ?? []).filter((n, i) => n > 1 && r.candidate_first[i] <= now);
+    // rep_signals: what each candidate matched (aligned the same way); rep_likely: likely staff, never counted as reps.
+    const matched = (r) => {
+      const n = new Map();
+      (D.rep_signals?.[r.channel] ?? []).forEach((ls, i) => {
+        if (r.candidate_first[i] > now) return;
+        const self = D.rep_self?.[r.channel]?.[i];
+        for (const l of [...ls, ...(self != null && self <= now ? ["says they work there"] : [])]) n.set(l, (n.get(l) ?? 0) + 1);
+      });
+      return [...n].map(([k, c]) => `${k} (${c})`).join(", ");
+    };
+    const likely = (r) => (D.rep_likely?.[r.channel] ?? []).filter((x) => x.first <= now);
+    const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length, m: multi(r), l: likely(r) })).sort((a, b) => b.c - a.c || b.l.length - a.l.length || b.offers - a.offers || b.posts - a.posts);
+    return ["Reps", "Sponsor-side posters in each sponsor channel, with the signals they matched. Likely staff is listed apart and never counted. Names are hidden here; confirm a candidate yourself before you message anyone.",
+      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span>${r.c ? `<span class="s">Matched: ${esc(matched(r))}</span>` : ""}${r.l.map((x) => {
+        // Likely by signal 3 (staff posts and answers), by 2b (says they work there), or both, as of the frame.
+        const p = x.posts.filter((t) => t <= now).length, a = x.answers.filter((t) => t <= now).length, staff = x.staff != null && x.staff <= now;
+        const parts = [staff && `${plural(p, "offer, prize or workshop post")}, ${plural(a, "answer")} to hackers`, x.self != null && x.self <= now && "says they work there"].filter(Boolean);
+        return `<span class="s">Likely staff, not counted: ${parts.join(", ")}${x.hacker ? `; also posted in a hacker-only channel (${plural(x.hacker, "post")})` : staff ? ", never in a hacker-only channel" : ""}</span>`;
+      }).join("")}</div>`).join("")];
   }
   if (kind === "activity") {
     const rows = days.map((d) => {
@@ -597,14 +800,17 @@ function paintDrawer(now, prev) {
   $("dr-title").innerHTML = `${esc(t)}<span class="cap">${esc(cap)}</span>`;
   $("dr-body").innerHTML = body;
 }
-function openDrawer(kind) {
+function openDrawer(kind, from) {
+  if (!$("drawer").open) drawerFrom = from || document.activeElement;
   drawer = kind;
   setPlaying(false);
   paintDrawer(F[i], i ? F[i - 1] : -Infinity);
   if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
   $("dr-body").scrollTop = 0;
 }
-$("drawer").addEventListener("close", () => { drawer = null; });
+// Focus goes back to whatever opened the drawer; Safari doesn't focus a clicked button, so callers pass it.
+let drawerFrom = null;
+$("drawer").addEventListener("close", () => { drawer = null; if (drawerFrom?.isConnected) drawerFrom.focus(); drawerFrom = null; });
 $("dr-x").onclick = () => $("drawer").close();
 $("drawer").addEventListener("click", (e) => { if (e.target === $("drawer")) $("drawer").close(); });
 
@@ -670,14 +876,14 @@ document.addEventListener("click", async (e) => {
   }
   if (claim) { const id = claim.dataset.claim; if (!done.has(id)) setTimeout(() => setDone(id, true), 0); return; }
   if (dn) { setDone(dn.dataset.done, !done.has(dn.dataset.done)); return; }
-  if (op) { openDrawer("o:" + op.dataset.open); return; }
+  if (op) { openDrawer("o:" + op.dataset.open, op); return; }
   if (jump) { setPlaying(false); render(Number(jump.dataset.jump)); return; }
   if (t.id === "missed-t") { showMissed = !showMissed; render(i); return; }
-  if (dr) { openDrawer(dr.dataset.drawer); return; }
+  if (dr) { openDrawer(dr.dataset.drawer, dr); return; }
   const lit = dotAt(t);
   if (lit) { openDrawer("o:" + lit.id); return; }
   const tile = t.closest(".tile[data-drawer]");
-  if (tile && !t.closest("button, a, input")) openDrawer(tile.dataset.drawer);
+  if (tile && !t.closest("button, a, input")) openDrawer(tile.dataset.drawer, tile.querySelector("[data-drawer]") || tile);
 });
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {}
@@ -747,7 +953,7 @@ for (const [p, a, b] of [["play", "prev", "next"], ["play2", "prev2", "next2"]])
   $(b).onclick = () => { setPlaying(false); render(i + 1); };
 }
 document.addEventListener("keydown", (e) => {
-  if ($("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
+  if (tab !== "claim" || $("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
   if (e.key === "ArrowLeft") { setPlaying(false); render(i - 1); e.preventDefault(); }
   else if (e.key === "ArrowRight") { setPlaying(false); render(i + 1); e.preventDefault(); }
   else if (e.key === " " && !e.target.matches("button, a")) { setPlaying(!timer); e.preventDefault(); }
@@ -756,11 +962,602 @@ addEventListener("scroll", () => { if ($("tip").classList.contains("on")) { $("t
 let rz;
 addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { buildMatrix(); render(i); }, 120); });
 
+/* ---------- Plan (v2): the default tab ---------- */
+// Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
+const TOKEN = document.querySelector('meta[name="hr-token"]').content;
+// res holds the sections as they stream in (P2); sec is each one's state: busy, ok or failed.
+const P = { meta: null, input: null, res: null, gaps: null, sec: {}, seq: 0, abort: null, steps: new Set() };
+// D5: rows a sync added or changed ("New", "Changed" with the old row), the sync's full result in its own order
+// (applied by "Show N updates"), its urgent items (Next for you), and the marks seen on Plan (cleared on leaving it).
+P.live = { marks: new Map(), was: new Map(), next: null, n: 0, urgent: [], seen: new Set() };
+const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
+const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
+// ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
+// /plan/meta as of the same clock, so Next for you never shows a time posted after it.
+const metaUrl = () => { const q = new URLSearchParams(location.search).get("now"); return q ? `/plan/meta?now=${encodeURIComponent(q)}` : "/plan/meta"; };
+const nowMs = () => { const q = new URLSearchParams(location.search).get("now"); const t = q ? Date.parse(q) : NaN; return Number.isNaN(t) ? Date.now() : t; };
+const pfmt = (iso, o) => new Date(iso).toLocaleString("en-US", { timeZone: P.meta.timezone, ...o });
+const firstSentence = (s) => s.split(/(?<=[.!?])\s+|\n+/)[0] || s;
+
+function setTab(name, focus) {
+  // D5: markers clear once Plan has been opened after they arrived, so leaving Plan drops the ones seen there.
+  const clear = tab === "plan" && name !== "plan" && P.live.seen.size;
+  if (clear) for (const k of P.live.seen) { P.live.marks.delete(k); P.live.was.delete(k); P.live.seen.delete(k); }
+  tab = name;
+  if (clear && P.input) paintResults();
+  for (const t of document.querySelectorAll('[role="tab"]')) {
+    const on = t.id === `t-${name}`;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    if (on && focus) t.focus();
+  }
+  $("p-plan").hidden = name !== "plan";
+  $("p-claim").hidden = name !== "claim";
+  $("p-ship").hidden = name !== "ship";
+  document.body.classList.toggle("on-plan", name !== "claim");
+  if (name === "ship") loadShip();
+  // The dot matrix measures itself, so it's built once Claim is visible.
+  if (name === "claim" && D) { cols = 0; buildMatrix(); render(i); }
+}
+for (const t of document.querySelectorAll('[role="tab"]')) {
+  t.addEventListener("click", () => setTab(t.id.slice(2)));
+  t.addEventListener("keydown", (e) => {
+    const tabs = [...document.querySelectorAll('[role="tab"]')], k = tabs.indexOf(t);
+    const to = { ArrowRight: k + 1, ArrowLeft: k - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    tabs[(to + tabs.length) % tabs.length].focus();
+  });
+}
+
+/* the input: one description, then one row per stack item with an optional "used for" */
+function stackRow(it = { name: "", used_for: "" }) {
+  return `<div class="si"><input class="nm" value="${esc(it.name)}" placeholder="a tool, API or service" aria-label="Stack item" autocomplete="off" maxlength="80"><input class="uf" value="${esc(it.used_for || "")}" placeholder="what it does in your project" aria-label="What it does in your project (optional)" autocomplete="off" maxlength="160"><button type="button" class="rm" aria-label="Remove this item">×</button></div>`;
+}
+function paintInput(editing) {
+  const box = $("pi-body");
+  if (!editing && P.input) {
+    const names = (P.input.stack || []).map((x) => x.name).join(", ");
+    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>`;
+    $("pi-edit").onclick = () => { paintInput(true); $("pi-idea").focus(); };
+    return;
+  }
+  const stack = P.input?.stack?.length ? P.input.stack : [{ name: "", used_for: "" }];
+  box.innerHTML = `<form class="pf" id="pf" novalidate>
+    <div><label class="l" for="pi-idea">Your project</label><textarea id="pi-idea" maxlength="2000" placeholder="What are you building, and for whom?">${esc(P.input?.idea || "")}</textarea></div>
+    <div><span class="l" id="pi-sl">Stack</span><div id="pi-stack" role="group" aria-labelledby="pi-sl">${stack.map(stackRow).join("")}</div><button type="button" class="add" id="pi-add">Add to stack</button></div>
+    <div><label class="l" for="pi-repo">Repo link <span class="opt">(optional)</span></label><input id="pi-repo" type="url" inputmode="url" value="${esc(P.input?.repo || "")}" placeholder="https://github.com/you/project" autocomplete="off" maxlength="200"><span class="cap hint">Read to check each likely track's stated requirements against your code. Public GitHub only.</span><div class="go-row"><button type="button" class="add" id="pi-draft">Draft from this repo</button><span class="cap" id="pi-dcap" aria-live="polite"></span></div><div id="pi-drafts"></div></div>
+    <div class="go-row"><button class="jump" type="submit">Make my plan</button><span class="cap" id="pi-cap">${esc(beforeLine())}</span></div>
+  </form>`;
+  $("pi-add").onclick = () => { $("pi-stack").insertAdjacentHTML("beforeend", stackRow()); $("pi-stack").lastElementChild.querySelector(".nm").focus(); };
+  $("pi-stack").addEventListener("click", (e) => {
+    const rm = e.target.closest(".rm");
+    if (!rm) return;
+    const rows = $("pi-stack").children;
+    if (rows.length === 1) { rm.parentElement.querySelectorAll("input").forEach((x) => (x.value = "")); return; }
+    const next = rm.parentElement.nextElementSibling || rm.parentElement.previousElementSibling;
+    rm.parentElement.remove();
+    next.querySelector(".nm").focus();
+  });
+  // Pasting "Apify: pull catalogs, Claude API" into a name splits it into rows, at the first ": " like the CLI.
+  $("pi-stack").addEventListener("paste", (e) => {
+    const nm = e.target.closest(".nm"), text = e.clipboardData?.getData("text") || "";
+    if (!nm || !text.includes(",")) return;
+    e.preventDefault();
+    const items = text.split(",").map((x) => x.trim()).filter(Boolean).map((x) => { const k = x.indexOf(": "); return k > 0 ? { name: x.slice(0, k), used_for: x.slice(k + 2) } : { name: x, used_for: "" }; });
+    const row = nm.parentElement;
+    row.insertAdjacentHTML("afterend", items.map(stackRow).join(""));
+    const last = [...$("pi-stack").children][[...$("pi-stack").children].indexOf(row) + items.length];
+    if (!row.querySelector(".nm").value && !row.querySelector(".uf").value) row.remove();
+    last?.querySelector(".nm").focus();
+  });
+  // Enter moves along the stack (name → its use → the next item) instead of submitting half a list.
+  $("pi-stack").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const row = e.target.parentElement;
+    if (e.target.classList.contains("nm")) row.querySelector(".uf").focus();
+    else if (row.nextElementSibling) row.nextElementSibling.querySelector(".nm").focus();
+    else $("pi-add").click();
+  });
+  // P1b: drafts from the repo, each filled in only when the user chooses Use (board/prefill.js). Nothing is stored
+  // here; the input is saved when the plan is made, as for anything typed.
+  const formState = () => ({ idea: $("pi-idea").value, stack: [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value, used_for: r.querySelector(".uf").value })) });
+  let used = 0;
+  const useDraft = (it) => {
+    const f = HRPrefill.applyItem(formState(), it);
+    $("pi-idea").value = f.idea;
+    $("pi-stack").innerHTML = f.stack.map(stackRow).join("");
+    used++;
+  };
+  $("pi-draft").onclick = async () => {
+    const repo = $("pi-repo").value.trim(), btn = $("pi-draft"), cap = $("pi-dcap");
+    if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) { cap.textContent = "Paste a public https://github.com/<owner>/<repo> link first."; $("pi-repo").focus(); return; }
+    btn.disabled = true;
+    cap.textContent = "Reading the repo…";
+    try {
+      const r = await fetch("/plan/prefill", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify({ repo }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Couldn't draft from that repo.");
+      const items = HRPrefill.draftItems(j.draft);
+      cap.textContent = items.length ? plural(items.length, "draft") : "Nothing to draft from that repo.";
+      used = 0;
+      HRPrefill.mountDrafts($("pi-drafts"), items, { head: `From ${j.repo.replace(/^https:\/\/github\.com\//, "")} @ ${j.commit.slice(0, 7)}`, onUse: useDraft, onDone: () => { cap.textContent = used ? `${plural(used, "draft")} filled in. Check them, then make your plan.` : "All drafts skipped."; $("pi-idea").focus(); } });
+      $("pd-h")?.focus();
+    } catch (err) {
+      cap.textContent = err.message.replace(/\.?$/, ".");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  $("pf").onsubmit = (e) => {
+    e.preventDefault();
+    const idea = $("pi-idea").value.trim();
+    if (!idea) { $("pi-cap").textContent = "Describe your project first."; $("pi-idea").focus(); return; }
+    const items = [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value.trim(), used_for: r.querySelector(".uf").value.trim() })).filter((x) => x.name);
+    const repo = $("pi-repo").value.trim();
+    if (repo && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) { $("pi-cap").textContent = "The repo link must be a public https://github.com/<owner>/<repo> link."; $("pi-repo").focus(); return; }
+    P.input = { idea, stack: items.length ? items : null, ...(repo ? { repo } : {}) };
+    store.set(planKey(), JSON.stringify(P.input));
+    paintInput(false);
+    runPlan();
+  };
+}
+// Before the first plan only; while editing, the plan itself is on the page below.
+function beforeLine() {
+  return P.meta?.track_count && !P.input ? `${plural(P.meta.track_count, "track")} on Devpost; your plan appears once you describe your project` : "";
+}
+
+/* Next for you (D2): the next time-bound item, hidden before the event starts and when nothing is upcoming. When
+   the start isn't known (Cal Hacks' config has none), an item shows only within 24 h of it. */
+function paintNext() {
+  const now = nowMs(), m = P.meta, el = $("next");
+  // D5: an urgent change takes the line at once, read out (assertive); otherwise the next deadline, unannounced.
+  // The soonest; a cancellation first, since it has no time to wait for.
+  const u = P.live.urgent.filter((x) => x.why === "cancelled" || (x.at && x.at > now)).sort((a, b) => (a.why === "cancelled" ? -Infinity : a.at) - (b.why === "cancelled" ? -Infinity : b.at))[0];
+  el.setAttribute("aria-live", u ? "assertive" : "off");
+  if (u) {
+    el.hidden = false;
+    const at = (t) => pfmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    const rel = u.at ? countdown(u.at - now) : "";
+    el.textContent = u.why === "cancelled" ? `Cancelled · ${u.label}` : u.why === "earlier" ? `${at(u.at)} · ${u.label} · moved earlier from ${pfmt(u.was, { hour: "numeric", minute: "2-digit" })} · in ${rel}` : `${at(u.at)} · ${u.label} · ${u.why === "closes soon" ? "closes" : "starts"} in ${rel}`;
+    return;
+  }
+  const started = m?.hacking_start ? now >= Date.parse(m.hacking_start) : null;
+  const d = m && started !== false ? m.deadlines.find((x) => Date.parse(x.at) > now && (started || Date.parse(x.at) - now <= 86400000)) : null;
+  el.hidden = !d;
+  if (!d) return;
+  const mins = Math.round((Date.parse(d.at) - now) / 60000);
+  const rel = mins < 60 ? plural(mins, "min") : mins < 48 * 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : plural(Math.round(mins / 1440), "day");
+  el.textContent = `${pfmt(d.at, { weekday: "short", hour: "numeric", minute: "2-digit" })} · ${d.name} · in ${rel}`;
+}
+
+// One request, read line by line: each section paints the moment the server sends it, tracks first (P2, D4).
+// The gap check comes after the tracks it checks, and booths are rebuilt once a gap is found.
+async function runPlan() {
+  const seq = ++P.seq;
+  P.abort?.abort();
+  const ctl = (P.abort = new AbortController());
+  P.res = { tracks: null, booths: null, credits: null, sessions: null, people: null };
+  P.gaps = null;
+  P.sec = { tracks: "busy", booths: "busy", credits: "busy", sessions: "busy", people: "busy" };
+  paintResults();
+  const on = (e) => {
+    if (e.section === "done") return announcePlan();
+    if (e.error) {
+      P.sec[e.section] = "failed";
+      if (e.section === "gaps") P.gaps = { error: true };
+    } else if (e.section === "gaps") P.gaps = e;
+    else if (e.section === "credits" || e.section === "sessions" || e.section === "people") {
+      // P3–P5 keep the whole event: credits' joined sponsors, sessions' deadline.
+      P.res[e.section] = e;
+      P.sec[e.section] = "ok";
+    } else {
+      P.res[e.section] = e[e.section];
+      P.sec[e.section] = "ok";
+    }
+    paintResults();
+  };
+  try {
+    await readPlan(P.input, on, ctl.signal, () => seq !== P.seq);
+    if (seq !== P.seq) return;
+  } catch { if (seq !== P.seq) return; }
+  P.live = { ...P.live, marks: new Map(), was: new Map(), next: null, n: 0, urgent: [] };
+  paintUpdates();
+  // A stream that ended early leaves its unsent sections failed, never "Matching…" forever.
+  if (Object.values(P.sec).includes("busy")) {
+    for (const k in P.sec) if (P.sec[k] === "busy") P.sec[k] = "failed";
+    paintResults();
+  }
+}
+/** POST /plan/stream, read line by line; `on` gets each section as the server sends it. Passes the page's
+ *  ?now (the review clock) so sessions, credits and reps are as of that moment, as Ship's checklist is. */
+async function readPlan(input, on, signal, stale = () => false) {
+  const at = new URLSearchParams(location.search).get("now");
+  const r = await fetch(at ? `/plan/stream?now=${encodeURIComponent(at)}` : "/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(input), signal });
+  if (!r.ok || !r.body) throw new Error(String(r.status));
+  const rd = r.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await rd.read();
+    if (stale() || done) return;
+    buf += value;
+    for (let k; (k = buf.indexOf("\n")) >= 0; buf = buf.slice(k + 1)) if (k) on(JSON.parse(buf.slice(0, k)));
+  }
+}
+
+/* D5 live updates: when a sync changes what Plan reads (/plan/meta's version), the plan is rebuilt off screen and
+   compared (board/live.js HRLive.check). New rows go last, changed rows keep their place, both marked; nothing
+   reorders until "Show N updates". Urgent changes take the Next for you line at once. A failed rebuild keeps what's
+   shown. */
+const mergeUrgent = (fresh) => [...fresh, ...P.live.urgent.filter((u) => !fresh.some((x) => x.key === u.key))];
+/** The plan for the saved input, read whole and off screen; null if any section failed or a newer plan started. */
+async function loadStaged(seq) {
+  const res = { tracks: null, booths: null, credits: null, sessions: null, people: null, gaps: P.gaps };
+  let failed = false;
+  const on = (e) => {
+    if (e.section === "done") return;
+    if (e.error) failed = true;
+    else if (e.section === "gaps") res.gaps = e;
+    else res[e.section] = e.section === "credits" || e.section === "sessions" || e.section === "people" ? e : e[e.section];
+  };
+  await readPlan(P.input, on, undefined, () => seq !== P.seq);
+  return seq !== P.seq || failed || !res.tracks ? null : res;
+}
+async function liveTick() {
+  const seq = P.seq;
+  const r = await HRLive.check({
+    meta: P.meta,
+    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()),
+    onMeta: (n, du) => {
+      P.meta = n;
+      P.live.urgent = mergeUrgent(du);
+      paintNext();
+      if (P.input) paintResults();
+    },
+    shown: () => (P.input && P.sec.tracks === "ok" && seq === P.seq ? P.res : null),
+    loadPlan: () => loadStaged(seq),
+    nowMs,
+  });
+  const u = r?.update;
+  if (!u || seq !== P.seq) return;
+  for (const m of u.marks) {
+    P.live.marks.set(m.key, m.mark);
+    if (m.was && !P.live.was.has(m.key)) P.live.was.set(m.key, m.was);
+  }
+  P.live.next = u.next;
+  P.live.n += u.diff.count + u.diff.removed.length;
+  P.live.urgent = mergeUrgent(u.urgent);
+  P.res = u.present;
+  P.gaps = u.next.gaps;
+  paintResults();
+  paintNext();
+  paintUpdates();
+  // D11: one combined announcement per sync, never one per item.
+  if (u.diff.count) $("say").textContent = `${plural(u.diff.count, "update")} to your plan.`;
+}
+function paintUpdates() {
+  $("pupd").hidden = !P.live.next || !P.live.n;
+  $("pupd-btn").textContent = `Show ${plural(P.live.n, "update")}`;
+}
+$("pupd-btn").addEventListener("click", () => {
+  // The sync's own order; the markers stay until Plan is left.
+  P.res = P.live.next;
+  P.live.next = null;
+  P.live.n = 0;
+  paintResults();
+  paintUpdates();
+  $("pt").focus?.();
+});
+
+// D11: one polite announcement once every section has settled.
+function announcePlan() {
+  if (tab === "ship") paintShip(); // Ship's chooser lists Plan's tracks
+  if (P.sec.tracks !== "ok") return;
+  const n = P.gaps?.gaps?.length ?? 0;
+  const parts = [plural(P.res.tracks.length, "track"), P.res.credits && plural(P.res.credits.credits.length, "credit"), P.res.sessions && plural(P.res.sessions.sessions.length, "session"), `questions for ${plural(P.res.booths?.length ?? 0, "sponsor")}`, n && plural(n, "gap")].filter(Boolean);
+  $("say").textContent = `Plan ready: ${parts.join(", ")}.`;
+}
+const gapsOf = (id) => P.gaps?.gaps?.filter((g) => g.track_id === id) ?? [];
+
+// D5's markers, in the row's metadata: mono "New" or "Changed", as Claim marks a new offer.
+function liveMark(key) {
+  const m = P.live.marks.get(key);
+  if (!m) return "";
+  if (tab === "plan") P.live.seen.add(key);
+  return `<span class="new">${m}</span> · `;
+}
+const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
+const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
+function trackRow(t) {
+  const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
+  // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
+  const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
+  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}</span>`).join("");
+  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${liveMark(`tracks:${t.track_id}`)}${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
+}
+function paintResults() {
+  const show = !!P.input;
+  $("pt").hidden = $("pc").hidden = $("pband").hidden = !show;
+  if (!show) return;
+  $("pt").setAttribute("aria-busy", String(P.sec.tracks === "busy"));
+  $("pc").setAttribute("aria-busy", String(P.sec.credits === "busy"));
+  $("ps").setAttribute("aria-busy", String(P.sec.sessions === "busy"));
+  $("pb").setAttribute("aria-busy", String(P.sec.booths === "busy" || P.sec.people === "busy"));
+  const state = (t) => `<p class="pstate">${esc(t)}</p>`;
+  const failed = state("Couldn't rank tracks just now; trying again on the next change");
+  const ts = P.res.tracks;
+  if (!ts) {
+    $("pt-ctx").textContent = "";
+    $("pt-body").innerHTML = P.sec.tracks === "failed" ? failed : state("Matching…");
+  } else {
+    const likely = ts.filter((t) => t.fit === "likely"), possible = ts.filter((t) => t.fit !== "likely");
+    // D4: when the last sync couldn't read a Devpost page, the tracks say how old the page is.
+    const asOf = P.meta?.stale?.length && P.meta.as_of ? `Devpost as of ${pfmt(P.meta.as_of, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
+    $("pt-ctx").textContent = [ts.length ? `${likely.length} likely · ${possible.length} possible` : "", asOf].filter(Boolean).join(" · ");
+    $("pt-body").innerHTML = !ts.length
+      ? state("No track's stated requirements match this description")
+      : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
+  }
+  // P3 Credits: Claim's offers from the joined sponsors, open now, soonest limit first. A row opens its drawer.
+  const cr = P.res.credits;
+  $("pc-ctx").textContent = cr?.credits.length ? `${cr.credits.length} open` : "";
+  $("pc-body").innerHTML = !cr
+    ? (P.sec.credits === "failed" ? failed : state("Matching…"))
+    : !cr.credits.length
+      ? state("No offer posted so far matches your stack")
+      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${liveMark(`credits:${c.offer_id}`)}${[esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+  // P4 Sessions: upcoming, before the submission deadline, by time. The row's name is the post's first line, verbatim.
+  const se = P.res.sessions;
+  $("ps-body").innerHTML = !se
+    ? (P.sec.sessions === "failed" ? failed : state("Matching…"))
+    : !se.sessions.length
+      ? state(se.deadline ? "No upcoming session from these sponsors before the submission deadline" : "No upcoming session from these sponsors; no submission deadline is known yet")
+      : `<ul class="prows">${se.sessions.map((x) => `<li class="prow flat"><span class="pn">${esc(x.quote)}</span><span class="pr">${esc(x.why[0])}</span><div class="pmeta m">${liveMark(`sessions:${x.source_url}|${x.sponsor}`)}${esc(pfmt(x.start, { weekday: "short", hour: "numeric", minute: "2-digit" }))}${wasTime(`sessions:${x.source_url}|${x.sponsor}`, x.start)} · ${esc(x.sponsor)} · ${srcLink(x.source_url)}</div></li>`).join("")}</ul>`;
+  // One block per sponsor; once gaps are checked, a track with a gap asks from it (the server rebuilds the blocks).
+  const bs = P.res.booths;
+  if (!bs) { $("pb-body").innerHTML = P.sec.booths === "failed" ? failed : state("Matching…"); return; }
+  // P5 People: each likely track's sponsor's reps, under that sponsor's questions (a rep and what to ask them).
+  const pe = P.res.people?.people ?? [];
+  const sponsorsShown = [...new Set([...bs.map((b) => b.sponsor), ...pe.map((x) => x.sponsor)])];
+  const repsOf = (sp) => {
+    const x = pe.find((y) => y.sponsor === sp);
+    if (!x) return "";
+    if (!x.reps.length) return `<p class="pstate">No rep of a targeted track has posted yet</p>`;
+    return `<ul class="reps-l">${x.reps.map((r) => `<li><span class="rn">${esc(r.name)}</span><span class="pr">${esc(r.quote)}</span>${r.signals?.length ? `<span class="pr">Matched: ${esc(r.signals.join("; "))}</span>` : ""}<div class="pmeta m">${liveMark(`people:${x.sponsor}|${r.person}`)}${[r.accounts > 1 ? plural(r.accounts, "account") : "", plural(r.posts, "post"), `first ${pfmt(r.first * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, srcLink(r.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+  };
+  $("pb-body").innerHTML = !sponsorsShown.length
+    ? state("No questions yet for the tracks in your plan")
+    : `<ul class="bqs">${sponsorsShown.map((sp) => {
+        const k = bs.findIndex((b) => b.sponsor === sp), b = bs[k];
+        const qs = b ? `${(b.lines || [b.text]).map((l) => `<p>${esc(l)}</p>`).join("")}<div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div>` : "";
+        return `<li class="bq"><b>${esc(sp)}</b>${qs}${repsOf(sp)}</li>`;
+      }).join("")}</ul>`;
+}
+
+// A changed session has no drawer: its old time shows beside the new one ("Sun 8:15 AM, was 10:00 AM").
+function wasTime(key, start) {
+  const w = P.live.was.get(key);
+  return w?.start && w.start !== start ? `, was ${esc(pfmt(w.start, { hour: "numeric", minute: "2-digit" }))}` : "";
+}
+// Changed rows show old → new in their drawer (D5).
+function changedPart(key, fields) {
+  const w = P.live.was.get(key), cur = fields.cur;
+  if (!w) return "";
+  const lines = fields.list.filter(([, f]) => f(w) !== f(cur)).map(([name, f]) => `<p>${esc(name)}: ${esc(f(w) || "none")} → ${esc(f(cur) || "none")}</p>`);
+  return lines.length ? `<h3>Changed</h3><div class="item">${lines.join("")}</div>` : "";
+}
+function openCredit(id, from) {
+  const c = P.res?.credits?.credits.find((x) => x.offer_id === id);
+  if (!c) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null;
+  $("dr-title").innerHTML = `${esc(c.value)}<span class="cap">${esc(c.sponsor)}</span>`;
+  const lim = (x) => (x.limit ? pfmt(x.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
+  $("dr-body").innerHTML = [
+    changedPart(`credits:${c.offer_id}`, { cur: c, list: [["Offer", (x) => x.value], ["Closes", lim], ["Claim", (x) => x.claim], ["Code", (x) => x.promo_code]] }),
+    `<h3>Why it's here</h3><div class="item">${c.why.map((w) => `<p>${esc(w[0].toUpperCase() + w.slice(1))}</p>`).join("")}</div>`,
+    `<h3>The post</h3><div class="item"><q>${esc(c.quote)}</q></div>`,
+    `<h3>Claim</h3><div class="item"><p>${esc(c.claim || "No post says how")}${c.promo_code ? ` · code <span class="m">${esc(c.promo_code)}</span>` : ""}</p><p class="note">${esc(c.limit ? `Closes ${pfmt(c.limit * 1000, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "A limit is mentioned but not clear" : "No stated limit")}</p></div>`,
+    `<div class="item acts">${safeUrl(c.claim_url) ? `<a href="${esc(c.claim_url)}" target="_blank" rel="noopener">Claim link ↗</a> ` : ""}${safeUrl(c.source_url) ? `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">Open the post in Slack ↗</a>` : ""}</div>`,
+  ].join("");
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+  $("dr-body").scrollTop = 0;
+}
+
+function openTrack(id, from) {
+  const t = P.res?.tracks.find((x) => x.track_id === id);
+  if (!t) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null; // the Claim drawer repaints from frames; this one is Plan's
+  const d = t.detail, list = (xs) => `<ul class="dl">${xs.map((x) => `<li>${x}</li>`).join("")}</ul>`;
+  const fit = t.fit === "likely" ? "likely fits" : t.capped ? "possible (ranked likely, but your project doesn't name the product in this track's title)" : "possible";
+  $("dr-title").innerHTML = `${esc(t.name)}<span class="cap">${esc([fit, t.label].filter(Boolean).join(" · "))}</span>`;
+  const parts = [
+    changedPart(`tracks:${t.track_id}`, { cur: t, list: [["Fit", (x) => x.fit], ["Why", (x) => x.reason], ["Entry steps", (x) => (x.steps || []).map((s) => s.label).join("; ")]] }),
+    `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
+    gapsOf(t.track_id).length
+      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">The page's ${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
+      : t.fit === "likely" && t.evidence === "stated" && P.gaps && !P.gaps.error ? `<h3>Gaps</h3><div class="item"><p class="note">None found: nothing in your description, stack${P.input.repo ? " or repo" : ""} differs from this track's stated requirements. That doesn't say they're met.</p></div>` : "",
+    t.steps.length ? `<h3>Entry steps</h3><div class="item">${t.steps.map((s) => `${stepBox(s)}<q>${esc(s.quote)}</q>`).join("")}</div>` : "",
+    d.requirements.length ? `<h3>Requirements</h3><div class="item">${list(d.requirements.map(esc))}</div>` : "",
+    d.criteria.length ? `<h3>Judging criteria</h3><div class="item">${list(d.criteria.map((c) => esc(c.description ? `${c.name}: ${c.description}` : c.name)))}</div>` : "",
+    d.descriptions.length ? `<h3>On the page</h3><div class="item">${list(d.descriptions.map(esc))}</div>` : "",
+    d.prizes.length ? `<h3>Prizes</h3><div class="item">${list(d.prizes.map((p) => esc(p.place ? `${p.place}: ${p.award}` : p.award)))}</div>` : "",
+    safeUrl(t.source_url) ? `<div class="item acts"><a href="${esc(t.source_url)}" target="_blank" rel="noopener">Open on Devpost ↗</a></div>` : "",
+  ];
+  $("dr-body").innerHTML = parts.join("");
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+  $("dr-body").scrollTop = 0;
+}
+
+// Plan's clicks: a row opens its drawer; a step box ticks the shared step (Ship reads the same ids); Copy copies.
+document.addEventListener("change", (e) => {
+  const box = e.target.closest("[data-step]");
+  if (!box) return;
+  if (box.checked) P.steps.add(box.dataset.step); else P.steps.delete(box.dataset.step);
+  store.set(stepKey(), JSON.stringify([...P.steps]));
+  for (const o of document.querySelectorAll(`[data-step="${CSS.escape(box.dataset.step)}"]`)) o.checked = box.checked;
+});
+$("p-plan").addEventListener("click", async (e) => {
+  const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]"), cr = e.target.closest("[data-credit]");
+  if (row) { openTrack(row.dataset.track, row); return; }
+  if (cr) { openCredit(cr.dataset.credit, cr); return; }
+  if (cp) {
+    const b = P.res.booths[Number(cp.dataset.bq)];
+    const ok = await copyText(b.text);
+    $("say").textContent = ok ? "Copied the question." : "Couldn't copy. Select the question's text.";
+    if (ok) { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1400); }
+  }
+});
+
+/* ---------- Ship (v2 P9, design doc D13) ---------- */
+// GET /ship/list builds the checklist from canon, event.json and the capture as of now (or ?now); every line is
+// verbatim. Ticks share P.steps with Plan, so an entry step ticked in either place is ticked in both. The tracks
+// you're entering are chosen here, from Plan's tracks, and kept in this browser like the ticks.
+const S = { list: null, entered: [], gaps: null, busy: false, open: new Set(), seq: 0 };
+const enterKey = () => `hackrecon:entered:${P.meta.event}`;
+const HOUR = 3600000;
+async function loadShip() {
+  if (!P.meta) return;
+  const seq = ++S.seq, q = new URLSearchParams({ entered: S.entered.join(",") }), now = new URLSearchParams(location.search).get("now");
+  if (now) q.set("now", now);
+  try {
+    const r = await fetch(`/ship/list?${q}`, { cache: "no-store" });
+    if (!r.ok) throw new Error();
+    const list = await r.json();
+    if (seq === S.seq) { S.list = list; paintShip(); }
+  } catch { if (seq === S.seq) $("sd-body").innerHTML = `<p class="pstate">Couldn't load the checklist.</p>`; }
+}
+const shipFmt = (iso) => pfmt(iso, { weekday: "short", hour: "numeric", minute: "2-digit" });
+const lastHour = () => { const d = S.list?.deadline; const left = d ? Date.parse(d.at) - nowMs() : -1; return left > 0 && left < HOUR; };
+function countdown(ms) {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "under a minute";
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+  return d ? `${d} d${h ? ` ${h} h` : ""}` : h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
+}
+function shipItem(x) {
+  const src = x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? (safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">added in #${esc(x.channel)} ↗</a>` : `added in #${esc(x.channel)}`) : srcLink(x.source_url);
+  const when = x.at ? `${shipFmt(x.at)}${x.until ? `–${pfmt(x.until, { hour: "numeric", minute: "2-digit" })}` : ""} · ` : "";
+  return `<li><label class="ck"><input type="checkbox" data-step="${esc(x.id)}"${P.steps.has(x.id) ? " checked" : ""}><span>${esc(x.label)}</span></label>${x.quote ? `<q>${esc(x.quote)}</q>` : ""}<div class="pmeta m">${when}${src}</div></li>`;
+}
+const doneOf = (xs) => (xs.length ? `${xs.filter((x) => P.steps.has(x.id)).length} of ${xs.length} done` : "none stated");
+// A group: its heading with "N of M done"; in the last hour, folded to that one line until opened.
+function shipGroup(key, title, items, body) {
+  if (lastHour() && key !== "required" && !S.open.has(key))
+    return `<div class="sgrp"><button type="button" class="fold" data-fold="${key}" aria-expanded="false"><span>${esc(title)}</span><span class="m">${doneOf(items)}</span></button></div>`;
+  return `<div class="sgrp"><div class="th"><h3 id="sh-${key}" tabindex="-1">${esc(title)}</h3><span class="ctx m">${doneOf(items)}</span></div>${body}</div>`;
+}
+function paintShip() {
+  const L = S.list;
+  if (!L) return;
+  const now = nowMs(), d = L.deadline;
+  $("sd-body").innerHTML = d
+    ? `<button type="button" class="sdl" id="sd-open">${Date.parse(d.at) > now ? `Submissions close ${esc(shipFmt(d.at))} · in ${countdown(Date.parse(d.at) - now)}` : `Submissions closed ${esc(shipFmt(d.at))}`}</button><div class="pmeta m">${d.was ? `Devpost said ${esc(shipFmt(d.was.at))} · ` : ""}${d.from === "slack" ? `moved in #${esc(d.channel)}` : "on Devpost"}</div>${d.disagree ? `<p class="note">${esc(d.disagree.replace(/between (\S+) and (\S+)$/, (_, a, b) => `between ${shipFmt(a)} and ${shipFmt(b)}`))}</p>` : ""}`
+    : `<p class="pstate">No submission deadline on the pages or in the posts read.</p>`;
+  const lh = lastHour();
+  // Recheck gaps: only with a repo linked; in the last hour it folds with the other groups.
+  $("sg").hidden = !P.input?.repo || (lh && !S.open.has("gaps"));
+  paintGaps();
+  const required = lh ? L.required.filter((x) => !P.steps.has(x.id)) : L.required;
+  // Every track on Devpost, never Plan's picks: only what you tick is entered. With some ticked, the full list folds.
+  const all = L.choices || [], openAll = !S.entered.length || S.open.has("choices");
+  const box = (t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}</span></label>`;
+  const chooser = all.length
+    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${(openAll ? all : all.filter((t) => S.entered.includes(t.track_id))).map(box).join("")}${S.entered.length ? `<button type="button" class="fold" data-fold="choices" aria-expanded="${openAll}">${openAll ? "Show only the ones you ticked" : `All ${all.length} tracks on Devpost`}</button>` : ""}</fieldset>`
+    : `<p class="note">No tracks on the Devpost pages read.</p>`;
+  const tracks = all;
+  const trackItems = L.tracks.flatMap((t) => t.items);
+  const trackBody = chooser + (L.tracks.length
+    ? L.tracks.map((t) => `<p class="stn">${esc(t.name)}</p>${t.items.length ? `<ul class="sits">${t.items.map(shipItem).join("")}</ul>` : `<p class="note">No requirements or entry steps stated for this track.</p>`}`).join("")
+    : tracks.length ? `<p class="note">Tick the tracks you're entering; their entry steps and requirements show here.</p>` : "");
+  $("sl-body").innerHTML = [
+    shipGroup("required", "Required to submit", L.required, required.length ? `<ul class="sits">${required.map(shipItem).join("")}</ul>` : `<p class="note">Everything required is ticked.</p>`),
+    shipGroup("tracks", "For the tracks you entered", trackItems, trackBody),
+    shipGroup("judging", "Judging", L.judging, L.judging.length ? `<ul class="sits">${L.judging.map(shipItem).join("")}</ul>` : `<p class="note">No judging logistics posted yet.</p>`),
+    lh && P.input?.repo && !S.open.has("gaps") ? `<div class="sgrp"><button type="button" class="fold" data-fold="gaps" aria-expanded="false"><span>Recheck gaps</span><span class="m">${S.gaps && !S.gaps.error ? plural(S.gaps.gaps.length, "open gap") : "not run"}</span></button></div>` : "",
+  ].join("");
+}
+function paintGaps() {
+  const g = S.gaps, body = $("sg-body");
+  if (!P.input?.repo) return;
+  const btn = `<button type="button" class="jump" id="sg-run"${S.busy || !S.entered.length ? " disabled" : ""}>${S.busy ? "Rechecking…" : "Recheck gaps"}</button>`;
+  const why = !S.entered.length ? `<span class="cap">Tick the tracks you're entering below; the check reads their stated requirements against your repo's latest commit.</span>`
+    : g?.error ? `<span class="cap">${esc(g.error)}</span>`
+    : g ? `<span class="m">${esc(g.repo.replace(/^https:\/\/github\.com\//, ""))} @ ${esc(g.commit.slice(0, 7))}, latest as of ${esc(shipFmt(g.latest_at))}; checked ${esc(pfmt(g.checked_at, { hour: "numeric", minute: "2-digit" }))}</span>` : "";
+  const res = !g || g.error ? ""
+    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p><p class="note">The page's ${x.requirement.kind === "entry_step" ? "entry step" : "requirement"} · ${srcLink(x.requirement.source_url)}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
+    : `<p class="note">${g.checked ? "No open gaps found. That doesn't say the requirements are met." : "Nothing to check: none of these tracks states a requirement or entry step on the pages read."}${g.from === "reused" ? " The commit hasn't changed since the last check." : ""}</p>`;
+  body.innerHTML = `<div class="go-row">${btn}${why}</div>${res}`;
+}
+async function recheck() {
+  if (S.busy || !S.entered.length || !P.input?.repo) return;
+  S.busy = true; paintGaps();
+  try {
+    const r = await fetch("/ship/gaps", { method: "POST", headers: { "Content-Type": "application/json", "x-hr-token": TOKEN }, body: JSON.stringify({ ...P.input, entering: S.entered }) });
+    const j = await r.json();
+    S.gaps = r.ok ? j : { error: j.error || "Couldn't recheck gaps." };
+  } catch { S.gaps = { error: "Couldn't recheck gaps." }; }
+  S.busy = false;
+  paintShip();
+  $("say").textContent = S.gaps.error ? S.gaps.error : `Rechecked: ${plural(S.gaps.gaps.length, "open gap")}.`;
+}
+$("p-ship").addEventListener("click", (e) => {
+  if (e.target.closest("#sg-run")) return recheck();
+  const f = e.target.closest("[data-fold]");
+  // The track list toggles, keeping focus on its button; the others open once.
+  if (f?.dataset.fold === "choices") { S.open.has("choices") ? S.open.delete("choices") : S.open.add("choices"); paintShip(); $("p-ship").querySelector('[data-fold="choices"]')?.focus(); return; }
+  if (f) { S.open.add(f.dataset.fold); paintShip(); (f.dataset.fold === "gaps" ? $("sg-run") : $(`sh-${f.dataset.fold}`))?.focus(); return; }
+  if (e.target.closest("#sd-open")) openDeadline(e.target.closest("#sd-open"));
+});
+$("p-ship").addEventListener("change", (e) => {
+  const en = e.target.closest("[data-enter]");
+  if (en) {
+    S.entered = en.checked ? [...S.entered, en.dataset.enter] : S.entered.filter((x) => x !== en.dataset.enter);
+    store.set(enterKey(), JSON.stringify(S.entered));
+    S.gaps = null;
+    loadShip();
+    return;
+  }
+  // A tick (the shared handler saved it): recount, and in the last hour a ticked Required item leaves the list.
+  if (e.target.closest("[data-step]")) setTimeout(paintShip, lastHour() ? 200 : 0);
+});
+function openDeadline(from) {
+  const d = S.list?.deadline;
+  if (!d) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null;
+  $("dr-title").innerHTML = `Submission deadline<span class="cap">${esc(shipFmt(d.at))}</span>`;
+  $("dr-body").innerHTML = `<div class="item"><p>${d.from === "slack" ? `Moved in #${esc(d.channel)}` : "On Devpost"}</p><q>${esc(d.quote)}</q><div class="acts">${srcLink(d.source_url)}</div></div>${d.was ? `<div class="item"><p>Devpost said ${esc(shipFmt(d.was.at))}</p><q>${esc(d.was.quote)}</q><div class="acts">${srcLink(d.was.source_url)}</div></div>` : ""}`;
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+}
+setInterval(() => { if (tab === "ship") paintShip(); }, 30000);
+
+fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
+  P.meta = m;
+  try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
+  try { const e = JSON.parse(store.get(enterKey()) || "[]"); S.entered = Array.isArray(e) ? e.filter((x) => typeof x === "string") : []; } catch { S.entered = []; }
+  try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
+  paintInput(!P.input);
+  paintNext();
+  setInterval(paintNext, 60000);
+  // D5: a sync changes /plan/meta's version; Plan is rebuilt off screen and the differences shown.
+  setInterval(() => liveTick().catch(() => {}), 60000);
+  if (P.input) runPlan();
+}).catch(() => { $("pi-body").innerHTML = `<p class="pstate">Couldn't load this event's canon.</p>`; });
+
 /* ---------- load ---------- */
 fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
   D = data; F = D.frames;
   DONE_KEY = `hackrecon:done:${D.event}`;
-  try { done = new Set(JSON.parse(store.get(DONE_KEY) || "[]").filter((id) => D.offers.some((o) => o.id === id))); } catch { done = new Set(); }
+  try {
+    // OV5: marks saved under v1's positional ids (o3) move to first-post ids once, then save in the new form.
+    const saved = JSON.parse(store.get(DONE_KEY) || "[]"), v1 = D.v1_ids || {};
+    const moved = saved.map((id) => (/^o\d+$/.test(id) && v1[id]) || id);
+    done = new Set(moved.filter((id) => D.offers.some((o) => o.id === id)));
+    if (moved.some((id, k) => id !== saved[k])) store.set(DONE_KEY, JSON.stringify([...done]));
+  } catch { done = new Set(); }
   D.posts.forEach((t, k) => postIndex.set(t, k));
   for (const o of D.offers) for (const p of o.posts) if (!offerByTs.has(p.ts)) offerByTs.set(p.ts, o);
   for (let t = D.posts[0]; dayKey(t) <= dayKey(Math.max(D.posts.at(-1), F.at(-1))); t += 86400) if (!dayOf.has(dayKey(t))) { dayOf.set(dayKey(t), days.length); days.push(dayKey(t)); }
@@ -770,7 +1567,7 @@ fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) =>
   buildMatrix();
   setPlaying(false);
   render(F.length - 1);
-}).catch(() => { document.querySelector("main").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">Couldn't load the board data.</p><p class="cap">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></section>`; });
+}).catch(() => { $("p-claim").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">Couldn't load the board data.</p><p class="cap">Run <code>bun run hr board</code> again; it rebuilds data/board.json.</p></section>`; });
 </script>
 </body>
 </html>

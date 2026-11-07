@@ -22,6 +22,14 @@ describe("nonPostReason (observed day-1 rows)", () => {
       "slack_ui_notice",
     );
   });
+  test("spons-capital-one 1793786567.074499 (2026-11-07 sync): Slack's \"Upgrade to reconnect this channel\" banner", () => {
+    const permalink = `${W}/C0C6HQPNJET/p1793786567074499`;
+    const text = "Upgrade to reconnect this channel\n\nYour trial has ended. Capital One has been removed from this channel. To automatically reconnect this channel, upgrade to a paid plan by Sunday, November 8th.";
+    expect(nonPostReason({ ts: "1793786567.074499", permalink, text, hasBody: true })).toBe("slack_banner");
+    expect(nonPostReason({ ts: "1793786567.074499", permalink, text: "Your trial has ended. Upgrade to keep using Slack Connect.", hasBody: true })).toBe("slack_banner");
+    // A person talking about it is a post.
+    expect(nonPostReason({ ts: "1793786567.074499", permalink, text: "Did anyone else see the upgrade to reconnect this channel message?", hasBody: true })).toBeNull();
+  });
   test("real posts pass, including grouped posts and image-only posts with a permalink", () => {
     const permalink = `${W}/C0C6X7DK13Q/p1792825421745369`;
     expect(nonPostReason({ ts: "1792825421.745369", permalink, text: "And since you mentioned OpenAI…", hasBody: true })).toBeNull();

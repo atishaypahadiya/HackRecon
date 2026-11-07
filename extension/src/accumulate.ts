@@ -9,15 +9,31 @@ export type RawRow =
       sender: Sender | null;
       text: string;
       links: string[];
+      mentions?: Mention[];
       permalink: string;
       /** Set on replies also sent to the channel: the parent's ts. */
       threadTs?: Ts;
       /** On system rows that aren't Slack system messages but other non-posts (pipeline/rows.ts). */
       nonPost?: NonPost;
+      /** The reply bar under a parent post: "N replies" and the newest reply's ts. */
+      replies?: Replies;
+      /** Slack's loading placeholder where the author goes (SEL.unknownSender): name and often text not in yet. */
+      loading?: true;
     }
   /** Day/unread dividers: Slack always renders an author header after one. */
   | { kind: "divider" }
   | { kind: "channel_start" };
+
+/** An @-mention: the Slack user ID from the DOM and its rendered label. */
+export interface Mention {
+  id: string;
+  label: string;
+}
+
+export interface Replies {
+  count: number;
+  last?: Ts;
+}
 
 export interface Sender {
   name: string;
@@ -33,7 +49,9 @@ export interface Captured {
   sender: Sender;
   text: string;
   links: string[];
+  mentions?: Mention[];
   permalink: string;
+  replies?: Replies;
 }
 
 interface Seen {
@@ -43,7 +61,11 @@ interface Seen {
   header: Sender | null;
   text: string;
   links: string[];
+  mentions?: Mention[];
   permalink: string;
+  replies?: Replies;
+  /** Every rendering so far was Slack's loading placeholder. */
+  loading: boolean;
 }
 
 /**
@@ -62,6 +84,11 @@ export class Accumulator {
     let n = 0;
     for (const r of this.rows.values()) if (r.kind === "message") n++;
     return n;
+  }
+
+  /** Posts only ever seen as Slack's loading placeholder (sync 2026-11-07: 70 posts read before they filled in). */
+  get loading(): Ts[] {
+    return [...this.rows].filter(([, r]) => r.kind === "message" && r.loading).map(([ts]) => ts);
   }
 
   ingest(batch: RawRow[]): void {
@@ -83,11 +110,15 @@ export class Accumulator {
         kind,
         threadTs: row.threadTs ?? old?.threadTs,
         nonPost: kind === "system" ? (row.nonPost ?? old?.nonPost) : undefined,
-        header: row.sender ?? old?.header ?? null,
+        // A named header is never replaced by a re-render that's still loading.
+        header: row.sender?.name || !old?.header?.name ? (row.sender ?? old?.header ?? null) : old.header,
         // Re-renders can arrive before images/unfurls settle; keep the fullest text seen.
         text: old && old.text.length > row.text.length ? old.text : row.text,
         links: old && old.links.length > row.links.length ? old.links : row.links,
+        mentions: old?.mentions && old.mentions.length > (row.mentions?.length ?? 0) ? old.mentions : (row.mentions ?? old?.mentions),
         permalink: row.permalink || old?.permalink || "",
+        replies: row.replies ?? old?.replies,
+        loading: !!row.loading && (old?.loading ?? true),
       });
       if (above !== null && !row.sender) this.prev.set(row.ts, above);
       above = row.ts;
@@ -109,7 +140,9 @@ export class Accumulator {
     systemRowsSkipped: number;
     nonPostsSkipped: Partial<Record<NonPost, number>>;
     unresolvedAuthors: Ts[];
+    deletedParents: ({ ts: Ts } & Replies)[];
   } {
+    const deletedParents: ({ ts: Ts } & Replies)[] = [];
     const messages: Captured[] = [];
     const unresolvedAuthors: Ts[] = [];
     const nonPostsSkipped: Partial<Record<NonPost, number>> = {};
@@ -118,21 +151,28 @@ export class Accumulator {
     for (const ts of keys) {
       const r = this.rows.get(ts)!;
       if (r.kind === "system") {
+        // A deleted parent still holds its thread ("This message was deleted." with "N replies").
+        if (r.nonPost === "tombstone" && r.replies) deletedParents.push({ ts, ...r.replies });
         systemRowsSkipped++;
         if (r.nonPost) nonPostsSkipped[r.nonPost] = (nonPostsSkipped[r.nonPost] ?? 0) + 1;
         continue;
       }
       const sender = this.authorOf(ts);
-      if (!sender) unresolvedAuthors.push(ts);
+      if (!sender?.name) unresolvedAuthors.push(ts);
       const m: Captured = { ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink };
       if (r.threadTs) m.threadTs = r.threadTs;
+      if (r.replies) m.replies = r.replies;
+      if (r.mentions?.length) m.mentions = r.mentions;
       messages.push(m);
     }
-    return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors };
+    return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors, deletedParents };
   }
 }
 
 export const NO_NEW_KEYS_STEPS = 5;
+/** How many STEP_WAIT_MS waits a channel or thread gives Slack's loading placeholders to fill in before it moves on
+ *  (sync 2026-11-07: rows read at the channel's start and in short threads were still placeholders). */
+export const LOADING_WAITS = 6;
 export const STEP_WAIT_MS = 1500;
 
 /**

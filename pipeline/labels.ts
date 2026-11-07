@@ -6,13 +6,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { readTable } from "./csv.ts";
 import { AMOUNT_BASES, DEADLINE_STATUSES } from "./schema.ts";
 import { ISO_WITH_OFFSET } from "./time.ts";
+import { LABELS_PATH, RULES_PATH } from "./event.ts";
 
-export const LABELS_PATH = "review/labels.csv";
-/** The labeling rules. Their Columns section goes verbatim into both prompts: the Opus judge's
- *  (D21) and the classifier's, so both read the same rules. */
-export const RULES_PATH = "docs/labeling.md";
 export const RULES_HEADING = "## Columns";
-export const POOL_META_PATH = "review/pool.json";
 
 export const CONTEXT_COLUMNS = [
   "message_id",

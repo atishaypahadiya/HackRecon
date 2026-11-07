@@ -32,7 +32,14 @@ export interface Message {
   text: string;
   /** Every href in the message body, in order (OV7, needed for URL merge). */
   links: string[];
+  /** @-mentions of people, in order: the Slack user ID (the DOM's data-member-id) and the label as rendered in
+   *  `text`. The label is the mentioned person's own display name, so it never counts as anyone's words. */
+  mentions?: { id: string; label: string }[];
   permalink: string;
+  /** A parent post's rendered "N replies" (Slack counts sent-to-channel replies too). */
+  reply_count?: number;
+  /** The newest reply's ts, from the reply bar. */
+  latest_reply?: Ts;
   /** ISO 8601 */
   captured_at: string;
   run_id: string;
@@ -112,10 +119,132 @@ export interface CaptureFile {
   /** Joins, renames, topic changes etc. seen and not captured (D8). Includes non_posts_skipped. */
   system_rows_skipped: number;
   /** Rows with a ts that aren't posts, by reason (pipeline/rows.ts). Absent in captures made before 2026-10-27 cleanup. */
-  non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice", number>>;
+  non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice" | "slack_banner", number>>;
   /** ts of messages whose grouped author never resolved to a rendered header. */
   unresolved_authors: Ts[];
+  /** v2 (D19, discovery): Slack shows the composer replaced by a "who can post" notice. null: no composer
+   *  region found, so unknown. Optional: v1 captures predate it. Selector unverified until a DOM sample of a
+   *  restricted channel is saved in fixtures/slack-dom/. */
+  posting_restricted?: boolean | null;
   messages: Message[];
+}
+
+/** Step 1 (D5, D17): thread replies, downloaded as `<channel_id>.threads.json` beside the channel's capture. One
+ *  entry per parent whose "N replies" the extension opened, or tried to; the channel capture itself is unchanged. */
+export const THREAD_STOP_REASONS = ["parent_seen", "no_new_keys", "user_stopped", "max_steps", "not_opened"] as const;
+export type ThreadStopReason = (typeof THREAD_STOP_REASONS)[number];
+
+export interface ThreadRun {
+  /** The parent's ts. */
+  thread_ts: Ts;
+  /** The parent row's "N replies" as rendered; null when the row showed no count. */
+  reply_count_shown: number | null;
+  /** parent_seen: the pane was scrolled up to the rendered parent (the primary stop); no_new_keys: the 5 x 1.5 s
+   *  fallback; not_opened: the pane never opened (the reason is in `note`). */
+  stop_reason: ThreadStopReason;
+  note?: string;
+  /** Replies as rendered in the pane, each with thread_ts = the parent. Sent-to-channel copies keep subtype. */
+  replies: Message[];
+}
+
+export interface ThreadCaptureFile {
+  schema_version: typeof SCHEMA_VERSION;
+  kind: "threads";
+  run_id: string;
+  source: "extension";
+  channel_id: string;
+  channel_name: string;
+  started_at: string;
+  finished_at: string;
+  /** "uncapped" for the one-time fixture capture (D17); a number for a live sync's budget. */
+  budget: "uncapped" | number;
+  threads: ThreadRun[];
+}
+
+export function threadCaptureName(channelId: string): string {
+  return `${channelId}.threads.json`;
+}
+
+/** A hacker-only channel read authors-only (pipeline/hackerchannels.ts): who posted there and how often, from the
+ *  channel and its threads. No text, no names, no permalinks: the parser rejects any other field. */
+export interface AuthorsCaptureFile {
+  schema_version: typeof SCHEMA_VERSION;
+  kind: "authors";
+  source: "extension";
+  run_id: string;
+  channel_id: string;
+  channel_name: string;
+  started_at: string;
+  finished_at: string;
+  stop_reason: StopReason;
+  /** Threads with replies, and how many of them were read to their end. */
+  threads: { parents: number; read: number };
+  authors: { id: string; posts: number }[];
+  unidentified: number;
+  /** Signal 2b, matched in the page: who named which sponsor as their employer. No text, no time. */
+  self_ids: { id: string; sponsor: string; match: true }[];
+}
+
+export function authorsFileName(channelId: string): string {
+  return `${channelId}.authors.json`;
+}
+
+const AUTHORS_KEYS = ["schema_version", "kind", "source", "run_id", "channel_id", "channel_name", "started_at", "finished_at", "stop_reason", "threads", "authors", "unidentified", "self_ids"];
+
+/** Throws with a path-qualified reason if `v` isn't an AuthorsCaptureFile, or carries anything besides its fields.
+ *  `sponsors`: when given, each self_ids sponsor must be one of them, so the field can't carry anything else. */
+export function parseAuthorsCaptureFile(v: unknown, where = "authors", sponsors?: Set<string>): AuthorsCaptureFile {
+  const o = obj(v, where);
+  for (const k of Object.keys(o)) if (!AUTHORS_KEYS.includes(k)) fail(`${where}.${k}`, "not an authors-only field");
+  if (o.schema_version !== SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${SCHEMA_VERSION}`);
+  if (o.kind !== "authors") fail(`${where}.kind`, 'expected "authors"');
+  if (o.source !== "extension") fail(`${where}.source`, 'expected "extension"');
+  for (const k of ["run_id", "channel_id", "channel_name", "started_at", "finished_at"]) str(o[k], `${where}.${k}`);
+  if (!STOP_REASONS.includes(o.stop_reason as StopReason)) fail(`${where}.stop_reason`, `not one of ${STOP_REASONS.join("|")}`);
+  const t = obj(o.threads, `${where}.threads`);
+  if (Object.keys(t).some((k) => k !== "parents" && k !== "read")) fail(`${where}.threads`, "expected only parents and read");
+  num(t.parents, `${where}.threads.parents`);
+  num(t.read, `${where}.threads.read`);
+  arr(o.authors, `${where}.authors`).forEach((a, i) => {
+    const x = obj(a, `${where}.authors[${i}]`);
+    if (Object.keys(x).some((k) => k !== "id" && k !== "posts")) fail(`${where}.authors[${i}]`, "expected only id and posts");
+    if (typeof x.id !== "string" || !/^[UWB][A-Z0-9]{6,}$/.test(x.id)) fail(`${where}.authors[${i}].id`, "expected a Slack user ID");
+    if (!Number.isInteger(x.posts) || (x.posts as number) < 1) fail(`${where}.authors[${i}].posts`, "expected a positive integer");
+  });
+  num(o.unidentified, `${where}.unidentified`);
+  arr(o.self_ids, `${where}.self_ids`).forEach((a, i) => {
+    const w = `${where}.self_ids[${i}]`;
+    const x = obj(a, w);
+    if (Object.keys(x).some((k) => k !== "id" && k !== "sponsor" && k !== "match")) fail(w, "expected only id, sponsor and match");
+    if (typeof x.id !== "string" || !/^[UW][A-Z0-9]{6,}$/.test(x.id)) fail(`${w}.id`, "expected a Slack user ID");
+    if (typeof x.sponsor !== "string" || !x.sponsor || x.sponsor.length > 60) fail(`${w}.sponsor`, "expected a sponsor id");
+    if (sponsors && !sponsors.has(x.sponsor as string)) fail(`${w}.sponsor`, "not a sponsor in sponsors.json");
+    if (x.match !== true) fail(`${w}.match`, "expected true");
+  });
+  return o as unknown as AuthorsCaptureFile;
+}
+
+/** Throws with a path-qualified reason if `v` isn't a ThreadCaptureFile. */
+export function parseThreadCaptureFile(v: unknown, where = "threads"): ThreadCaptureFile {
+  const o = obj(v, where);
+  if (o.schema_version !== SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${SCHEMA_VERSION}`);
+  if (o.kind !== "threads") fail(`${where}.kind`, 'expected "threads"');
+  if (o.source !== "extension") fail(`${where}.source`, 'expected "extension"');
+  for (const k of ["run_id", "channel_id", "channel_name", "started_at", "finished_at"]) str(o[k], `${where}.${k}`);
+  if (o.budget !== "uncapped") num(o.budget, `${where}.budget`);
+  arr(o.threads, `${where}.threads`).forEach((t, i) => {
+    const w = `${where}.threads[${i}]`;
+    const x = obj(t, w);
+    tsStr(x.thread_ts, `${w}.thread_ts`);
+    if (x.reply_count_shown !== null) num(x.reply_count_shown, `${w}.reply_count_shown`);
+    if (!THREAD_STOP_REASONS.includes(x.stop_reason as ThreadStopReason)) fail(`${w}.stop_reason`, `not one of ${THREAD_STOP_REASONS.join("|")}`);
+    if (x.note !== undefined) str(x.note, `${w}.note`);
+    arr(x.replies, `${w}.replies`).forEach((m, j) => {
+      checkMessage(m, `${w}.replies[${j}]`, o.channel_id as string);
+      if ((m as Message).thread_ts !== x.thread_ts) fail(`${w}.replies[${j}].thread_ts`, `expected ${x.thread_ts as string}`);
+    });
+  });
+  return o as unknown as ThreadCaptureFile;
 }
 
 export function messageId(channelId: string, ts: Ts): string {
@@ -136,6 +265,132 @@ export function parseCaptureFile(v: unknown, where = "capture"): CaptureFile {
   return o as unknown as CaptureFile;
 }
 
+// Page snapshots (v2 D3, D11, D12): a public or logged-in page's text, captured by the extension's
+// "Capture this page" and saved as <host>-<path>.page.json under events/<slug>/captures/pages/.
+export const PAGE_SCHEMA_VERSION = 1;
+/** Who could open the page: anyone ("public") or only a logged-in user ("authenticated"). Set by the user
+ *  in the popup; decides redaction (D12), never the domain. A missing flag is treated as authenticated. */
+export const PAGE_ACCESS = ["public", "authenticated"] as const;
+export type PageAccess = (typeof PAGE_ACCESS)[number];
+
+export interface PageBlock {
+  /** Position in reading order. */
+  i: number;
+  /** Texts of the enclosing h1–h6 headings, outermost first. */
+  path: string[];
+  /** Set on heading blocks: 1–6. */
+  heading?: number;
+  text: string;
+  /** id of the nearest element with one (e.g. Devpost's prize_106857): what entity ids anchor to (D7). */
+  anchor?: string;
+}
+export interface PageLink {
+  text: string;
+  href: string;
+  /** The block the link sits in (or follows). */
+  block: number;
+}
+export interface PageSnapshot {
+  schema_version: typeof PAGE_SCHEMA_VERSION;
+  kind: "page";
+  url: string;
+  title: string;
+  captured_at: string;
+  /** "fetch" from `hr sync` (public pages, D11 reversed 2026-11-06); "extension" from the popup (pages that
+   *  need the user's login); "fixture" when built from saved HTML. Provenance only: canon reads whatever is in
+   *  captures/pages, and access alone decides redaction (D12). */
+  captured_by: "fetch" | "extension" | "fixture";
+  access: PageAccess | null;
+  blocks: PageBlock[];
+  links: PageLink[];
+  embeds: { iframes: number; pdfs: number };
+  /** Set when the page gave no text blocks, e.g. the content is in an iframe or a PDF. */
+  no_text?: string;
+}
+
+// Entities (v2 §Entities): what Build, Ship, Now and Meet show. Every value carries the verbatim span it
+// came from; null means not stated, never guessed.
+export const ENTITY_KINDS = ["track", "prize", "criterion", "rule", "entry_step", "schedule_item", "offer", "rep", "booth"] as const;
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+export interface SourceRef {
+  kind: "page" | "slack";
+  /** Page URL or Slack permalink. */
+  url: string;
+  /** Verbatim span the value came from, verified to exist in the source (redacted text for logged-in pages, D12). */
+  quote: string;
+  captured_at: string;
+  /** Slack only: the post's own time; merge orders Slack changes by it (D13). */
+  posted_at?: string;
+  author_role?: "organizer" | "sponsor-side" | "other" | "bot";
+  /** Page only. */
+  snapshot_hash?: string;
+  /** Page only: the snapshot block the quote is in. */
+  block?: number;
+}
+
+export interface FieldValue<T> {
+  value: T | null;
+  source: SourceRef;
+}
+
+export interface Change {
+  entity_id: string;
+  field: string;
+  to: FieldValue<unknown>;
+  kind: "set" | "question";
+}
+export interface AppliedChange extends Change {
+  from: FieldValue<unknown>;
+  status: "applied" | "unauthorized" | "question" | "ambiguous";
+}
+
+export interface Entity {
+  /** D7: page entity = kind + canonical URL + heading path of its quote (+ name where a path holds several);
+   *  Slack-origin = kind + first post's permalink. */
+  id: string;
+  kind: EntityKind;
+  /** Sponsor name as the source states it, or "event". */
+  sponsor: string;
+  name: FieldValue<string>;
+  /** Kind-specific. List fields are numbered: requirements[0], requirements[1]. */
+  fields: Record<string, FieldValue<unknown>>;
+  history: AppliedChange[];
+  origin: "page" | "slack";
+}
+
+/** The file a snapshot downloads as: <host>-<path>.page.json, e.g. cal-hacks-13-0.devpost.com-rules.page.json. */
+export function pageFileName(url: string): string {
+  const u = new URL(url);
+  const path = u.pathname.replace(/^\/+|\/+$/g, "").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  return `${u.hostname}${path ? `-${path}` : ""}.page.json`;
+}
+
+/** Throws with a path-qualified reason if `v` isn't a PageSnapshot. */
+export function parsePageSnapshot(v: unknown, where = "page"): PageSnapshot {
+  const o = obj(v, where);
+  if (o.schema_version !== PAGE_SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${PAGE_SCHEMA_VERSION}`);
+  if (o.kind !== "page") fail(`${where}.kind`, 'expected "page"');
+  for (const k of ["url", "title", "captured_at"]) str(o[k], `${where}.${k}`);
+  if (!["fetch", "extension", "fixture"].includes(o.captured_by as string)) fail(`${where}.captured_by`, 'expected "fetch", "extension" or "fixture"');
+  if (o.access !== null && !PAGE_ACCESS.includes(o.access as PageAccess)) fail(`${where}.access`, `expected ${PAGE_ACCESS.join("|")} or null`);
+  arr(o.blocks, `${where}.blocks`).forEach((b, i) => {
+    const x = obj(b, `${where}.blocks[${i}]`);
+    if (x.i !== i) fail(`${where}.blocks[${i}].i`, `expected ${i}`);
+    str(x.text, `${where}.blocks[${i}].text`);
+    arr(x.path, `${where}.blocks[${i}].path`).forEach((t, j) => str(t, `${where}.blocks[${i}].path[${j}]`));
+  });
+  arr(o.links, `${where}.links`).forEach((l, i) => {
+    const x = obj(l, `${where}.links[${i}]`);
+    str(x.text, `${where}.links[${i}].text`);
+    str(x.href, `${where}.links[${i}].href`);
+  });
+  const e = obj(o.embeds, `${where}.embeds`);
+  num(e.iframes, `${where}.embeds.iframes`);
+  num(e.pdfs, `${where}.embeds.pdfs`);
+  return o as unknown as PageSnapshot;
+}
+
 function checkMessage(v: unknown, where: string, channelId: string): void {
   const m = obj(v, where);
   for (const k of ["channel_name", "author_name", "text", "permalink", "captured_at", "run_id"]) str(m[k], `${where}.${k}`);
@@ -147,6 +402,14 @@ function checkMessage(v: unknown, where: string, channelId: string): void {
     fail(`${where}.subtype`, 'expected "thread_broadcast" with thread_ts set');
   }
   arr(m.links, `${where}.links`).forEach((l, i) => str(l, `${where}.links[${i}]`));
+  if (m.mentions !== undefined)
+    arr(m.mentions, `${where}.mentions`).forEach((x, i) => {
+      const o = obj(x, `${where}.mentions[${i}]`);
+      str(o.id, `${where}.mentions[${i}].id`);
+      str(o.label, `${where}.mentions[${i}].label`);
+    });
+  if (m.reply_count !== undefined) num(m.reply_count, `${where}.reply_count`);
+  if (m.latest_reply !== undefined) tsStr(m.latest_reply, `${where}.latest_reply`);
 }
 
 function fail(path: string, why: string): never {

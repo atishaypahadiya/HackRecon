@@ -4,7 +4,9 @@ import { buildInput, type ClassifyInput } from "./classify.ts";
 import type { LabelRow } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
-import { loadOrganizerIds, posterRole } from "./roles.ts";
+import { loadPersonKey } from "./people.ts";
+import { loadRepIndex } from "./reps.ts";
+import { loadOrganizerIds, rolesById } from "./roles.ts";
 import type { Message } from "./schema.ts";
 
 /** One input per message. Names to redact come from the captured authors (bots excluded), as before. */
@@ -16,10 +18,10 @@ export function redactedInputs(
   organizerIds: Set<string> = loadOrganizerIds(),
 ): ClassifyInput[] {
   const redact = compileRedactor(buildNameList(new Set(captured.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-  const all = Object.values(sponsors);
-  return [...captured, ...extra].map((m) =>
-    buildInput(m, { role: posterRole(m, sponsors[m.channel_name], organizerIds, all), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash }),
-  );
+  // Confirmed reps (reps.ts) are sponsor-side here too; likely staff never is, so it never changes a hint.
+  const person = loadPersonKey();
+  const role = rolesById([...captured, ...extra], sponsors, organizerIds, person, loadRepIndex(person).confirmed);
+  return [...captured, ...extra].map((m) => buildInput(m, { role: role(m), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash }));
 }
 
 /** A sheet row the capture missed, as a message: baseline text (Slack mrkdwn), links from its

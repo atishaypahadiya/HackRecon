@@ -1,8 +1,21 @@
 {
   "manifest_version": 3,
   "name": "HackRecon capture",
-  "version": "0.1.0",
-  "description": "Captures the Slack channel open in this tab, as rendered, into <channel_id>.json.",
-  "permissions": ["activeTab", "scripting"],
-  "action": { "default_popup": "popup.html", "default_title": "HackRecon capture" }
+  "version": "0.2.0",
+  "description": "Syncs an event's Slack channels and threads as rendered, or captures the open channel or page. Never posts, reacts or messages.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "HackRecon capture"
+  },
+  "host_permissions": [
+    "https://*.devpost.com/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  }
 }

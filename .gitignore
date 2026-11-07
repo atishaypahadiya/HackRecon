@@ -6,5 +6,18 @@ fixtures/slack-dom/
 captures/
 extension/dist/
 config/organizers.json
+config/person_links.json
+config/rep_signals.json
 data/
 review/
+
+# Per-event layout (v2 D10): workspace content under events/<slug>/ is never tracked.
+# pipeline/event.test.ts fails if any of these is tracked.
+events/*/captures/
+events/*/review/
+events/*/data/
+events/*/fixtures/
+events/*/config/organizers.json
+events/*/config/person_links.json
+events/*/config/rep_signals.json
+events/current

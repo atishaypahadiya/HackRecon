@@ -167,12 +167,12 @@ export interface RepCandidates {
 }
 
 /** Sponsor-side posters in sponsor and cohost channels (A5 signals; organizers excluded by the role). */
-export function repCandidates(messages: Message[], sponsors: Sponsors, role: (m: Message) => PosterRole): RepCandidates {
+export function repCandidates(messages: Message[], sponsors: Sponsors, role: (m: Message) => PosterRole, person: (id: string) => string = (id) => id): RepCandidates {
   const keys = new Set<string>();
   for (const m of messages) {
     const s = sponsors[m.channel_name];
-    if (!s || s.sponsor === "event" || role(m) !== "sponsor-side") continue;
-    keys.add(`${s.sponsor}|${m.author_name}`);
+    if (!s || s.sponsor === "event" || !m.author_id || role(m) !== "sponsor-side") continue;
+    keys.add(`${s.sponsor}|${person(m.author_id)}`);
   }
   return { candidates: keys.size, sponsors: new Set([...keys].map((k) => k.split("|")[0])).size };
 }
@@ -206,6 +206,7 @@ export function preview(o: {
   sponsors: Sponsors;
   channels: string[];
   role: (m: Message) => PosterRole;
+  person?: (id: string) => string;
   /** Current Opus grouping offers; without them the URL-merge stand-in is used. */
   opus?: Offer[];
 }): Preview {
@@ -229,7 +230,7 @@ export function preview(o: {
     no_limit: groups.filter((g) => !g.has_limit && !g.limit_unresolved_only).length,
     sponsors_with_credit: new Set(groups.map((g) => g.sponsor).filter((s) => s !== "event")).size,
     deadline_keys: deadlineKeys(o.items),
-    reps: repCandidates(o.messages, o.sponsors, o.role),
+    reps: repCandidates(o.messages, o.sponsors, o.role, o.person),
     dropped_by_label: c.dropped_by_label,
     added_by_label: c.added_by_label,
     priced_groups: priced,

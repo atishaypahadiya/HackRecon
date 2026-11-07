@@ -1,19 +1,22 @@
 #!/usr/bin/env bun
 // hr: HackRecon pipeline CLI. Subcommands land here as tasks ship (compare first).
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
-import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
+import { captureFiles, loadCapture, threadCaptureFiles, type LoadedCapture } from "./captures.ts";
+import { CostGuard, CostRefused, guardClient, plannedCall } from "./costguard.ts";
 import {
-  CACHE_PATH,
   classifyOne,
-  ERRORS_PATH,
-  ITEMS_PATH,
+  MAX_TOKENS,
   MODEL,
+  OUTPUT_SCHEMA,
   promptHash,
   readEvent,
   readJsonFile,
-  RUN_PATH,
   systemPrompt,
   toItems,
   writeJsonFile,
@@ -22,9 +25,13 @@ import {
   type ClassifyInput,
   type ClassifyRun,
 } from "./classify.ts";
-import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR, loadExport } from "./export.ts";
-import { HAND_LABELER, labelerOf, labelProblems, LABELS_PATH, OPUS_LABELER, POOL_META_PATH, readLabels, readRules } from "./labels.ts";
+import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
+import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
+import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
+import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
+import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
+import { emailReps, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
+import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
 import {
@@ -45,31 +52,123 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_DATA_PATH, BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData } from "./board.ts";
-import { GROUP_EFFORT, GROUP_MODEL, GROUP_PATH, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_LIVE_JS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
+import { joinSponsors, planCredits, planPeople, planSessions, submissionDeadline } from "./planjoin.ts";
+import { GROUP_EFFORT, GROUP_MAX_TOKENS, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
-  JUDGE_CACHE_PATH,
   JUDGE_EFFORT,
+  JUDGE_MAX_TOKENS,
   JUDGE_MODEL,
-  JUDGE_RUN_PATH,
+  JUDGE_SCHEMA,
   judgeHash,
   judgeOne,
   judgeSystemPrompt,
-  RULES_PATH,
   rulesSection,
   type JudgeCache,
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
-import { buildOrganizers, loadOrganizerIds, ORGANIZERS_PATH, posterRole } from "./roles.ts";
-import { buildRun, MESSAGES_PATH, readMessages, readRuns, RUNS_PATH, saveRun } from "./runs.ts";
-import type { Item } from "./schema.ts";
+import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
+import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
+import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
+import {
+  BOARD_DATA_PATH,
+  CACHE_PATH,
+  CANON_FIXTURES_PATH,
+  CANON_JUDGE_FIXTURES_PATH,
+  CANON_JUDGE_PATH,
+  CANON_PATH,
+  CANON_HISTORY_PATH,
+  CANON_STORE_PATH,
+  CAPTURES_DIR,
+  DISCOVERED_PATH,
+  FIT_CACHE_PATH,
+  GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH, REP_SIGNALS_PATH,
+  SHIP_GAPS_PATH,
+  PREFILL_CACHE_PATH,
+  PRODUCTS_PATH,
+  PREFILL_EVAL_PATH,
+  PREFILL_REPOS_PATH,
+  FIT_BASELINE_PATH,
+  FIT_EVAL_PATH,
+  FIT_EVAL_SET_PATH,
+  EVENT_PATH,
+  DEFAULT_EXPORT_DIR,
+  ERRORS_PATH,
+  GROUP_PATH,
+  ITEMS_PATH,
+  JUDGE_CACHE_PATH,
+  JUDGE_RUN_PATH,
+  LABELS_PATH,
+  MESSAGES_PATH,
+  ORGANIZERS_PATH,
+  PAGE_FIXTURES_DIR,
+  PAGES_DIR,
+  POOL_META_PATH,
+  RULES_PATH,
+  RUN_PATH,
+  RUNS_PATH,
+  SLACK_DOM_FIXTURES_DIR,
+  SPONSORS_PATH,
+  fromCaller,
+  takeEventArg,
+  useEvent,
+} from "./event.ts";
+import { findTokens, scrubTokens, total } from "./domscrub.ts";
+import { BUNDLE_DIR, summarizeSync, wholeFiles, type SyncLogLite } from "./syncbundle.ts";
+import { threadRunFromRaw, type ThreadRaw } from "../extension/src/thread.ts";
+import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
+import type { EventConfig } from "./classify.ts";
+import {
+  CANON_EFFORT,
+  CANON_JUDGE_SCHEMA,
+  CANON_MAX_TOKENS,
+  CANON_MODEL,
+  CANON_SCHEMA,
+  canonHash,
+  canonInputHash,
+  canonJudgeRequest,
+  canonJudgeSystemPrompt,
+  canonRequest,
+  canonSystemPrompt,
+  checkCanon,
+  assignIds,
+  checkJudge,
+  keepDropped,
+  keyed,
+  rematch,
+  REMATCH_THRESHOLD,
+  type JudgeVerdict,
+  type Keyed,
+  type KeptField,
+} from "./canon.ts";
+import { coverage, type CoverageReport } from "./coverage.ts";
+import { callChecked } from "./model.ts";
+import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked, type SponsorAliases } from "./fit.ts";
+import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
+import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
+import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
+import { planStream, type PlanEvent, type PlanSteps } from "./planstream.ts";
+import { PREFILL_MAX_TOKENS, PREFILL_SCHEMA, PREFILL_SYSTEM, prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
+import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
+import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
+import { cliWidth, wrapText } from "./wrap.ts";
+import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type PlanTrack, type StackItem } from "./plan.ts";
+import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
+import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
+import { buildNameList, compileRedactor } from "./redact.ts";
+import type { Entity, Message, PageSnapshot } from "./schema.ts";
+import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parseAuthorsCaptureFile, parsePageSnapshot, parseThreadCaptureFile, type AuthorsCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
+import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
 const EXPORT_CUTOFF = "2026-10-27T03:17:00-07:00";
 
 const USAGE = `usage:
+  Spend guard (costguard.ts): every command that can call a model prints its estimated cost first and refuses a run
+  estimated over $1 unless given --yes (estimate: input at 2 characters a token, uncached, plus each call's full
+  output budget; a retry after a failed output check is another call, checked as it runs).
   bun run hr compare [capture.json | dir ...] [--export DIR] [--json OUT] [--cutoff ISO]
       Checks each captured channel against the slackdump export: keyed recall by ts
       (pass >= ${RECALL_MIN * 100}%), author match (pass >= ${AUTHOR_MIN * 100}%), time (<= ${TIME_MAX_S}s, recorded only).
@@ -84,7 +183,7 @@ const USAGE = `usage:
       hr classify) every non-hit the classifier flags as credit or dated. Which is which is kept in
       ${POOL_META_PATH} so the sheet doesn't reveal classifier answers. Re-running keeps every label
       column. --check only validates the labels entered so far. Labeling rules: docs/labeling.md
-  bun run hr prelabel [--dry-run] [--include-hand] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+  bun run hr prelabel [--dry-run] [--yes] [--include-hand] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       The Opus judge (D21): ${JUDGE_MODEL} (effort ${JUDGE_EFFORT}) fills the label columns of every row in
       ${LABELS_PATH} from the same redacted input Haiku gets, under the rules in ${RULES_PATH} (Columns
       section, verbatim), with labeler = ${OPUS_LABELER}. Blind to Haiku: never reads items.json, the classify
@@ -97,26 +196,86 @@ const USAGE = `usage:
       precision/recall, amount and deadline match, both miss checks, with counts and both prompt hashes.
       With Opus labels every number is agreement with Opus, not accuracy, and the report says so.
       Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
-  bun run hr group [--dry-run] [--force]
+  bun run hr group [--dry-run] [--force] [--yes]
       The Opus grouping pass: claude-opus-5-5 reads every post the judge labeled is_credit = y (same redacted
       input as classify and prelabel, blind to the classifier) and writes the distinct offers with their source
       posts to ${GROUP_PATH}. One streamed request; skipped while the input is unchanged unless --force.
-  bun run hr board [--build-only] [--port N]
+  bun run hr board [--build-only] [--port N] [--yes]
       Builds ${BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
-      127.0.0.1. Needs a current ${GROUP_PATH}.
+      127.0.0.1. Needs a current ${GROUP_PATH}. Plan, Recheck gaps and repo drafts call models; each request is
+      estimated in the server log and refused over $1 unless the board was started with --yes.
+  bun run hr pages [--from-html FILE --url URL --access public|authenticated]
+      Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
+      flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
+      --from-html builds a test fixture snapshot from saved HTML into ${PAGE_FIXTURES_DIR} (never canon).
+  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force] [--yes]
+      Extracts tracks, prizes, judging criteria and rules from each canon page's latest snapshot (one
+      ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
+      checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
+      ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
+  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline] [--yes]
+  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh] [--at ISO] [--yes]
+      Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
+      Runs the board's Plan stream in-process and appends its timing to ${PLAN_TIMINGS_PATH}. --fresh skips the fit and
+      gap caches (and saves nothing) to time an input as if it were new: that makes model calls. --at replays Credits,
+      Sessions and People at an instant (default: now).
+  bun run hr prefill --repo https://github.com/<owner>/<repo> [--yes]
+      P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
+      Prints drafts only; nothing is saved to a project until the user confirms each one.
+  bun run hr sync-ingest [~/Downloads/hackrecon/sync/<stamp>]
+      Brings in a "Sync this event" bundle (the newest by default): captures to ${CAPTURES_DIR}/sync-<stamp>/,
+      thread pane samples (scrubbed again) to ${SLACK_DOM_FIXTURES_DIR}/, and prints what the sync did.
+      Then: bun run hr compare ${CAPTURES_DIR}/sync-<stamp>
+  bun run hr rebuild-threads ${CAPTURES_DIR}/sync-<stamp>
+      Rebuilds each <channel_id>.threads.json from its .threads.raw.json with the current selectors.ts (the
+      extension's own first version is kept once as .threads.ext.json).
+  bun run hr scrub-dom [files…]
+      Strips Slack session tokens (xoxc-, xoxd-, bearer, JWT, signed file URLs) from saved DOM samples in
+      ${SLACK_DOM_FIXTURES_DIR}/, in place. Prints counts only. Run it after saving any sample.
+  bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4] [--yes]
+      P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
+      drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
+  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL] [--at ISO] [--yes]
+      --enter defaults to the fixture's "entered" list. Prints Ship as of --at (default: now): the deadline with
+      any post that moved it, Recheck gaps when a repo is linked (the entered tracks' stated requirements and
+      entry steps against its latest commit; reused while the commit is unchanged), then the checklist.
+      Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
+      fit-eval. Prints each track with its fit word, reason, verified quote, and the time to the section.
+      The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
+      ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
+      Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
+  bun run hr sync [--canon [--yes]] [--offline]
+      After a Slack capture: finds the event's Devpost and schedule pages in announcement posts (restricted-posting
+      channels, else authority_channels, else channels named *announce*; Devpost search by event name as fallback),
+      fetches every public page (one request per URL per sync, User-Agent "${USER_AGENT}", robots.txt respected)
+      into ${PAGES_DIR}, and drafts sponsors.json and organizers. It never calls a model: changed canon pages are
+      listed, and re-read only with --canon (hr canon --judge, under the spend guard). Config you wrote wins
+      over a draft; drafts and the run report go to ${DISCOVERED_PATH}. --offline skips the network.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
       receipt: URL merge only, no Opus credit pass, reps unconfirmed; it prints its basis and gaps.
   bun run hr organizers [--export DIR]
+  bun run hr rep-signals [--export DIR]
+      Writes ${REP_SIGNALS_PATH}: sponsor reps beyond the name/title and external-badge signals, each with its
+      evidence and source (reps.ts). Confirmed: a profile email on the sponsor's domain (sponsors.json "domains"), or
+      an organizer mentioning the person's user ID beside the sponsor's name. Likely staff: an offer, prize or workshop
+      post in the sponsor's channel, an answer to a hacker's question in its threads, and no post in a hacker-only
+      channel; shown, never given authority. The export is read for users.json emails, and for mentions and
+      hacker-only channels the capture doesn't hold (author IDs and mention IDs only). Run after person-links.
+  bun run hr person-links [--export DIR]
+      Links Slack accounts that are one person, so a rep with two accounts counts once (user 2026-11-07). Checks
+      accounts on the same sponsor's side, in order: same profile email, same avatar image (fetched from Slack's
+      image CDN as users.json lists it, hashed, discarded; macOS sips), same real name + title + company. Never by
+      name alone. Writes ${PERSON_LINKS_PATH} (ids and hashed evidence).
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
-  bun run hr classify [--labeled-only] [--dry-run] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+  bun run hr classify [--labeled-only] [--dry-run] [--yes] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       Classifies captured messages with ${MODEL} (redacted text only). --labeled-only: just the messages
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -124,6 +283,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "record-run") return recordRun(rest);
   if (cmd === "pool") return pool(rest);
   if (cmd === "organizers") return organizers(rest);
+  if (cmd === "person-links") return personLinks(rest);
+  if (cmd === "rep-signals") return repSignals(rest);
   if (cmd === "classify") return classify(rest);
   if (cmd === "gate") return gate(rest);
   if (cmd === "label") return label(rest);
@@ -131,6 +292,17 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "preview") return receiptPreview(rest);
   if (cmd === "group") return group(rest);
   if (cmd === "board") return board(rest);
+  if (cmd === "pages") return pages(rest);
+  if (cmd === "canon") return canon(rest);
+  if (cmd === "fit-eval") return fitEval(rest);
+  if (cmd === "plan") return planCli(rest);
+  if (cmd === "ship") return shipCli(rest);
+  if (cmd === "prefill") return prefillCli(rest);
+  if (cmd === "prefill-eval") return prefillEval(rest);
+  if (cmd === "scrub-dom") return scrubDom(rest);
+  if (cmd === "sync-ingest") return syncIngest(rest);
+  if (cmd === "rebuild-threads") return rebuildThreads(rest);
+  if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -148,15 +320,17 @@ function compare(args: string[]): number {
       export: { type: "string", default: DEFAULT_EXPORT_DIR },
       json: { type: "string" },
       cutoff: { type: "string", default: EXPORT_CUTOFF },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
-  const files = captureFiles(positionals.length ? positionals : ["captures"]);
-  if (!files.length) {
+  const paths = positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR];
+  const files = captureFiles(paths);
+  const threadFiles = threadCaptureFiles(paths);
+  if (!files.length && !threadFiles.length) {
     console.error("No capture files found. Pass paths, e.g. bun run hr compare ~/Downloads/C0C7TCNCR1N.json");
     return 2;
   }
-  const exp = loadExport(values.export);
+  const exp = loadExport(fromCaller(values.export!));
   const cutoff = Date.parse(values.cutoff!) / 1000;
   const reports: ChannelReport[] = [];
   for (const f of files) {
@@ -170,27 +344,175 @@ function compare(args: string[]): number {
     reports.push(compareChannel(loaded.capture, exp, cutoff, loaded.dropped));
   }
 
-  printTable(reports);
-  for (const r of reports) printDetails(r);
-  printLockedCoverage(values.sponsors!, reports);
-  if (values.json) {
-    writeFileSync(values.json, JSON.stringify(reports, null, 2));
-    console.log(`\nwrote ${values.json}`);
+  if (reports.length) {
+    printTable(reports);
+    for (const r of reports) printDetails(r);
+    printLockedCoverage(values.sponsors!, reports);
   }
-  return reports.some((r) => !r.pass.recall) ? 1 : 0;
+  const threads = compareThreadFiles(threadFiles, exp, cutoff, values.sponsors!);
+  if (values.json) {
+    writeFileSync(fromCaller(values.json), JSON.stringify(threadFiles.length ? { channels: reports, threads } : reports, null, 2));
+    console.log(`\nwrote ${fromCaller(values.json)}`);
+  }
+  return reports.some((r) => !r.pass.recall) || (threads && !threads.totals.pass) ? 1 : 0;
+}
+
+function syncIngest(args: string[]): number {
+  const inbox = join(homedir(), "Downloads", "hackrecon", "sync");
+  const dir = args[0] ? fromCaller(args[0]) : existsSync(inbox) ? readdirSync(inbox).filter((d) => BUNDLE_DIR.test(d)).sort().map((d) => join(inbox, d)).pop() : undefined;
+  if (!dir || !existsSync(dir)) {
+    console.error(`No sync bundle in ${inbox}/. Run "Sync this event" in the extension first.`);
+    return 2;
+  }
+  const stamp = dir.split("/").pop()!;
+  const out = join(CAPTURES_DIR, `sync-${stamp}`);
+  mkdirSync(out, { recursive: true });
+  mkdirSync(SLACK_DOM_FIXTURES_DIR, { recursive: true });
+  const read = (sub: string, parts: string[]) => Buffer.concat(parts.map((p) => readFileSync(join(dir, sub, p))));
+  let bad = 0;
+  for (const sub of ["captures", "slack-dom"]) {
+    if (!existsSync(join(dir, sub))) continue;
+    for (const f of wholeFiles(readdirSync(join(dir, sub)))) {
+      if (f.missing) {
+        console.error(`${sub}/${f.name}: parts ${f.missing.join(", ")} missing; skipped`);
+        bad++;
+        continue;
+      }
+      const text = read(sub, f.parts).toString("utf8");
+      if (sub === "slack-dom") {
+        const { html, found } = scrubTokens(text);
+        writeFileSync(join(SLACK_DOM_FIXTURES_DIR, f.name), html);
+        if (total(found)) console.log(`slack-dom/${f.name}: stripped ${total(found)} token${total(found) === 1 ? "" : "s"} the extension missed`);
+        continue;
+      }
+      try {
+        const v = JSON.parse(text);
+        if (/\.authors\.json$/.test(f.name)) parseAuthorsCaptureFile(v, f.name, new Set(Object.values(readSponsors(SPONSORS_PATH)).map((s) => s.sponsor)));
+        // Hacker-only channels are captured normally, with text (user 2026-11-07); older bundles may still hold .authors.json.
+        else if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
+        writeFileSync(join(out, f.name), text);
+      } catch (e) {
+        console.error(`captures/${f.name}: ${(e as Error).message}; skipped`);
+        bad++;
+      }
+    }
+  }
+  for (const f of captureFiles([out])) {
+    try {
+      loadCapture(f);
+    } catch (e) {
+      console.error(`${f}: ${(e as Error).message}`);
+      bad++;
+    }
+  }
+  const logPath = join(dir, "sync.json");
+  if (existsSync(logPath)) {
+    writeFileSync(join(out, "sync.json"), readFileSync(logPath));
+    for (const l of summarizeSync(JSON.parse(readFileSync(logPath, "utf8")) as SyncLogLite)) console.log(l);
+  } else console.log("no sync.json in the bundle (the sync may still be running, or stopped before its first channel)");
+  console.log(`\ncaptures in ${out}/; samples in ${SLACK_DOM_FIXTURES_DIR}/. Next: bun run hr compare ${out}`);
+  return bad ? 1 : 0;
+}
+
+async function rebuildThreads(args: string[]): Promise<number> {
+  const dir = args[0] ? fromCaller(args[0]) : "";
+  if (!dir || !existsSync(dir)) {
+    console.error("usage: bun run hr rebuild-threads captures/sync-<stamp>");
+    return 2;
+  }
+  const { parseHTML } = await import("linkedom");
+  const toRows = (html: string) => [...(parseHTML(`<html><body><div id="r">${html}</div></body></html>`).document.getElementById("r")?.children ?? [])] as unknown as Element[];
+  let n = 0;
+  for (const f of readdirSync(dir).filter((f) => /^[CG][A-Z0-9]+\.threads\.raw\.json$/.test(f)).sort()) {
+    const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as { run_id: string; channel_id: string; channel_name: string; started_at: string; finished_at: string; base: string; threads: ThreadRaw[] };
+    const ctx = { channelId: raw.channel_id, channelName: raw.channel_name, runId: raw.run_id, capturedAt: raw.finished_at, base: raw.base };
+    const file: ThreadCaptureFile = { schema_version: SCHEMA_VERSION, kind: "threads", run_id: raw.run_id, source: "extension", channel_id: raw.channel_id, channel_name: raw.channel_name, started_at: raw.started_at, finished_at: raw.finished_at, budget: "uncapped", threads: raw.threads.map((t) => threadRunFromRaw(t, ctx, toRows)) };
+    parseThreadCaptureFile(JSON.parse(JSON.stringify(file)), f);
+    const target = join(dir, `${raw.channel_id}.threads.json`);
+    const kept = join(dir, `${raw.channel_id}.threads.ext.json`);
+    if (existsSync(target) && !existsSync(kept)) renameSync(target, kept);
+    writeFileSync(target, JSON.stringify(file, null, 2));
+    n++;
+    console.log(`${raw.channel_name}: ${file.threads.length} threads, ${file.threads.reduce((a, t) => a + t.replies.length, 0)} replies`);
+  }
+  console.log(`rebuilt ${n} thread files in ${dir}`);
+  return n ? 0 : 2;
+}
+
+function scrubDom(args: string[]): number {
+  const files = args.length ? args.map(fromCaller) : existsSync(SLACK_DOM_FIXTURES_DIR) ? readdirSync(SLACK_DOM_FIXTURES_DIR).filter((f) => f.endsWith(".html")).sort().map((f) => join(SLACK_DOM_FIXTURES_DIR, f)) : [];
+  if (!files.length) {
+    console.error(`No DOM samples in ${SLACK_DOM_FIXTURES_DIR}/`);
+    return 2;
+  }
+  let stripped = 0;
+  for (const f of files) {
+    const { html, found } = scrubTokens(readFileSync(f, "utf8"));
+    const n = total(found);
+    if (n) writeFileSync(f, html);
+    stripped += n;
+    const kinds = Object.entries(found).filter(([, c]) => c).map(([k, c]) => `${k} ${c}`).join(", ");
+    console.log(`${f.split("/").pop()}: ${n ? `stripped ${n} (${kinds})` : "clean"}`);
+  }
+  console.log(`${files.length} samples, ${stripped} token${stripped === 1 ? "" : "s"} stripped`);
+  return 0;
+}
+
+/** Step 1's gate (D5): thread recall over the locked 25's export replies by ts, at least RECALL_MIN. */
+function compareThreadFiles(files: string[], exp: ReturnType<typeof loadExport>, cutoff: number, sponsorsPath: string) {
+  if (!files.length) return null;
+  const reports: ThreadReport[] = [];
+  for (const f of files) {
+    try {
+      reports.push(compareThreads(parseThreadCaptureFile(JSON.parse(readFileSync(f, "utf8")), f), exp, cutoff));
+    } catch (e) {
+      console.error(`skip ${f}: ${(e as Error).message}`);
+    }
+  }
+  const sponsors = JSON.parse(readFileSync(sponsorsPath, "utf8")) as Record<string, { stretch?: boolean }>;
+  const locked = Object.entries(sponsors).filter(([, v]) => !v.stretch).map(([k]) => k);
+  const totals = threadTotals(exp, locked, reports.filter((r) => locked.includes(r.channel_name)));
+  const rows = reports.map((r) => [
+    r.channel_name,
+    `${r.matched}/${r.export_replies}`,
+    `${pct(r.recall)} ${mark(r.pass.recall)}`,
+    `${r.author.matched}/${r.author.checked} ${mark(r.pass.author)}`,
+    `${r.threads_opened}/${r.threads_attempted}/${r.threads_in_export}`,
+    Object.entries(r.stop_reasons).map(([k, n]) => `${k} ${n}`).join(", "),
+    `${r.extras.length}`,
+    `${r.duration_s}s`,
+  ]);
+  const head = ["channel", "replies found", "recall", "author", "threads open/tried/export", "stops", "extra", "time"];
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((x) => x[i]!.length)));
+  const line = (cells: string[]) => cells.map((c, i) => c.padEnd(w[i]!)).join("  ");
+  console.log(`\nThread replies (step 1) against the export, by ts`);
+  console.log(line(head));
+  console.log(w.map((n) => "-".repeat(n)).join("  "));
+  rows.forEach((x) => console.log(line(x)));
+  for (const r of reports) {
+    const why = (k: string) => r.missed.filter((m) => m.why === k).length;
+    if (r.missed.length) console.log(`  ${r.channel_name}: missed ${r.missed.length} (in an opened pane ${why("in_pane")}, pane not opened ${why("not_opened")}, thread not tried ${why("not_attempted")})`);
+    for (const m of r.missed.filter((m) => m.why === "in_pane").slice(0, 5)) console.log(`    ${m.permalink}  ${m.author}: ${m.text}`);
+    for (const x of r.extras) console.log(`    extra ${x.ts} (${x.why}): ${x.text}`);
+    for (const c of r.count_mismatches) console.log(`    ${c.thread_ts}: Slack showed ${c.shown} replies, the export has ${c.export}`);
+    if (r.no_text.length) console.log(`  ${r.channel_name}: ${r.no_text.length} found with no text (read while Slack still showed its loading placeholder)`);
+  }
+  const lockedNoText = reports.filter((r) => locked.includes(r.channel_name)).reduce((n, r) => n + r.no_text.length, 0);
+  console.log(`\nlocked ${locked.length} thread recall: ${totals.matched}/${totals.replies} = ${pct(totals.recall)} ${mark(totals.pass)} (gate ${pct(RECALL_MIN)})` + (lockedNoText ? `; ${lockedNoText} of them have no text` : "") + (totals.uncaptured.length ? `; no thread file yet: ${totals.uncaptured.join(", ")}` : ""));
+  return { reports, totals };
 }
 
 function recordRun(args: string[]): number {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { id: { type: "string" }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { id: { type: "string" }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   if (!values.id) {
     console.error("record-run needs --id, e.g. --id day1-2026-10-27");
     return 2;
   }
-  const files = captureFiles(positionals.length ? positionals : ["captures"]);
+  const files = captureFiles(positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR]);
   if (!files.length) {
     console.error("No capture files found.");
     return 2;
@@ -221,7 +543,7 @@ function pool(args: string[]): number {
     options: {
       seed: { type: "string", default: String(DEFAULT_SEED) },
       export: { type: "string", default: DEFAULT_EXPORT_DIR },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
       check: { type: "boolean", default: false },
       "add-flagged": { type: "boolean", default: false },
     },
@@ -231,7 +553,7 @@ function pool(args: string[]): number {
 
   const sponsors = readSponsors(values.sponsors!);
   const channels = lockedChannels(sponsors);
-  const cands = candidatesFromExport(loadExport(values.export), channels);
+  const cands = candidatesFromExport(loadExport(fromCaller(values.export!)), channels);
   const seed = Number(values.seed);
   const prev = readPoolMeta(POOL_META_PATH);
   // Sheets written before the miss checks were blinded marked random rows in the sheet itself.
@@ -328,10 +650,11 @@ async function prelabel(args: string[]): Promise<number> {
     options: {
       "dry-run": { type: "boolean", default: false },
       "include-hand": { type: "boolean", default: false },
+      yes: { type: "boolean", default: false },
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
   const rows = readLabels();
@@ -369,13 +692,10 @@ async function prelabel(args: string[]): Promise<number> {
     return 0;
   }
 
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("prelabel", values.yes!);
+  if (!guard.preflight(todo.map((i) => plannedCall(JUDGE_MODEL, system, i.user, JUDGE_SCHEMA, JUDGE_MAX_TOKENS)))) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   console.log(`Stop \`hr label\` and close ${LABELS_PATH} in any spreadsheet app until this finishes; it rewrites the sheet at the end.`);
   const errors: JudgeRun["errors"] = [];
   const usages: Usage[] = [];
@@ -480,7 +800,7 @@ function groupInput(sponsors: Sponsors) {
 async function group(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const g = groupInput(readSponsors(values.sponsors!));
   if (!g.ids.length) {
@@ -497,13 +817,10 @@ async function group(args: string[]): Promise<number> {
     console.log(`${GROUP_PATH} is current (${prev.offers.length} offers); --force to rerun`);
     return 0;
   }
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("group", values.yes!);
+  if (!guard.preflight([plannedCall(GROUP_MODEL, g.system, g.request, GROUP_SCHEMA, GROUP_MAX_TOKENS)])) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   const r = await groupOffers(client, g.system, g.request, g.ids, g.links, g.texts);
   const cost = Number(costUsd(r.usage, GROUP_MODEL).toFixed(4));
   if ("error" in r) {
@@ -532,7 +849,7 @@ async function group(args: string[]): Promise<number> {
 async function board(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, sponsors: { type: "string", default: "config/sponsors.json" } },
+    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const sponsors = readSponsors(values.sponsors!);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
@@ -543,33 +860,167 @@ async function board(args: string[]): Promise<number> {
   const event = readEvent();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
-  const all = Object.values(sponsors);
+  const person = loadPersonKey();
+  const reps = loadRepIndex(person);
   const labels = readLabels();
+  const messages = readMessages();
   const data = boardData({
     event: event.event,
     timezone: event.timezone,
     schedule: event.schedule,
     run_id: last?.run_id ?? "",
     channels: last?.channels ?? [],
-    messages: readMessages(),
+    messages,
     sponsors,
     offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
-    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
+    person,
+    reps,
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
     permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
+  data.v1_ids = v1Ids(readJsonFile<BoardData | null>(BOARD_DATA_PATH, null), data.offers);
   writeJsonFile(BOARD_DATA_PATH, data);
   console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
   if (values["build-only"]) return 0;
   const headers = { "Cache-Control": "no-store" };
+  // D6: the one POST route answers only the board's own page: same Origin, and this run's token from the page.
+  const token = crypto.randomUUID();
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...headers, "Content-Type": "application/json" } });
+  const planContext = () => ({ entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) });
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: Number(values.port),
-    fetch(req) {
+    async fetch(req) {
       const path = new URL(req.url).pathname;
+      if (req.method === "POST" && path === "/plan/stream") {
+        // P2: Plan's sections as NDJSON, one line per section as it's ready (planstream.ts), tracks first.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 16_000) return json({ error: "request too large" }, 413);
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const input = parsePlanBody(body);
+        if ("error" in input) return json(input, 400);
+        // ?now: the board's review clock (as /ship/list), so P3–P5 join as of that moment; otherwise now.
+        const at = new URL(req.url).searchParams.get("now");
+        const nowMs = at ? Date.parse(at) : Date.now();
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+        const ctx = planContext();
+        const enc = new TextEncoder();
+        let open = true;
+        const stream = new ReadableStream<Uint8Array>({
+          async start(ctrl) {
+            // Read to the end even if the page went away (it typed again): finished model calls are still cached.
+            await runPlanStream(input, ctx, { via: "board", nowMs, guard: new CostGuard("board plan", values.yes!) }, (e) => {
+              if (!open) return;
+              // Errors stay in the server log; the page shows its own sentence.
+              const out =
+                "error" in e
+                  ? { section: e.section, ms: e.ms, error: true }
+                  : e.section === "tracks"
+                    ? { section: e.section, ms: e.ms, from: e.from, tracks: e.tracks.map((t) => ({ ...t, detail: trackDetail(ctx.entities, t.track_id) })) }
+                    : e.section === "gaps"
+                      ? { section: e.section, ms: e.ms, from: e.from, gaps: e.gaps, checked: e.checked, repo_lines: e.facts.repo }
+                      : e;
+              try {
+                ctrl.enqueue(enc.encode(JSON.stringify(out) + "\n"));
+              } catch {
+                open = false;
+              }
+            });
+            if (open) ctrl.close();
+          },
+          cancel() {
+            open = false;
+          },
+        });
+        return new Response(stream, { headers: { ...headers, "Content-Type": "application/x-ndjson; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
+      }
+      if (req.method === "POST" && path === "/ship/gaps") {
+        // Ship's Recheck gaps (P9 renders it): the entered tracks against the repo's latest commit.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 16_000) return json({ error: "request too large" }, 413);
+        let body: { entering?: unknown };
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const input = parsePlanBody(body);
+        if ("error" in input) return json(input, 400);
+        if (!input.repo) return json({ error: "link a repo to recheck gaps" }, 400);
+        const ids = Array.isArray(body.entering) ? body.entering.filter((x): x is string => typeof x === "string").slice(0, 60) : [];
+        if (!ids.length) return json({ error: "no tracks entered" }, 400);
+        const { entities, event, aliases } = planContext();
+        const { tracks, unknown } = shipTracks(entities, ids, event, aliases);
+        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+        const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+        const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+        const r = await recheckGaps(anthropicClient(new CostGuard("board ship", values.yes!)), { ...input, repo: input.repo }, tracks, entities, gcache, store);
+        if ("error" in r) {
+          console.error(`ship: couldn't recheck gaps: ${r.error}`);
+          return json({ error: "couldn't recheck gaps" }, 503);
+        }
+        writeJsonFile(GAPS_CACHE_PATH, gcache);
+        writeJsonFile(SHIP_GAPS_PATH, store);
+        console.log(`ship: gaps ${r.from} at ${r.commit.slice(0, 7)}`);
+        return json(r);
+      }
+      if (req.method === "POST" && path === "/plan/prefill") {
+        // P1b: drafts from a repo link, each with its source lines. Nothing is saved here: the page shows each draft
+        // and fills the input only with the ones the user picks.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 1_000) return json({ error: "request too large" }, 413);
+        let body: { repo?: unknown };
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const url = typeof body.repo === "string" ? body.repo.trim() : "";
+        const repo = checkoutRepo(url);
+        if ("error" in repo) return json({ error: repo.error.startsWith("only public") ? repo.error : "couldn't read that repo: is it public?" }, 400);
+        const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+        const t0 = Date.now();
+        const r = await prefillDraft(anthropicClient(new CostGuard("board prefill", values.yes!)), repo, repoTexts(repo), cache, readProducts());
+        if ("error" in r) {
+          console.error(`plan: prefill failed: ${r.error}`);
+          return json({ error: "couldn't draft from that repo" }, 503);
+        }
+        writeJsonFile(PREFILL_CACHE_PATH, cache);
+        console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
+        return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
+      }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+      if (path === "/ship/list") {
+        // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
+        const q = new URL(req.url).searchParams;
+        const { entities, event } = planContext();
+        const trackIds = new Set(entities.filter((x) => x.kind === "track").map((x) => x.id));
+        const entered = (q.get("entered") ?? "").split(",").filter(Boolean).slice(0, 60);
+        const unknown = entered.filter((id) => !trackIds.has(id));
+        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+        const nowMs = q.get("now") ? Date.parse(q.get("now")!) : Date.now();
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+        return json(shipListAt(entities, event, entered, nowMs));
+      }
+      if (path === "/plan/meta") {
+        const { entities, event } = planContext();
+        // ?now: the board's review clock, as /ship/list; a replay never shows a time before its post.
+        const at = new URL(req.url).searchParams.get("now");
+        const nowMs = at ? Date.parse(at) : undefined;
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages() });
+      }
       if (path === "/")
-        return new Response(readFileSync(BOARD_PAGE, "utf8"), {
+        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
           headers: {
             ...headers,
             "Content-Type": "text/html; charset=utf-8",
@@ -586,8 +1037,986 @@ async function board(args: string[]): Promise<number> {
   return await new Promise<number>(() => {});
 }
 
+async function pages(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "from-html": { type: "string" }, url: { type: "string" }, access: { type: "string" } } });
+  if (values["from-html"]) {
+    if (!values.url || !PAGE_ACCESS.includes(values.access as PageAccess)) {
+      console.error(`--from-html needs --url URL and --access ${PAGE_ACCESS.join("|")}`);
+      return 2;
+    }
+    const { parseHTML } = await import("linkedom");
+    const { document } = parseHTML(readFileSync(fromCaller(values["from-html"]), "utf8"));
+    const snap = snapshotPage(document as unknown as Document, { url: values.url, captured_at: new Date().toISOString(), access: values.access as PageAccess, captured_by: "fixture" });
+    const out = `${PAGE_FIXTURES_DIR}/${pageFileName(values.url)}`;
+    writeJsonFile(out, snap);
+    console.log(`wrote ${out}: ${snap.blocks.length} blocks, ${snap.links.length} links${snap.no_text ? ` (${snap.no_text})` : ""}`);
+    return 0;
+  }
+  const event = readEvent();
+  const wanted = [...(event.canon_pages ?? []), ...(event.schedule_pages ?? [])];
+  const { pages: loaded, errors } = loadPages(PAGES_DIR);
+  for (const e of errors) console.error(`unreadable: ${e}`);
+  const { latest, missing } = pageCoverage(loaded, wanted);
+  if (!loaded.length) console.log(`No page snapshots in ${PAGES_DIR} yet. Use the extension's "Capture this page".`);
+  for (const p of latest.values()) {
+    const s = p.snapshot;
+    const access = s.access ?? "no flag (treated as authenticated)";
+    console.log(`${s.url}\n  ${s.captured_at}  ${access}  ${s.blocks.length} blocks  hash ${p.hash}${s.no_text ? `  ${s.no_text}` : ""}`);
+  }
+  if (!wanted.length) console.log(`${EVENT_PATH} lists no canon_pages or schedule_pages.`);
+  for (const u of missing) console.log(`missing: ${u} (in ${EVENT_PATH}, no snapshot yet)`);
+  return errors.length ? 1 : 0;
+}
+
+interface CanonPage {
+  url: string;
+  file: string;
+  captured_by: PageSnapshot["captured_by"];
+  access: string | null;
+  snapshot_hash: string;
+  redacted: number | null;
+  model: string;
+  prompt_hash: string;
+  input_hash: string;
+  entities: Entity[];
+  coverage: CoverageReport;
+  /** D7: ids from the previous extraction with no entity left (or two candidates), shown "no longer on the page". */
+  no_longer_on_page: { id: string; reason: "no match" | "ambiguous"; best: number }[];
+  /** Entry steps and requirements this read lacked, carried over from the previous read (canon.ts keepDropped). */
+  kept_from_previous?: KeptField[];
+  match_keys: Keyed[];
+  usage: Usage;
+  cost_usd: number;
+  written_at: string;
+}
+interface CanonJudged {
+  url: string;
+  input_hash: string;
+  verdict: JudgeVerdict;
+  usage: Usage;
+  cost_usd: number;
+  written_at: string;
+}
+
+function canonInput(p: LoadedPage, event: EventConfig) {
+  let snap = p.snapshot;
+  let redacted: number | null = null;
+  if (needsRedaction(snap)) {
+    // D12: logged-in page (or no flag): redact with the captured posters' names, as for Slack.
+    const names = new Set(readMessages().filter((m) => m.author_kind !== "bot").map((m) => m.author_name));
+    const r = redactSnapshot(snap, compileRedactor(buildNameList(names, readSponsors(SPONSORS_PATH))));
+    snap = r.snapshot;
+    redacted = r.replaced;
+  }
+  const system = canonSystemPrompt(event);
+  const request = canonRequest(snap);
+  return { snap, redacted, system, request, prompt_hash: canonHash(system), input_hash: canonInputHash(system, request) };
+}
+
+/** The only way hr makes a client: every call passes through the run's spend guard (costguard.ts). */
+function anthropicClient(guard: CostGuard): Anthropic | null {
+  try {
+    return guardClient(new Anthropic({ maxRetries: 2 }), guard);
+  } catch (e) {
+    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** A re-read never silently drops fields (user 2026-11-07): entry steps and requirements the previous read had are
+ *  kept (keepDropped), and every kept one and every id no longer on the page is printed. */
+function keepPrevious(prev: CanonPage | undefined, next: Entity[], gone: CanonPage["no_longer_on_page"], snap: PageSnapshot): { entities: Entity[]; kept: KeptField[] } {
+  const r = keepDropped(prev?.entities ?? [], next, snap);
+  for (const k of r.kept)
+    console.log(`kept from the previous read (this read lacks it): ${k.kind} ${k.id}: "${k.value}"${k.quote_on_page ? "" : "; its quote is no longer in this snapshot, so check the page"}`);
+  for (const g of gone) console.log(`no longer on the page (${g.reason}): ${g.id}`);
+  return r;
+}
+
+/** D7: an entity whose id changed but whose page text still matches keeps its previous id, so done and
+ *  selected marks survive; previous ids with nothing left are kept in no_longer_on_page until they reappear. */
+function carryIds(prev: CanonPage | undefined, next: Entity[], snap: PageSnapshot): { entities: Entity[]; gone: CanonPage["no_longer_on_page"] } {
+  if (!prev?.match_keys) return { entities: next, gone: [] };
+  const m = rematch(prev.match_keys, keyed(next, snap), REMATCH_THRESHOLD);
+  const fix = (v: unknown) => (typeof v === "string" && m.renamed.has(v) ? m.renamed.get(v)! : v);
+  const entities = next.map((e) => ({
+    ...e,
+    id: m.renamed.get(e.id) ?? e.id,
+    fields: Object.fromEntries(Object.entries(e.fields).map(([k, fv]) => [k, k === "track_id" || k === "applies_to" ? { ...fv, value: fix(fv.value) } : fv])),
+  }));
+  const gone = [...m.gone, ...(prev.no_longer_on_page ?? [])].filter((g, i, all) => all.findIndex((x) => x.id === g.id) === i && !entities.some((e) => e.id === g.id));
+  if (m.renamed.size || gone.length) console.log(`D7: ${m.renamed.size} entities kept their previous id; ${gone.length} no longer on the page`);
+  return { entities, gone };
+}
+
+interface StoredExtraction {
+  entities: Entity[];
+  usage: CanonPage["usage"];
+  written_at: string;
+  /** The output file the extraction was first written to. */
+  from: string;
+}
+
+async function canon(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false } },
+  });
+  const event = readEvent();
+  const dir = values.fixtures ? PAGE_FIXTURES_DIR : PAGES_DIR;
+  const outPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
+  const judgePath = values.fixtures ? CANON_JUDGE_FIXTURES_PATH : CANON_JUDGE_PATH;
+  const { pages: loaded, errors } = loadPages(dir);
+  for (const e of errors) console.error(`unreadable: ${e}`);
+  const { latest, missing } = pageCoverage(loaded, event.canon_pages ?? []);
+  for (const u of missing) console.log(`missing: ${u} has no snapshot in ${dir}`);
+  const todo = [...latest.values()].filter((p) => (event.canon_pages ?? []).some((u) => pageKey(u) === pageKey(p.snapshot.url)));
+  if (!todo.length) {
+    console.error(`no snapshots of ${EVENT_PATH} canon_pages in ${dir}${values.fixtures ? "" : ': use the extension\'s "Capture this page", or --fixtures'}`);
+    return 2;
+  }
+  const prev = new Map(readJsonFile<CanonPage[]>(outPath, []).map((c) => [pageKey(c.url), c]));
+  const store = readJsonFile<Record<string, StoredExtraction>>(CANON_STORE_PATH, {});
+  // Seed from pages already extracted (either output file), so text extracted once is never extracted again.
+  for (const path of [CANON_FIXTURES_PATH, CANON_PATH])
+    for (const pg of readJsonFile<CanonPage[]>(path, [])) store[`${pg.prompt_hash}|${pg.input_hash}`] ??= { entities: pg.entities, usage: pg.usage, written_at: pg.written_at, from: path };
+  const out: CanonPage[] = [];
+  let client: Anthropic | null = null;
+  let failed = errors.length > 0 || missing.length > 0;
+  // The spend guard: the same rule as the loop below decides which pages call the model.
+  const guard = new CostGuard("canon", values.yes!);
+  if (!values["dry-run"]) {
+    const calls = todo.flatMap((p) => {
+      const c = canonInput(p, event);
+      const page = prev.get(pageKey(p.snapshot.url));
+      const stored = store[`${c.prompt_hash}|${c.input_hash}`];
+      return (stored && !values.force) || (page && page.input_hash === c.input_hash && !values.force) ? [] : [plannedCall(CANON_MODEL, c.system, c.request, CANON_SCHEMA, CANON_MAX_TOKENS)];
+    });
+    if (!guard.preflight(calls)) return 2;
+    if (values.judge) console.log("canon: the judge's calls are estimated as they run, and stop at the same limit");
+  }
+  for (const p of todo) {
+    const c = canonInput(p, event);
+    const key = pageKey(p.snapshot.url);
+    console.log(`\n${p.snapshot.url}  ${p.snapshot.captured_by}, ${p.snapshot.access ?? "no access flag"}${c.redacted !== null ? `, redacted (${c.redacted} replaced)` : ""}; ${p.snapshot.blocks.length} blocks, request ${c.request.length} chars, prompt ${c.prompt_hash}, input ${c.input_hash}`);
+    if (values["dry-run"]) {
+      console.log(`--- system prompt (${c.system.length} chars) ---\n${c.system}\n--- request (first 2000 chars) ---\n${c.request.slice(0, 2000)}`);
+      continue;
+    }
+    let page = prev.get(key);
+    const stored = store[`${c.prompt_hash}|${c.input_hash}`];
+    // The store wins over this file's own copy: one input has one extraction, whichever file asks.
+    if (stored && !values.force) {
+      const read = carryIds(page, assignIds(stored.entities, c.snap), c.snap);
+      const { entities, kept } = keepPrevious(page, read.entities, read.gone, c.snap);
+      const gone = read.gone;
+      page = {
+        url: p.snapshot.url,
+        file: p.file,
+        captured_by: p.snapshot.captured_by,
+        access: p.snapshot.access,
+        snapshot_hash: p.hash,
+        redacted: c.redacted,
+        model: CANON_MODEL,
+        prompt_hash: c.prompt_hash,
+        input_hash: c.input_hash,
+        entities,
+        coverage: coverage(c.snap, entities),
+        no_longer_on_page: gone,
+        ...(kept.length ? { kept_from_previous: kept } : {}),
+        match_keys: keyed(entities, c.snap),
+        usage: stored.usage,
+        cost_usd: 0,
+        written_at: stored.written_at,
+      };
+      console.log(`stored extraction (${entities.length} entities, same prompt and input as ${stored.from} at ${stored.written_at.slice(0, 19)}); --force to re-extract`);
+    } else if (!page || page.input_hash !== c.input_hash || values.force) {
+      client ??= anthropicClient(guard);
+      if (!client) return 2;
+      const r = await callChecked(client, {
+        model: CANON_MODEL,
+        effort: CANON_EFFORT,
+        max_tokens: CANON_MAX_TOKENS,
+        system: c.system,
+        schema: CANON_SCHEMA,
+        request: c.request,
+        check: (parsed) => checkCanon(parsed, c.snap, p.hash),
+      });
+      console.log(formatUsage(r.calls, r.usage, CANON_MODEL));
+      if ("error" in r) {
+        console.error(`extraction failed after ${r.calls} call(s): ${r.error}. Nothing written for this page.`);
+        failed = true;
+        if (page) out.push(page);
+        continue;
+      }
+      const read = carryIds(page, r.value.entities, c.snap);
+      const { entities, kept } = keepPrevious(page, read.entities, read.gone, c.snap);
+      const gone = read.gone;
+      page = {
+        url: p.snapshot.url,
+        file: p.file,
+        captured_by: p.snapshot.captured_by,
+        access: p.snapshot.access,
+        snapshot_hash: p.hash,
+        redacted: c.redacted,
+        model: CANON_MODEL,
+        prompt_hash: c.prompt_hash,
+        input_hash: c.input_hash,
+        entities,
+        coverage: coverage(c.snap, entities),
+        no_longer_on_page: gone,
+        ...(kept.length ? { kept_from_previous: kept } : {}),
+        match_keys: keyed(entities, c.snap),
+        usage: r.usage,
+        cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)),
+        written_at: new Date().toISOString(),
+      };
+      store[`${c.prompt_hash}|${c.input_hash}`] = { entities: page.entities, usage: r.usage, written_at: page.written_at, from: outPath };
+    } else {
+      // Same input: ids are re-derived anyway, so a change to the id scheme reaches cached pages (marks follow, D7).
+      const { entities, gone } = carryIds(page, assignIds(page.entities, c.snap), c.snap);
+      page = { ...page, entities, no_longer_on_page: gone, match_keys: keyed(entities, c.snap), coverage: coverage(c.snap, entities) };
+      console.log(`cached (${page.entities.length} entities, input unchanged); --force to rerun`);
+    }
+    out.push(page);
+    const byKind = new Map<string, number>();
+    for (const e of page.entities) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
+    const counts = [...byKind].map(([k, n]) => `${n} ${k}`);
+    console.log(`entities: ${counts.join(", ") || "none"}`);
+    for (const ch of page.coverage.checks) {
+      console.log(`  ${ch.pass === null ? "n/a " : ch.pass ? "PASS" : "FAIL"} ${ch.name}: ${ch.summary}`);
+      for (const d of ch.details.slice(0, ch.pass === false ? 60 : 25)) console.log(`       ${d}`);
+      if (ch.details.length > 25 && ch.pass !== false) console.log(`       … ${ch.details.length - 25} more in ${outPath}`);
+    }
+    if (!page.coverage.pass) failed = true;
+  }
+  if (values["dry-run"]) {
+    console.log("\ndry run: no API call, nothing written");
+    return 0;
+  }
+  writeJsonFile(CANON_STORE_PATH, store);
+  for (const [k, c] of prev) if (!out.some((o) => pageKey(o.url) === k)) out.push(c); // pages no longer listed stay until removed by hand
+  // A page record a new snapshot replaces is kept (live canon only): merge places each changed field in the window
+  // between the two captures (§3 rule 2).
+  const replaced = values.fixtures ? [] : out.flatMap((o) => { const p = prev.get(pageKey(o.url)); return p && p.snapshot_hash !== o.snapshot_hash ? [p] : []; });
+  if (replaced.length) writeJsonFile(CANON_HISTORY_PATH, [...readJsonFile<CanonPage[]>(CANON_HISTORY_PATH, []), ...replaced]);
+  writeJsonFile(outPath, out);
+  console.log(`\nwrote ${outPath}: ${out.length} page(s), ${out.reduce((n, p) => n + p.entities.length, 0)} entities`);
+
+  if (values.judge) {
+    const judged = new Map(readJsonFile<CanonJudged[]>(judgePath, []).map((j) => [pageKey(j.url), j]));
+    for (const page of out.filter((o) => todo.some((t) => pageKey(t.snapshot.url) === pageKey(o.url)))) {
+      const p = todo.find((t) => pageKey(t.snapshot.url) === pageKey(page.url))!;
+      const snap = canonInput(p, event).snap;
+      const system = canonJudgeSystemPrompt(event);
+      const request = canonJudgeRequest(snap, page.entities);
+      const input_hash = canonInputHash(system, request);
+      let j = judged.get(pageKey(page.url));
+      if (!j || j.input_hash !== input_hash || values.force) {
+        client ??= anthropicClient(guard);
+        if (!client) return 2;
+        const r = await callChecked(client, {
+          model: CANON_MODEL,
+          effort: CANON_EFFORT,
+          max_tokens: CANON_MAX_TOKENS,
+          system,
+          schema: CANON_JUDGE_SCHEMA,
+          request,
+          check: (parsed) => checkJudge(parsed, snap, page.entities),
+        });
+        console.log(`\njudge ${page.url}: ${formatUsage(r.calls, r.usage, CANON_MODEL)}`);
+        if ("error" in r) {
+          console.error(`judge failed: ${r.error}`);
+          failed = true;
+          continue;
+        }
+        j = { url: page.url, input_hash, verdict: r.value, usage: r.usage, cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)), written_at: new Date().toISOString() };
+        judged.set(pageKey(page.url), j);
+      } else console.log(`\njudge ${page.url}: cached`);
+      const v = j.verdict;
+      console.log(`  ${v.missing.length || v.misplaced.length ? "FAIL" : "PASS"} judge (agreement with Opus): ${v.missing.length} missing, ${v.misplaced.length} misplaced`);
+      for (const m of v.missing) console.log(`       missing ${m.kind} [${m.block}]: ${m.what}`);
+      for (const m of v.misplaced) console.log(`       misplaced ${m.entity_id}: ${m.problem}`);
+      if (v.missing.length || v.misplaced.length) failed = true;
+    }
+    writeJsonFile(judgePath, [...judged.values()]);
+  }
+  return failed ? 1 : 0;
+}
+
+async function sync(args: string[]): Promise<number> {
+  // --canon: re-read changed pages with the model (hr canon --judge); never without it (user 2026-11-07).
+  const { values } = parseArgs({ args, options: { canon: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
+  const event = readEvent();
+  const messages = readMessages();
+  const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
+  const channels = [...new Set([...caps.map((c) => c.channel_name), ...messages.map((m) => m.channel_name)])].sort();
+  // Announcement channels: Slack's restricted-posting flag first (a signal hackers can't set, D19), then config, then names.
+  const flagged = caps.filter((c) => c.posting_restricted === true).map((c) => c.channel_name);
+  const unknown = caps.filter((c) => c.posting_restricted == null).length;
+  const [annSource, ann] = flagged.length
+    ? ["Slack restricted-posting notice", flagged]
+    : event.authority_channels?.length
+      ? ["event.json authority_channels", event.authority_channels]
+      : ["channel name contains \"announce\" (no capture carries the restricted-posting flag yet: unverified)", channels.filter((c) => /announce/i.test(c))];
+  const announcement = new Set(ann);
+  console.log(`announcement channels (${annSource}): ${[...announcement].join(", ") || "none"}${unknown ? `; ${unknown} of ${caps.length} captures predate or lack the restricted-posting flag` : ""}`);
+
+  // Trust (security review 2026-11-06): a channel's name proves nothing, since hackers can often create channels.
+  // Under the name fallback only posts by listed organizer ids count, and with no list nothing from Slack is
+  // fetched or made canon. Slack's restricted-posting flag and the user's authority_channels are trusted as is.
+  const nameOnly = !flagged.length && !event.authority_channels?.length;
+  const listed = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
+  const trusted = nameOnly ? messages.filter((m) => !!m.author_id && listed.has(m.author_id)) : messages;
+  if (nameOnly) console.log(listed.size ? `name-only announcement channels: counting only posts by the ${listed.size} ids in ${ORGANIZERS_PATH}` : `name-only announcement channels and no ${ORGANIZERS_PATH}: Slack links are listed, not fetched; set authority_channels or capture with the restricted-posting flag`);
+  const found = discoverUrls(trusted, nameOnly && !listed.size ? new Set() : announcement);
+  const untrusted = nameOnly && !listed.size ? discoverUrls(messages, announcement) : null;
+  if (untrusted?.devpost) console.log(`unverified Devpost link (not used): ${untrusted.devpost.url}`);
+  const fetcher = new PoliteFetcher();
+  let devpostRoot = found.devpost?.url ?? null;
+  let devpostWhy = found.devpost?.why ?? "";
+  if (!devpostRoot && !values.offline) {
+    const r = await fetcher.get(`https://devpost.com/api/hackathons?search=${encodeURIComponent(event.event)}`, "json");
+    if (r.status === "fetched" && r.html) {
+      const pick = pickDevpostHit(event.event, ((JSON.parse(r.html) as { hackathons?: DevpostHit[] }).hackathons ?? []));
+      devpostRoot = pick.hit ? new URL(pick.hit.url).origin + "/" : null;
+      devpostWhy = pick.why;
+    } else devpostWhy = `Devpost search failed: ${r.detail}`;
+  }
+  console.log(`devpost: ${devpostRoot ?? "not found"}${devpostWhy ? ` (${devpostWhy})` : ""}${found.devpost_other.length ? `; also linked: ${found.devpost_other.map((f) => f.url).join(", ")}` : ""}`);
+  const canonPages = event.canon_pages?.length ? event.canon_pages : devpostRoot ? devpostCanonPages(devpostRoot) : [];
+  const schedulePages = event.schedule_pages?.length ? event.schedule_pages : found.schedule.map((f) => f.url);
+  if (event.canon_pages?.length && devpostRoot && !event.canon_pages.some((u) => pageKey(u) === pageKey(devpostRoot!))) console.log(`note: event.json canon_pages doesn't include the discovered ${devpostRoot}; keeping event.json`);
+  for (const f of found.schedule) console.log(`schedule candidate: ${f.url} (${f.why}, ${f.posts.length} post${f.posts.length === 1 ? "" : "s"})`);
+
+  // Fetch: every public page, once each this sync.
+  type Fetched = FetchResult & { saved?: string; hash?: string; changed?: boolean; role: string };
+  const results: Fetched[] = [];
+  if (!values.offline) {
+    const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
+    const { parseHTML } = await import("linkedom");
+    for (const [role, list] of [["canon", canonPages], ["schedule", schedulePages]] as const)
+      for (const url of list) {
+        const r: Fetched = { ...(await fetcher.get(url)), role };
+        if (r.status === "fetched" && r.html) {
+          const { document } = parseHTML(r.html);
+          const snap = snapshotPage(document as unknown as Document, { url, captured_at: new Date().toISOString(), access: "public", captured_by: "fetch" });
+          const why = needsExtension(snap, r.html);
+          if (why) Object.assign(r, { status: "needs_extension", detail: why });
+          else {
+            const hash = snapshotHash(snap);
+            const prev = latest.get(pageKey(url));
+            r.hash = hash;
+            r.changed = !prev || prev.hash !== hash;
+            // Same text from another path (a fixture or the extension): rewrite so provenance says "fetch".
+            if (r.changed || prev!.snapshot.captured_by !== "fetch") writeJsonFile((r.saved = `${PAGES_DIR}/${pageFileName(url)}`), snap);
+          }
+        }
+        delete r.html;
+        results.push(r);
+        console.log(`${r.status.padEnd(17)} ${url}  ${r.detail}${r.hash ? `; hash ${r.hash}${r.changed ? ", changed: saved" : r.saved ? ", same text, now saved as fetched" : ", unchanged"}` : ""}`);
+      }
+    const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
+    console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
+  }
+
+  // Pages the extension read in a background tab during "Sync this event" (Devpost refuses most plain fetches).
+  const inbox = join(homedir(), "Downloads", "hackrecon", "pages");
+  const ingested: (IngestDecision & { file: string })[] = [];
+  if (existsSync(inbox)) {
+    const wantedKeys = new Set([...canonPages, ...schedulePages].map(pageKey));
+    const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
+    mkdirSync(join(inbox, "ingested"), { recursive: true });
+    for (const f of readdirSync(inbox).filter((f) => f.endsWith(".page.json"))) {
+      const path = join(inbox, f);
+      let snap: PageSnapshot;
+      try {
+        snap = parsePageSnapshot(JSON.parse(readFileSync(path, "utf8")), f);
+      } catch (e) {
+        console.error(`extension page ${f}: unreadable (${(e as Error).message}); left in place`);
+        continue;
+      }
+      const cur = latest.get(pageKey(snap.url));
+      const d = decideIngest(snap, wantedKeys, cur && { hash: cur.hash, captured_at: cur.snapshot.captured_at });
+      if (d.snapshot) {
+        writeJsonFile(`${PAGES_DIR}/${pageFileName(snap.url)}`, d.snapshot);
+        results.push({ url: snap.url, status: "fetched", detail: `from the extension: ${d.detail}`, requests: 0, role: canonPages.some((u) => pageKey(u) === pageKey(snap.url)) ? "canon" : "schedule", hash: snapshotHash(d.snapshot), changed: true });
+      }
+      renameSync(path, join(inbox, "ingested", `${Date.now()}-${f}`));
+      ingested.push({ ...d, file: f, snapshot: undefined });
+      console.log(`extension page   ${snap.url}  ${d.action}: ${d.detail}`);
+    }
+  }
+
+  // Drafts. Config the user wrote wins: a draft only fills a missing file, else it's compared and reported.
+  const canonEntities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
+  const draft = sponsorsDraft(canonEntities, channels, announcement);
+  let sponsorReport: ReturnType<typeof compareSponsors> | null = null;
+  if (!existsSync(SPONSORS_PATH)) {
+    writeJsonFile(SPONSORS_PATH, draft.sponsors);
+    console.log(`wrote ${SPONSORS_PATH} (draft: ${Object.keys(draft.sponsors).length} channels; check it)`);
+  } else {
+    sponsorReport = compareSponsors(draft.sponsors, readSponsors(SPONSORS_PATH));
+    console.log(`sponsors draft vs ${SPONSORS_PATH}: ${sponsorReport.matched}/${sponsorReport.n} channels agree on sponsor and kind`);
+    for (const r of sponsorReport.rows.filter((r) => !r.match)) console.log(`  ${r.channel}: yours ${r.hand}, draft ${r.draft}`);
+  }
+  if (draft.tags_without_channel.length) console.log(`Devpost sponsors with no channel: ${draft.tags_without_channel.join(", ")}`);
+  if (draft.channels_without_tag.length) console.log(`sponsor channels with no Devpost prize: ${draft.channels_without_tag.join(", ")}`);
+  const proposals = organizersFromRestricted(messages, announcement);
+  const known = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
+  const newOnes = proposals.filter((p) => !known.has(p.id));
+  console.log(`organizers from restricted-posting channels: ${proposals.length} posters; ${proposals.length - newOnes.length} already in ${ORGANIZERS_PATH}${known.size ? ` (${known.size} listed)` : ""}${newOnes.length ? `, ${newOnes.length} new (in ${DISCOVERED_PATH}, not applied)` : ""}`);
+  if (!existsSync(ORGANIZERS_PATH) && proposals.length && annSource.startsWith("Slack")) {
+    writeJsonFile(ORGANIZERS_PATH, proposals.map((p) => ({ id: p.id, why: ["restricted-posting channel"] })));
+    console.log(`wrote ${ORGANIZERS_PATH} from the restricted-posting channels (confirm once)`);
+  }
+  writeJsonFile(DISCOVERED_PATH, {
+    synced_at: new Date().toISOString(),
+    announcement: { source: annSource, channels: [...announcement] },
+    devpost: { root: devpostRoot, why: devpostWhy, other: found.devpost_other },
+    canon_pages: canonPages,
+    schedule: found.schedule,
+    fetch: results,
+    extension_pages: ingested,
+    sponsors: { draft: draft.sponsors, tags_without_channel: draft.tags_without_channel, channels_without_tag: draft.channels_without_tag, vs_config: sponsorReport },
+    organizers: { proposals: newOnes, known_matched: proposals.length - newOnes.length },
+  });
+  console.log(`wrote ${DISCOVERED_PATH}`);
+  const stuck = results.filter((r) => r.status !== "fetched");
+  for (const r of stuck.filter((r) => r.status === "needs_extension" || r.status === "refused")) console.log(`the extension reads it in a background tab on the next "Sync this event": ${r.url}`);
+  const have = new Set(loadPages(PAGES_DIR).pages.map((p) => pageKey(p.snapshot.url)));
+  const lost = results.filter((r) => r.role === "canon" && r.status !== "fetched" && !have.has(pageKey(r.url)));
+  for (const r of lost) console.error(`no snapshot at all for canon page ${r.url}`);
+  const changed = results.filter((r) => r.changed && r.role === "canon");
+  if (!values.canon || values.offline || !changed.length) {
+    if (changed.length) console.log(`canon pages changed (${changed.map((r) => r.url).join(", ")}); no model was called. To re-read them: bun run hr sync --canon, or bun run hr canon --judge`);
+    return lost.length ? 1 : 0;
+  }
+  return canon(["--judge", ...(values.yes ? ["--yes"] : [])]);
+}
+
+interface FitCached {
+  ranked: Ranked[];
+  usage: Usage;
+  calls: number;
+}
+
+type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
+
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+  const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
+  const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+  const client = anthropicClient(opts.guard);
+  const events: PlanEvent[] = [];
+  for await (const e of planStream({
+    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases),
+    repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
+    repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
+    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache),
+    booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
+    joins: planJoins(input, ctx, opts.nowMs ?? Date.now()),
+    log: (l) => console.error(l),
+  })) {
+    if ("error" in e) console.error(`plan: ${e.section}: ${e.error}`);
+    events.push(e);
+    on(e);
+  }
+  const of = (section: string) => events.find((e) => e.section === section && !("error" in e)) as Extract<PlanEvent, { from: string }> | undefined;
+  if (!opts.fresh) {
+    if (of("tracks")?.from === "model") writeJsonFile(FIT_CACHE_PATH, fcache);
+    if (of("gaps")?.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
+  }
+  const done = events.at(-1) as Extract<PlanEvent, { section: "done" }>;
+  const timing = {
+    at: new Date().toISOString(),
+    via: opts.via,
+    ...(opts.fresh ? { fresh: true } : {}),
+    first: done.first,
+    total_ms: done.ms,
+    sections: Object.fromEntries(events.filter((e) => e.section !== "done").map((e) => [e.section, "error" in e ? { ms: e.ms, error: true } : { ms: e.ms, ...("from" in e ? { from: e.from } : {}) }])),
+    repo: !!input.repo,
+  };
+  mkdirSync(dirname(PLAN_TIMINGS_PATH), { recursive: true });
+  appendFileSync(PLAN_TIMINGS_PATH, JSON.stringify(timing) + "\n");
+  console.log(`plan: first section ${done.first ? `(${done.first.section}) in ${done.first.ms} ms` : "never"}; all in ${done.ms} ms (${Object.entries(timing.sections).map(([k, v]) => `${k} ${"from" in v ? v.from : "error" in v ? "error" : ""}`.trim()).join(", ")})`);
+  return events;
+}
+
+async function planCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" }, at: { type: "string" }, yes: { type: "boolean", default: false } } });
+  // A fixture's stack is the CLI string or a list of {name, used_for} (a used-for may hold commas).
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; targeted?: string[]; repo?: string } | null>(values.from, null) : null;
+  if (values.from && !dog) {
+    console.error(`${values.from} not found`);
+    return 2;
+  }
+  const idea = dog?.idea ?? values.idea;
+  if (!idea) {
+    console.error("--idea or --from is required");
+    return 2;
+  }
+  const input: PlanInput = { idea, stack: values.stack !== undefined || typeof dog?.stack !== "object" ? parseStack(values.stack ?? (dog?.stack as string | undefined)) : dog.stack.length ? dog.stack : null };
+  const repoUrl = values.repo ?? dog?.repo;
+  if (repoUrl) input.repo = repoUrl;
+  // The board's stream (P2), run in-process: the same steps, caches and timing line.
+  const ctx: PlanContext = { entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
+    return 2;
+  }
+  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh, nowMs, guard: new CostGuard("plan", values.yes!) }, () => {});
+  const tr = events.find((e) => e.section === "tracks");
+  const ge = events.find((e) => e.section === "gaps");
+  if (!tr || "error" in tr || tr.section !== "tracks") {
+    console.error("couldn't rank tracks (see above)");
+    return 1;
+  }
+  if (!ge || "error" in ge || ge.section !== "gaps") {
+    console.error("couldn't check requirements (see above)");
+    return 1;
+  }
+  const r = { items: tr.tracks, from: tr.from, ms: tr.ms, usage: tr.usage };
+  const g = { gaps: ge.gaps, checked: ge.checked, facts: ge.facts, from: ge.from, ms: ge.ms, usage: ge.usage };
+  const repoNote = ge.repo ? `repo ${ge.repo.url} @ ${ge.repo.commit.slice(0, 7)}: ${ge.facts.repo} lines naming the likely tracks' products` : "";
+
+  // Every line is wrapped at spaces here, so the terminal never soft-wraps one (a soft wrap can lose the space).
+  const width = cliWidth();
+  const out = (line: string) => console.log(wrapText(line, width));
+  out(`Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
+  out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
+  let shown = "";
+  for (const t of r.items) {
+    if (t.fit === "possible" && shown !== "possible") out("\n  Also possible");
+    shown = t.fit;
+    out(`\n  ${t.name}   ${t.fit === "likely" ? "likely fits" : "possible"}${t.capped ? " (ranked likely; the title's product isn't in your description or stack)" : ""}${t.label ? `   (${t.label})` : ""}`);
+    out(`    ${t.reason}`);
+    out(`    "${t.quote}"  ${t.source_url}`);
+    for (const s of t.steps) out(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
+    for (const x of g.gaps.filter((x) => x.track_id === t.track_id)) {
+      out(`    Gap: ${x.gap}`);
+      out(`      page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
+      for (const p of x.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+    }
+    if (t.fit === "likely" && t.evidence === "stated" && !g.gaps.some((x) => x.track_id === t.track_id)) out(`    Gaps: none found. That says nothing about whether the requirements are met.`);
+  }
+  // P3–P5, as of --at (or now).
+  const at = (iso: string | number) => new Date(typeof iso === "number" ? iso * 1000 : iso).toLocaleString("en-US", { timeZone: ctx.event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const sec = <K extends "credits" | "sessions" | "people">(k: K) => events.find((e) => e.section === k) as Extract<PlanEvent, { section: K }> | undefined;
+  out(`\nAs of ${at(nowMs / 1000)}${values.at ? " (--at)" : ""}`);
+  const cr = sec("credits");
+  if (cr && !("error" in cr)) {
+    out(`\nCredits (${cr.credits.length}${cr.dropped ? `; ${cr.dropped} dropped: quote not found in its posts` : ""}), joined on: ${cr.sponsors.map((x) => `${x.sponsor} (${x.why.join("; ")})`).join(", ") || "no sponsor"}`);
+    if (!cr.credits.length) out("  No offer posted so far matches your stack");
+    for (const c of cr.credits) {
+      out(`  ${c.sponsor}: ${c.value}   ${c.limit ? `closes ${at(c.limit)}` : c.limit_unclear ? "limit unclear" : "no stated limit"}${c.claim ? ` · ${c.claim}` : ""}${c.promo_code ? ` · code ${c.promo_code}` : ""}`);
+      out(`    "${c.quote}"  ${c.source_url}`);
+    }
+  } else out(`\nCredits: failed`);
+  const se = sec("sessions");
+  if (se && !("error" in se)) {
+    out(`\nSessions (${se.sessions.length}), before ${se.deadline ? `${se.deadline.name}, ${at(se.deadline.at)}` : "no known submission deadline"}`);
+    if (!se.sessions.length) out("  No upcoming session from these sponsors before the submission deadline");
+    for (const x of se.sessions) out(`  ${at(x.start)} · ${x.sponsor}: "${x.quote}"  ${x.source_url}`);
+  } else out(`\nSessions: failed`);
+  const blocks = boothBlocks(boothQuestions(r.items, input, g.gaps));
+  const pe = sec("people");
+  const people = pe && !("error" in pe) ? pe.people : [];
+  out("\nBooths and reps: one block per sponsor, the reps (People) under its questions");
+  for (const sponsor of [...new Set([...blocks.map((b) => b.sponsor), ...people.map((p) => p.sponsor)])]) {
+    const b = blocks.find((x) => x.sponsor === sponsor);
+    out(`  ${sponsor}${b ? `: ${b.text}` : ""}`);
+    for (const q of b?.questions ?? []) out(`    ${q.grounds}  ${q.source_url}`);
+    const p = people.find((x) => x.sponsor === sponsor);
+    if (p && !p.reps.length) out("    Reps: no rep of a targeted track has posted yet");
+    for (const rep of p?.reps ?? []) out(`    ${rep.likely ? "Likely staff" : "Rep"}: ${rep.name}${rep.accounts > 1 ? ` (${rep.accounts} accounts)` : ""}, ${rep.posts} post${rep.posts === 1 ? "" : "s"}, first ${at(rep.first)}: "${rep.quote}"  ${rep.source_url}\n      matched: ${rep.signals.join("; ")}`);
+  }
+  if (pe && "error" in pe) out("  People: failed");
+  if (dog?.targeted?.length) {
+    const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
+    out(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
+  }
+  return 0;
+}
+
+/** "Best Actor, claude for public" → track ids: each part is an id or a unique case-insensitive part of a name. */
+function matchTracks(entities: Entity[], parts: string[]): { ids: string[] } | { error: string } {
+  const tracks = entities.filter((x) => x.kind === "track");
+  const ids: string[] = [];
+  for (const part of parts.map((p) => p.trim()).filter(Boolean)) {
+    const hits = tracks.filter((t) => t.id === part || (t.name.value ?? "").toLowerCase().includes(part.toLowerCase()));
+    if (hits.length !== 1) return { error: `"${part}" matches ${hits.length ? hits.map((t) => t.name.value).join(", ") : "no track"}; give more of the name` };
+    ids.push(hits[0]!.id);
+  }
+  return { ids };
+}
+
+/** Ship's checklist (shiplist.ts) for the entered tracks, as of `nowMs`: the capture's posts by then, rendered as the
+ *  board renders them. */
+/** Each canon page's first snapshot (the baseline) and every later field change with its window (merge §3). With
+ *  no replaced records, the baseline is today's canon and there are no changes. */
+function canonTimeline(): { baseline: Entity[]; changes: PageChange[] } {
+  const byPage = new Map<string, CanonPage[]>();
+  for (const p of [...readJsonFile<CanonPage[]>(CANON_HISTORY_PATH, []), ...readJsonFile<CanonPage[]>(CANON_PATH, [])]) byPage.set(pageKey(p.url), [...(byPage.get(pageKey(p.url)) ?? []), p]);
+  const baseline: Entity[] = [], changes: PageChange[] = [];
+  for (const recs of byPage.values()) {
+    baseline.push(...recs[0]!.entities);
+    for (let k = 1; k < recs.length; k++) changes.push(...mergePageChanges(recs[k - 1]!, recs[k]!));
+  }
+  return { baseline, changes };
+}
+
+function shipListAt(entities: Entity[], event: EventConfig, entered: string[], nowMs: number): ShipList {
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  const person = loadPersonKey();
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, loadRepIndex(person).confirmed);
+  // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
+  const t = canonTimeline();
+  return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
+}
+
+async function shipCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" }, at: { type: "string" }, yes: { type: "boolean", default: false } } });
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string; entered?: string[] } | null>(values.from, null) : null;
+  if (!dog) {
+    console.error(values.from ? `${values.from} not found` : "--from is required");
+    return 2;
+  }
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at: not a date: ${values.at}`);
+    return 2;
+  }
+  const repo = values.repo ?? dog.repo;
+  const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
+  const m = matchTracks(entities, values.enter !== undefined ? values.enter.split(",") : (dog.entered ?? []));
+  if ("error" in m) {
+    console.error(`--enter: ${m.error}`);
+    return 2;
+  }
+  if (!m.ids.length) {
+    console.error('--enter is required (or "entered" in the fixture): the tracks you plan to enter, e.g. --enter "Best Actor, Claude for Public Benefit"');
+    return 2;
+  }
+  const event = readEvent();
+  const at = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const out = (line: string) => console.log(wrapText(line, cliWidth()));
+  const list = shipListAt(entities, event, m.ids, nowMs);
+  const left = list.deadline ? Date.parse(list.deadline.at) - nowMs : null;
+  out(`Ship at ${at(new Date(nowMs).toISOString())}: ${m.ids.length} tracks you plan to enter`);
+  if (list.deadline) {
+    const d = list.deadline;
+    out(`${left! > 0 ? "Submissions close" : "Submissions closed"} ${at(d.at)}${left! > 0 ? ` · in ${durationText(left!)}` : ""}${d.was ? ` · Devpost said ${at(d.was.at)}` : ""}`);
+    out(`  "${d.quote}"  ${d.from === "slack" ? `#${d.channel} ` : ""}${d.source_url}`);
+    if (d.was) out(`  Devpost: "${d.was.quote}"  ${d.was.source_url}`);
+  } else out("No submission deadline found on the pages or in the posts read.");
+  const lastHour = left !== null && left > 0 && left < 3_600_000;
+  if (lastHour) out("Last hour: Ship shows the countdown and the unticked Required items; the other groups fold to one line each.");
+
+  if (repo) {
+    const { tracks } = shipTracks(entities, m.ids, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+    const input = { idea: dog.idea, stack: typeof dog.stack === "string" ? parseStack(dog.stack) : dog.stack.length ? dog.stack : null, repo };
+    const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+    const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+    const r = await recheckGaps(anthropicClient(new CostGuard("ship", values.yes!)), input, tracks, entities, gcache, store);
+    if ("error" in r) {
+      console.error(`couldn't recheck gaps: ${r.error}`);
+      return 1;
+    }
+    writeJsonFile(GAPS_CACHE_PATH, gcache);
+    writeJsonFile(SHIP_GAPS_PATH, store);
+    out(`\nRecheck gaps: ${r.repo} @ ${r.commit.slice(0, 7)}, the latest commit as of ${at(r.latest_at)}. ${r.from === "reused" ? `Checked ${at(r.checked_at)}; the commit hasn't changed since, so that result stands.` : `Checked ${at(r.checked_at)}.`} ${r.checked} stated requirements and entry steps, ${r.repo_lines} repo lines.`);
+    out(r.gaps.length ? `Open gaps (${r.gaps.length})` : !r.checked ? "Open gaps: nothing to check. None of these tracks states a requirement or entry step on the pages read." : "Open gaps: none found. That says nothing about whether the requirements are met.");
+    for (const g of r.gaps) {
+      out(`  ${g.track}\n    ${g.gap}`);
+      out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
+      for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+    }
+  }
+
+  const item = (x: ShipItem) => {
+    out(`    [ ] ${x.label}${x.at ? `   (${at(x.at)}${x.until ? `–${new Date(x.until).toLocaleString("en-US", { timeZone: event.timezone, hour: "numeric", minute: "2-digit" })}` : ""})` : ""}`);
+    if (x.quote) out(`        "${x.quote}"`);
+    out(`        ${x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? `added in #${x.channel}  ${x.source_url}` : x.source_url}`);
+  };
+  out(`\nRequired to submit (${list.required.length})`);
+  list.required.forEach(item);
+  const tracksN = list.tracks.reduce((n, t) => n + t.items.length, 0);
+  out(`\nFor the tracks you entered (${tracksN})${lastHour ? "   folded in the last hour" : ""}`);
+  for (const t of list.tracks) {
+    out(`  ${t.name}${t.items.length ? "" : "   (no requirements or entry steps stated)"}`);
+    t.items.forEach(item);
+  }
+  out(`\nJudging (${list.judging.length})${lastHour ? "   folded in the last hour" : ""}`);
+  list.judging.forEach(item);
+  return 0;
+}
+
+const readProducts = () => readJsonFile<{ products: Product[] }>(PRODUCTS_PATH, { products: [] }).products;
+
+function printDraft(d: PrefillDraft, out: (line: string) => void) {
+  const src = (s: PrefillDraft["description"]["sources"]) => s.map((x) => `      ${x.source}: "${x.quote}"${x.url ? `  ${x.url}` : ""}`);
+  out(`Description (draft)\n  ${d.description.text}`);
+  for (const l of src(d.description.sources)) out(l);
+  out(`\nStack (drafts; confirm each before it's saved)`);
+  for (const it of d.stack) {
+    out(`  ${it.name}${it.used_for ? `: ${it.used_for}` : "   (no used-for: no README or code line says what it does)"}${it.origin === "sponsor_pass" ? "   [sponsor product found in the code]" : ""}`);
+    for (const l of src(it.sources)) out(l);
+  }
+}
+
+async function prefillCli(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { repo: { type: "string" }, yes: { type: "boolean", default: false } } });
+  if (!values.repo) {
+    console.error("--repo https://github.com/<owner>/<repo> is required");
+    return 2;
+  }
+  const repo = checkoutRepo(values.repo);
+  if ("error" in repo) {
+    console.error(repo.error);
+    return 1;
+  }
+  const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+  const t0 = Date.now();
+  const r = await prefillDraft(anthropicClient(new CostGuard("prefill", values.yes!)), repo, repoTexts(repo), cache, readProducts());
+  if ("error" in r) {
+    console.error(`couldn't draft: ${r.error}`);
+    return 1;
+  }
+  writeJsonFile(PREFILL_CACHE_PATH, cache);
+  const out = (line: string) => console.log(wrapText(line, cliWidth()));
+  out(`Prefill from ${repo.url} @ ${repo.sha.slice(0, 7)} (${r.from}, ${Date.now() - t0} ms; ${r.facts} repo lines${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})\n`);
+  printDraft(r.draft, out);
+  return 0;
+}
+
+async function prefillEval(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "4" }, yes: { type: "boolean", default: false } } });
+  const set = readJsonFile<{ items: EvalItem[] } | null>(FIT_EVAL_SET_PATH, null);
+  const repos = readJsonFile<Record<string, string>>(PREFILL_REPOS_PATH, {});
+  const baseline = readJsonFile<{ canon: string; pair_hits: PairHit[] } | null>(FIT_BASELINE_PATH, null);
+  if (!set || !baseline) {
+    console.error(`needs ${FIT_EVAL_SET_PATH} and ${FIT_BASELINE_PATH}`);
+    return 2;
+  }
+  let items = set.items.filter((it) => repos[it.slug]);
+  if (values.limit) items = items.slice(0, Number(values.limit));
+  const products = readProducts();
+  // C: the model's draft alone. C+: with the sponsor-product pass (user 2026-11-06).
+  const stackOf = (d: PrefillDraft, run: "C" | "C+") => d.stack.filter((s) => run === "C+" || s.origin !== "sponsor_pass").map((s) => s.name);
+  const event = readEvent();
+  const entities = readJsonFile<CanonPage[]>(baseline.canon, []).flatMap((p) => p.entities);
+  const cards = trackCards(entities, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+  const system = fitSystemPrompt(event, cards);
+  const pcache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+  const fcache = readJsonFile<Record<string, FitCached>>(FIT_CACHE_PATH, {});
+  console.log(`${items.length} of ${set.items.length} winners link a GitHub repo (${PREFILL_REPOS_PATH}); canon ${baseline.canon}, ${cards.length} sponsor tracks`);
+  // Clone (or reuse) and read every repo first: free, and it tells the dry run how big each request is.
+  const prepared: { it: EvalItem; repo: Exclude<ReturnType<typeof checkoutRepo>, { error: string }>; texts: Map<string, string> }[] = [];
+  const unreadable: string[] = [];
+  for (const it of items) {
+    const repo = checkoutRepo(repos[it.slug]!);
+    if ("error" in repo) unreadable.push(`${it.slug}: ${repo.error}`);
+    else prepared.push({ it, repo, texts: repoTexts(repo) });
+  }
+  for (const u of unreadable) console.log(`  unreadable: ${u}`);
+  const sizes = prepared.map((p) => prefillRequest(prefillFacts(p.repo, p.texts)).length);
+  const cachedDrafts = prepared.filter((p) => pcache[prefillHashOf(p)]).length;
+  console.log(`${prepared.length} repos read; prefill request ${Math.min(...sizes)}–${Math.max(...sizes)} chars (mean ${Math.round(sizes.reduce((a, b) => a + b, 0) / Math.max(1, sizes.length))}); ${cachedDrafts} drafts cached`);
+  {
+    let fitTodo = 0;
+    let added = 0;
+    for (const p of prepared) {
+      const r = await prefillDraft(null, p.repo, p.texts, pcache, products);
+      if ("error" in r) continue;
+      added += r.added.length;
+      for (const run of ["C", "C+"] as const) if (!fcache[fitHash(system, fitRequest(p.it.description, stackOf(r.draft, run)))]) fitTodo++;
+    }
+    console.log(`sponsor-product pass: ${added} products added across the cached drafts; ${fitTodo} fit rankings not cached`);
+  }
+  if (values["dry-run"]) {
+    console.log("dry run: no API call");
+    return 0;
+  }
+  const guard = new CostGuard("prefill-eval", values.yes!);
+  const draftCalls = prepared.filter((p) => !pcache[prefillHashOf(p)]).map((p) => plannedCall(FIT_MODEL, PREFILL_SYSTEM, prefillRequest(prefillFacts(p.repo, p.texts)), PREFILL_SCHEMA, PREFILL_MAX_TOKENS));
+  if (!guard.preflight(draftCalls)) return 2;
+  console.log("prefill-eval: fit rankings for new drafts are estimated as they run, and stop at the same limit");
+  const client = anthropicClient(guard);
+  if (!client) return 2;
+  let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  let calls = 0;
+  const failed: string[] = [];
+  const drafts = new Map<string, PrefillDraft>();
+  let next = 0;
+  const worker = async () => {
+    while (next < prepared.length) {
+      const p = prepared[next++]!;
+      const r = await prefillDraft(client, p.repo, p.texts, pcache, products);
+      if ("error" in r) {
+        failed.push(`prefill ${p.it.slug}: ${r.error}`);
+        continue;
+      }
+      if (r.usage) {
+        usage = sumUsage([usage, r.usage]);
+        calls++;
+      }
+      drafts.set(p.it.slug, r.draft);
+      for (const stack of new Set([JSON.stringify(stackOf(r.draft, "C")), JSON.stringify(stackOf(r.draft, "C+"))])) {
+      const request = fitRequest(p.it.description, JSON.parse(stack));
+      const hash = fitHash(system, request);
+      if (!fcache[hash]) {
+        const f = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request, check: (x) => checkFit(x, cards) });
+        usage = sumUsage([usage, f.usage]);
+        calls += f.calls;
+        if ("error" in f) failed.push(`fit ${p.it.slug}: ${f.error}`);
+        else fcache[hash] = { ranked: f.value, usage: f.usage, calls: f.calls };
+      }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+  writeJsonFile(PREFILL_CACHE_PATH, pcache);
+  writeJsonFile(FIT_CACHE_PATH, fcache);
+  console.log(formatUsage(calls, usage, FIT_MODEL));
+  for (const f of failed) console.error(`failed: ${f}`);
+  // (a) Built With recall, for the model's draft alone (C) and with the sponsor-product pass (C+)
+  const done = prepared.filter((p) => drafts.has(p.it.slug));
+  const bwOf = (run: "C" | "C+") => done.map((p) => scoreBuiltWith(p.it.slug, p.it.built_with ?? [], stackOf(drafts.get(p.it.slug)!, run), products));
+  const scores = { C: bwOf("C"), "C+": bwOf("C+") };
+  const added = Object.fromEntries(done.map((p) => [p.it.slug, drafts.get(p.it.slug)!.stack.filter((x) => x.origin === "sponsor_pass").map((x) => ({ name: x.name, sources: x.sources }))]).filter(([, a]) => (a as unknown[]).length));
+  const bw = { C: builtWithReport(scores.C), "C+": builtWithReport(scores["C+"]) };
+  console.log(`\n(a) Built With recall, ${bw.C.projects} projects with a Built With list, ${bw.C.tags} tags. Sponsor-product pass: ${Object.values(added).flat().length} products added to ${Object.keys(added).length} projects.`);
+  for (const run of ["C", "C+"] as const) {
+    const r = bw[run];
+    console.log(`  ${run === "C" ? "model draft (C)        " : "with sponsor pass (C+) "}strict ${fmt(r.strict)}, loose ${fmt(r.loose)}, loose + alias table ${fmt(r.aliased)}`);
+  }
+  // (b) Fit with each drafted stack in place of Built With, paired with the baseline's run B on the same pairs
+  const byName = new Map(cards.map((c) => [c.name, c]));
+  const hitsOf = (run: "C" | "C+") => {
+    const m = new Map<string, { C3: boolean; C5: boolean }>();
+    for (const p of prepared) {
+      const d = drafts.get(p.it.slug);
+      const ranked = d ? fcache[fitHash(system, fitRequest(p.it.description, stackOf(d, run)))]?.ranked : undefined;
+      for (const prize of p.it.won) {
+        const card = byName.get(prize);
+        if (!card) continue;
+        const ids = (ranked ?? []).map((r) => r.track_id);
+        m.set(`${p.it.slug}|${prize}`, { C3: ids.slice(0, 3).includes(card.id), C5: ids.slice(0, FIT_TOP).includes(card.id) });
+      }
+    }
+    return m;
+  };
+  const fit = { C: pairedVsBaseline(baseline.pair_hits, hitsOf("C")), "C+": pairedVsBaseline(baseline.pair_hits, hitsOf("C+")) };
+  console.log(`\n(b) Fit with the drafted stack in place of Built With, ${fit.C.pairs} won sponsor-track pairs of ${baseline.pair_hits.length} (projects with a readable repo), paired with the baseline's run B on the same pairs (95% CI: Agresti–Min paired):`);
+  for (const run of ["C", "C+"] as const) for (const r of fit[run].paired) console.log(`  ${formatPaired(r, run)}`);
+  console.log(`  whole baseline for reference: B recall@3 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B3).length, n: baseline.pair_hits.length })}, recall@5 ${fmt({ hits: baseline.pair_hits.filter((p) => p.B5).length, n: baseline.pair_hits.length })}`);
+  if (fit.C.not_in_baseline.length) console.log(`  not in the baseline (skipped): ${fit.C.not_in_baseline.join(", ")}`);
+  writeJsonFile(PREFILL_EVAL_PATH, { built_with: bw, scores, added, fit, failed, unreadable, usage, calls, model: FIT_MODEL, written_at: new Date().toISOString(), limit: values.limit ?? null });
+  console.log(`\nwrote ${PREFILL_EVAL_PATH}`);
+  return failed.length ? 1 : 0;
+
+  function prefillHashOf(p: (typeof prepared)[number]) {
+    return prefillHash(prefillRequest(prefillFacts(p.repo, p.texts)));
+  }
+}
+
+async function fitEval(args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" }, "set-baseline": { type: "boolean", default: false }, yes: { type: "boolean", default: false } },
+  });
+  const event = readEvent();
+  const canonPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
+  const pages = readJsonFile<CanonPage[]>(canonPath, []);
+  const entities = pages.flatMap((p) => p.entities);
+  if (!entities.some((e) => e.kind === "track")) {
+    console.error(`no tracks in ${canonPath}: run \`bun run hr canon${values.fixtures ? " --fixtures" : ""}\` first`);
+    return 2;
+  }
+  const set = readJsonFile<{ items: EvalItem[] } | null>(FIT_EVAL_SET_PATH, null);
+  if (!set) {
+    console.error(`no eval set at ${FIT_EVAL_SET_PATH}`);
+    return 2;
+  }
+  const cards = trackCards(entities, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+  const system = fitSystemPrompt(event, cards);
+  const names = new Set(entities.filter((e) => e.kind === "track").map((e) => e.name.value ?? ""));
+  let items = set.items.filter((it) => it.won.some((w) => cards.some((c) => c.name === w)));
+  if (values.limit) items = items.slice(0, Number(values.limit));
+  const jobs = items.flatMap((it) =>
+    (["A", "B"] as const).map((run) => {
+      const request = fitRequest(it.description, run === "B" ? it.built_with : null);
+      return { it, run, request, hash: fitHash(system, request) };
+    }),
+  );
+  const cache = readJsonFile<Record<string, FitCached>>(FIT_CACHE_PATH, {});
+  const todo = jobs.filter((j) => !cache[j.hash]);
+  console.log(`${items.length} projects with a won sponsor track, ${cards.length} sponsor tracks from ${canonPath}; model ${FIT_MODEL}, effort ${FIT_EFFORT}; system ${system.length} chars; ${jobs.length} rankings, ${todo.length} not cached`);
+  if (values["dry-run"]) {
+    console.log(`\n--- system prompt (first 3000 chars) ---\n${system.slice(0, 3000)}\n--- request, run B, first project ---\n${jobs[1]?.request}\n\ndry run: no API call`);
+    return 0;
+  }
+  let client: Anthropic | null = null;
+  if (todo.length) {
+    const guard = new CostGuard("fit-eval", values.yes!);
+    if (!guard.preflight(todo.map((j) => plannedCall(FIT_MODEL, system, j.request, FIT_SCHEMA, FIT_MAX_TOKENS)))) return 2;
+    client = anthropicClient(guard);
+    if (!client) return 2;
+  }
+  let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  let calls = 0;
+  const failed: string[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const j = todo[next++]!;
+      const r = await callChecked(client!, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request: j.request, check: (p) => checkFit(p, cards) });
+      usage = sumUsage([usage, r.usage]);
+      calls += r.calls;
+      if ("error" in r) failed.push(`${j.run} ${j.it.slug}: ${r.error}`);
+      else cache[j.hash] = { ranked: r.value, usage: r.usage, calls: r.calls };
+      if ((Object.keys(cache).length + failed.length) % 20 === 0) writeJsonFile(FIT_CACHE_PATH, cache);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Number(values.concurrency)) }, worker));
+  if (todo.length) {
+    writeJsonFile(FIT_CACHE_PATH, cache);
+    console.log(formatUsage(calls, usage, FIT_MODEL));
+  }
+  for (const f of failed) console.error(`failed: ${f}`);
+  const runMap = (run: "A" | "B") => new Map(jobs.filter((j) => j.run === run && cache[j.hash]).map((j) => [j.it.slug, cache[j.hash]!.ranked]));
+  // Score over the whole set: projects that won only event-level prizes add no pairs but are listed (D23).
+  const report = scoreFit(values.limit ? items : set.items, cards, names, event, runMap("A"), runMap("B"));
+  console.log(`\n${formatFitReport(report)}`);
+  writeJsonFile(FIT_EVAL_PATH, { ...report, model: FIT_MODEL, effort: FIT_EFFORT, canon: canonPath, written_at: new Date().toISOString() });
+  console.log(`\nwrote ${FIT_EVAL_PATH}`);
+  if (values.limit) {
+    console.log("\nfit gate: not applied to a --limit run (it needs the whole pair set)");
+    return failed.length ? 1 : 0;
+  }
+  if (values["set-baseline"]) {
+    if (failed.length) {
+      console.error("not setting a baseline from a run with failed rankings");
+      return 1;
+    }
+    writeJsonFile(FIT_BASELINE_PATH, { canon: canonPath, model: FIT_MODEL, effort: FIT_EFFORT, written_at: new Date().toISOString(), pair_hits: report.pair_hits });
+    console.log(`wrote ${FIT_BASELINE_PATH} (${report.pair_hits.length} pairs): later runs are gated against it`);
+    return 0;
+  }
+  const base = readJsonFile<{ canon: string; written_at: string; pair_hits: PairHit[] } | null>(FIT_BASELINE_PATH, null);
+  if (!base) {
+    console.log(`\nfit gate: no baseline at ${FIT_BASELINE_PATH}; set it with \`bun run hr fit-eval --fixtures --set-baseline\``);
+    return failed.length ? 1 : 0;
+  }
+  const gate = fitGate(report.pair_hits, base.pair_hits);
+  console.log(`\n${formatFitGate(gate, `${base.canon}, ${base.written_at.slice(0, 10)}`)}`);
+  return failed.length || !gate.passes ? 1 : 0;
+}
+
 function receiptPreview(args: string[]): number {
-  const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: "config/sponsors.json" } } });
+  const { values } = parseArgs({ args, options: { sponsors: { type: "string", default: SPONSORS_PATH } } });
   const run = readJsonFile<ClassifyRun | null>(RUN_PATH, null);
   if (!run) {
     console.error(`${RUN_PATH} not found: run \`bun run hr classify\` first`);
@@ -597,7 +2026,8 @@ function receiptPreview(args: string[]): number {
   const messages = readMessages();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
-  const all = Object.values(sponsors);
+  const person = loadPersonKey();
+  const reps = loadRepIndex(person);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
   const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
   if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
@@ -609,7 +2039,8 @@ function receiptPreview(args: string[]): number {
     messages,
     sponsors,
     channels: last?.channels ?? [],
-    role: (m) => posterRole(m, sponsors[m.channel_name], organizerIds, all),
+    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
+    person,
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
   const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";
@@ -618,9 +2049,86 @@ function receiptPreview(args: string[]): number {
   return 0;
 }
 
+async function personLinks(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const dir = fromCaller(values.export!);
+  const usersFile = join(dir, "users.json");
+  const users = loadExport(dir).users;
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  // Roles from each account's own posts (no links yet); a link only merges accounts already on one sponsor's side.
+  const role = rolesById(messages, sponsors, loadOrganizerIds());
+  const sides = new Map<string, Set<string>>();
+  for (const m of messages) {
+    const s = sponsors[m.channel_name];
+    if (!s || s.sponsor === "event" || !m.author_id || m.author_kind === "bot" || role(m) !== "sponsor-side") continue;
+    sides.set(s.sponsor, (sides.get(s.sponsor) ?? new Set()).add(m.author_id));
+  }
+  type Raw = SnapshotUser;
+  const evidence = new Map<string, AccountEvidence>();
+  const avatars: PersonLinksFile["avatars"] = {};
+  const account = async (id: string): Promise<AccountEvidence> => {
+    if (evidence.has(id)) return evidence.get(id)!;
+    const raw = (users.get(id) as Raw | undefined) ?? { id };
+    const p = raw.profile ?? {};
+    const e = profileEvidence(raw);
+    // Default avatars are never fetched: they can't link anyone (people.ts linkEvidence).
+    if (e.custom_image && p.image_192) {
+      const h = await avatarHashes(p.image_192);
+      if ("error" in h) console.error(`person-links: ${id}: avatar not hashed (${h.error})`);
+      else (e.avatar = h), (avatars[id] = h);
+    }
+    evidence.set(id, e);
+    return e;
+  };
+  const checked: PersonLinksFile["checked"] = [];
+  const links: PersonLink[] = [];
+  let closest: number | null = null;
+  for (const [sponsor, ids] of [...sides].sort()) {
+    if (ids.size < 2) continue;
+    const list = [...ids].sort();
+    checked.push({ scope: `sponsor-side for ${sponsor}`, accounts: list });
+    for (let i = 0; i < list.length; i++)
+      for (let j = i + 1; j < list.length; j++) {
+        const [a, b] = [await account(list[i]!), await account(list[j]!)];
+        const ev = linkEvidence(a, b);
+        if (ev) links.push({ ids: [a.id, b.id], scope: `sponsor-side for ${sponsor}`, evidence: ev });
+        else if (a.avatar && b.avatar) closest = Math.min(closest ?? 256, hammingHex(a.avatar.dhash, b.avatar.dhash));
+      }
+  }
+  // The avatar threshold's margin: the closest pair of different people among every avatar hashed here.
+  const hashed = Object.entries(avatars);
+  let closestAny: number | null = null;
+  const linkedPair = new Set(links.map((l) => l.ids.join("|")));
+  for (let i = 0; i < hashed.length; i++)
+    for (let j = i + 1; j < hashed.length; j++) {
+      const ids = [hashed[i]![0], hashed[j]![0]].sort().join("|");
+      if (!linkedPair.has(ids)) closestAny = Math.min(closestAny ?? 256, hammingHex(hashed[i]![1].dhash, hashed[j]![1].dhash));
+    }
+  const all = [...users.values()] as Raw[];
+  const out: PersonLinksFile = {
+    snapshot: { file: "users.json", sha256: createHash("sha256").update(readFileSync(usersFile)).digest("hex") },
+    built_at: new Date().toISOString(),
+    rule_notes: [
+      `email: ${all.filter((u) => u.profile?.email).length} of ${all.length} accounts in this snapshot show one`,
+      ...(all.some((u) => u.profile?.company) ? [] : ["profile: users.json has no company field, so real name + title + company can't hold"]),
+      `avatar: identical bytes, or a 16x16 difference hash within ${AVATAR_MAX_BITS} of 256 bits; custom images only`,
+    ],
+    checked,
+    avatars,
+    links,
+  };
+  writeJsonFile(PERSON_LINKS_PATH, out);
+  console.log(`wrote ${PERSON_LINKS_PATH}: ${links.length} link${links.length === 1 ? "" : "s"} among ${checked.reduce((n, c) => n + c.accounts.length, 0)} accounts on ${checked.length} sponsors' sides (${hashed.length} avatars hashed)`);
+  for (const l of links) console.log(`  ${l.ids.join(" = ")}  ${l.scope}  ${JSON.stringify(l.evidence)}`);
+  for (const n of out.rule_notes) console.log(`  rule note: ${n}`);
+  console.log(`  closest unlinked avatars: ${closest ?? "none"} bits within a sponsor's side, ${closestAny ?? "none"} across all hashed (threshold ${AVATAR_MAX_BITS})`);
+  return 0;
+}
+
 function organizers(args: string[]): number {
   const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
-  const orgs = buildOrganizers(loadExport(values.export));
+  const orgs = buildOrganizers(loadExport(fromCaller(values.export!)));
   writeJsonFile(ORGANIZERS_PATH, orgs);
   const by = (w: string) => orgs.filter((o) => o.why.includes(w)).length;
   console.log(
@@ -636,10 +2144,11 @@ async function classify(args: string[]): Promise<number> {
     options: {
       "labeled-only": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      yes: { type: "boolean", default: false },
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
-      sponsors: { type: "string", default: "config/sponsors.json" },
+      sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
   const sponsors = readSponsors(values.sponsors!);
@@ -685,13 +2194,10 @@ async function classify(args: string[]): Promise<number> {
     return 0;
   }
 
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("classify", values.yes!);
+  if (!guard.preflight(todo.map((i) => plannedCall(MODEL, system, i.user, OUTPUT_SCHEMA, MAX_TOKENS)))) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   const errors: ClassifyError[] = [];
   const usages: Usage[] = [];
   let done = 0;
@@ -774,7 +2280,8 @@ function printDetails(r: ChannelReport): void {
     !r.dropped_on_load.length &&
     !r.author.mismatches.length &&
     !r.author.unverifiable.length &&
-    !r.unresolved_authors
+    !r.unresolved_authors &&
+    !r.no_text.length
   )
     return;
   console.log(`\n## ${r.channel_name} (${r.channel_id})`);
@@ -798,6 +2305,7 @@ function printDetails(r: ChannelReport): void {
     console.log(`no name in export for ${u.user} (${u.posts} posts): captured ${JSON.stringify(u.captured_names)}${ok ? ", check by hand" : " FAIL: not one consistent name"}`);
   }
   if (r.unresolved_authors) console.log(`grouped posts with no resolved author: ${r.unresolved_authors}`);
+  if (r.no_text.length) console.log(`found with no text (read while Slack still showed its loading placeholder): ${r.no_text.length}`);
 }
 
 function printLockedCoverage(sponsorsPath: string, rs: ChannelReport[]): void {
@@ -806,7 +2314,216 @@ function printLockedCoverage(sponsorsPath: string, rs: ChannelReport[]): void {
   const locked = Object.entries(sponsors).filter(([, v]) => !v.stretch).map(([k]) => k);
   const passed = new Set(rs.filter((r) => r.pass.recall).map((r) => r.channel_name));
   const todo = locked.filter((c) => !passed.has(c));
-  console.log(`\nlocked ${locked.length}: ${locked.length - todo.length} pass keyed recall` + (todo.length ? `; not yet: ${todo.join(", ")}` : ""));
+  const noText = rs.filter((r) => locked.includes(r.channel_name)).reduce((n, r) => n + r.no_text.length, 0);
+  console.log(`\nlocked ${locked.length}: ${locked.length - todo.length} pass keyed recall` + (todo.length ? `; not yet: ${todo.join(", ")}` : "") + (noText ? `; ${noText} posts found with no text` : ""));
 }
 
-process.exit(await main(process.argv.slice(2)));
+let args: string[];
+try {
+  const { slug, rest } = takeEventArg(process.argv.slice(2));
+  args = rest;
+  if (rest[0] && COMMANDS.includes(rest[0])) useEvent(slug);
+} catch (e) {
+  console.error((e as Error).message);
+  process.exit(2);
+}
+process.exit(
+  await main(args).catch((e) => {
+    // The spend guard (costguard.ts): a refused call ends the command; what it already wrote stays.
+    if (!(e instanceof CostRefused)) throw e;
+    console.error(e.message);
+    return 2;
+  }),
+);
+
+// Kept out of the grouping code's span (group.test.ts checks it never reads classifier output): Sessions read the
+// classifier's workshop items.
+/** P3–P5's joins (planjoin.ts) on this event's workspace data, read once per request. `nowMs` is the clock (the
+ *  server's, or `hr plan --at`). */
+function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullable<PlanSteps["joins"]> {
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  const person = loadPersonKey();
+  const reps = loadRepIndex(person);
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, reps.confirmed);
+  const products = readProducts();
+  const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
+  const nowSec = nowMs / 1000;
+  // Every Plan quote comes from the board's rendering of a post (plain text, as posted), never the raw markup.
+  const rendered = new Map<string, string>();
+  const shown = (m: Message) => rendered.get(m.id) ?? (rendered.set(m.id, plainText(m.text)), rendered.get(m.id)!);
+  return {
+    credits: (tracks) => {
+      const board = readJsonFile<BoardData | null>(BOARD_DATA_PATH, null);
+      const sp = set(tracks);
+      return { sponsors: sp, ...planCredits(board?.offers ?? [], sp, new Map(messages.map((m) => [m.permalink, shown(m)])), nowSec) };
+    },
+    sessions: (tracks) => {
+      const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event, nowMs).deadlines);
+      return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline, shown) };
+    },
+    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec, shown, reps),
+  };
+}
+
+/** Runs Plan's stream (planstream.ts) with the real ranker, repo and gap check, hands each event to `on`, then saves
+ *  what the model added to the caches and appends one timing line (PLAN_TIMINGS_PATH). `fresh` skips both caches
+ *  and saves nothing: it times an input as if it were new. */
+
+/** `hr rep-signals`: reps.ts's three signals over the capture, with the export filling what the capture can't hold
+ *  yet (emails; mention IDs before the parser kept them; who posted in hacker-only channels, which aren't synced
+ *  because their posts would reach the classifier). Every source is written into the file. */
+async function repSignals(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const dir = fromCaller(values.export!);
+  const exp = existsSync(join(dir, "users.json")) ? loadExport(dir) : null;
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const event = readEvent();
+  const messages = readMessages();
+  const person = loadPersonKey();
+  const organizers = readJsonFile<Organizer[]>(ORGANIZERS_PATH, []);
+  const organizerIds = new Set(organizers.map((o) => o.id));
+  const notes: string[] = [];
+
+  // Replies: every synced thread capture, the newest copy of each reply.
+  const replies = new Map<string, Message>();
+  const syncDirs = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => d.startsWith("sync-")).sort().map((d) => join(CAPTURES_DIR, d)) : [];
+  for (const f of threadCaptureFiles(syncDirs)) for (const t of parseThreadCaptureFile(JSON.parse(readFileSync(f, "utf8")), f).threads) for (const r of t.replies) replies.set(r.id, r);
+  const repliesSrc = replies.size ? `capture (${replies.size} thread replies from ${syncDirs.length} syncs)` : "not checked: no thread capture yet";
+
+  // Signal 1: emails in the users.json snapshot.
+  const users = exp ? [...exp.users.values()].map((u) => ({ id: u.id, email: (u as SnapshotUser).profile?.email })) : [];
+  const shown = users.filter((u) => u.email).length;
+  const withDomains = Object.values(sponsors).filter((s) => s.domains?.length).length;
+  const emailsSrc = exp ? `export (${join(dir, "users.json")}): ${shown} of ${users.length} accounts show an email` : "not checked: no users.json snapshot";
+  if (exp) notes.push(`email: ${shown} of ${users.length} accounts in users.json show an email; ${withDomains} sponsor${withDomains === 1 ? "" : "s"} list a domain in sponsors.json`);
+  const email = emailReps(users, sponsors);
+
+  // Signal 2: authority (D19) = admin/owner-backed organizer ids, plus any post in an authority channel.
+  const authorityIds = new Set(organizers.filter((o) => o.why.includes("admin") || o.why.includes("owner")).map((o) => o.id));
+  const caps = captureFiles([CAPTURES_DIR, ...syncDirs]).map((f) => loadCapture(f).capture);
+  const authorityChannels = new Set([...(event.authority_channels ?? []), ...caps.filter((c) => c.posting_restricted === true).map((c) => c.channel_name)]);
+  const captured = [...messages, ...replies.values()];
+  const capturedMentions = captured.filter((m) => m.mentions?.length);
+  let mentionPosts: MentionPost[];
+  let mentionsSrc: string;
+  if (capturedMentions.length || !exp) {
+    mentionPosts = capturedMentions.map((m) => ({ author_id: m.author_id ?? "", channel_name: m.channel_name, text: m.text, mentions: m.mentions!, permalink: m.permalink, reply: !!m.thread_ts }));
+    mentionsSrc = capturedMentions.length ? `capture (${capturedMentions.length} posts with mention IDs)` : "not checked: no capture carries mention IDs yet and no export";
+  } else {
+    const host = new URL(messages.find((m) => m.permalink)?.permalink ?? "https://slack.com").host;
+    const idOf = new Map([...exp.channelsById].map(([id, name]) => [name, id]));
+    mentionPosts = [...exp.channelsById.values()].filter((c) => existsSync(join(dir, c))).flatMap((c) =>
+      readChannel(exp, c)
+        .filter((m) => m.user && (rowClass(m) === "real" || rowClass(m) === "broadcast") && (m.text ?? "").includes("<@"))
+        .map((m) => ({
+          author_id: m.user!,
+          channel_name: c,
+          text: m.text ?? "",
+          mentions: [...(m.text ?? "").matchAll(/<@([UW][A-Z0-9]+)>/g)].map((x) => ({ id: x[1]!, label: x[0] })),
+          permalink: `https://${host}/archives/${idOf.get(c)}/p${m.ts.replace(".", "")}`,
+          reply: !isTopLevel(m),
+        })),
+    );
+    mentionsSrc = `export (${dir}): the capture carries no mention IDs yet (parser keeps them from the next sync)`;
+  }
+  const authority = mentionAuthority(authorityIds, authorityChannels);
+  const mention = mentionReps(mentionPosts, sponsors, authority, (id) => organizerIds.has(id));
+  notes.push(`organizer mention: ${authorityIds.size} admin/owner-backed organizer ids, ${authorityChannels.size} authority channel${authorityChannels.size === 1 ? "" : "s"}; ${mentionPosts.filter(authority).length} authority posts with a mention read; ${mention.ambiguous} line${mention.ambiguous === 1 ? "" : "s"} naming two or more sponsors skipped`);
+
+  // Hacker-only channels' posters: the newest authors-only capture of each (IDs and counts, no text), else the export
+  // (author IDs only). Signal 3's exclusion, or with signal 2b, its counter-signal.
+  const known = new Set([...messages.map((m) => m.channel_name), ...(exp ? exp.channelsById.values() : [])]);
+  const authorsFiles = new Map<string, AuthorsCaptureFile>();
+  for (const d of syncDirs) {
+    for (const f of readdirSync(d).filter((f) => /\.authors\.json$/.test(f)).sort()) {
+      const a = parseAuthorsCaptureFile(JSON.parse(readFileSync(join(d, f), "utf8")), f, new Set(Object.values(sponsors).map((s) => s.sponsor)));
+      authorsFiles.set(a.channel_name, a);
+      known.add(a.channel_name);
+    }
+  }
+  const hackerChannels = hackerOnlyChannels(known, event.hacker_only_channels);
+  const hackerCounts = new Map<string, { channel: string; posts: number }[]>();
+  const count = (who: string, channel: string, n: number) => {
+    const xs = hackerCounts.get(who) ?? [];
+    const x = xs.find((c) => c.channel === channel);
+    if (x) x.posts += n;
+    else xs.push({ channel, posts: n });
+    hackerCounts.set(who, xs);
+  };
+  const fromCapture = hackerChannels.filter((c) => authorsFiles.has(c));
+  const fromExport = hackerChannels.filter((c) => !authorsFiles.has(c) && exp && existsSync(join(dir, c)));
+  const unread = hackerChannels.filter((c) => !fromCapture.includes(c) && !fromExport.includes(c));
+  let hackerPosters: Set<string> | null = null;
+  const hackerSelf: { id: string; sponsor: string; channel: string; ts: number }[] = [];
+  let hackerSrc: string;
+  if (!hackerChannels.length) hackerSrc = "not checked: no hacker-only channel known";
+  else if (unread.length) hackerSrc = `not checked: ${unread.join(", ")} not in an authors-only capture or the export, so no one is likely staff`;
+  else {
+    for (const c of fromCapture) {
+      const a = authorsFiles.get(c)!;
+      for (const x of a.authors) count(person(x.id), c, x.posts);
+      for (const x of a.self_ids) hackerSelf.push({ id: x.id, sponsor: x.sponsor, channel: c, ts: Date.parse(a.finished_at) / 1000 });
+    }
+    for (const c of fromExport) {
+      const ms = readChannel(exp!, c).filter((m) => m.user && !m.bot_id && m.subtype !== "thread_broadcast");
+      for (const m of ms) count(person(m.user!), c, 1);
+      // As the page does: 2b's match runs over the text here, and only user ID and sponsor are kept. The time kept
+      // is the export's last post in the channel (when the source was read), never the post's own.
+      const end = Math.max(...ms.map((m) => Number(m.ts)));
+      for (const x of selfIdFlags(ms.map((m) => ({ author_id: m.user, text: m.text ?? "" })), selfIdSponsorList(sponsors))) hackerSelf.push({ id: x.id, sponsor: x.sponsor, channel: c, ts: end });
+    }
+    hackerPosters = new Set(hackerCounts.keys());
+    hackerSrc = [
+      fromCapture.length ? `authors-only capture: ${fromCapture.map((c) => { const a = authorsFiles.get(c)!; return `${c} (${a.threads.read} of ${a.threads.parents} threads read to the end${a.unidentified ? `, ${a.unidentified} posts with no sender ID` : ""})`; }).join(", ")}` : "",
+      fromExport.length ? `export (${dir}): author IDs only for ${fromExport.join(", ")}` : "",
+    ].filter(Boolean).join("; ");
+  }
+  if (hackerPosters) notes.push(`hacker-only: ${hackerPosters.size} people posted in ${hackerChannels.join(", ")}`);
+
+  // Signal 2b: each person's own posts and replies in sponsor channels.
+  const selfId = selfIdReps([...messages, ...replies.values()], sponsors, person, hackerSelf);
+  notes.push(`says they work there: ${selfId.length} person-sponsor pairs, ${hackerSelf.length} of the flags from hacker-only channels (no text kept)`);
+
+  const confirmedIds = new Map<string, Set<string>>();
+  for (const x of [...email, ...mention.hits]) confirmedIds.set(person(x.id), (confirmedIds.get(person(x.id)) ?? new Set()).add(x.sponsor));
+  const role = rolesById(captured, sponsors, organizerIds, person, confirmedIds);
+  const selfIdentified = new Set(selfId.map((x) => `${x.person}|${x.sponsor}`));
+  const likely = likelyReps({ messages, replies: [...replies.values()], items: readJsonFile<Item[]>(ITEMS_PATH, []), sponsors, role, person, hackerPosters, selfIdentified });
+
+  const file: RepSignalsFile = {
+    built_at: new Date().toISOString(),
+    sources: { emails: emailsSrc, mentions: mentionsSrc, replies: repliesSrc, hacker_only: hackerSrc },
+    hacker_only_channels: hackerChannels,
+    rule_notes: notes,
+    reps: repEvidence({ email, mention: mention.hits, selfId, likely, hacker: hackerCounts, person }),
+  };
+  mkdirSync(dirname(REP_SIGNALS_PATH), { recursive: true });
+  writeFileSync(REP_SIGNALS_PATH, JSON.stringify(file, null, 2) + "\n");
+  for (const [k, v] of Object.entries(file.sources)) console.log(`${k}: ${v}`);
+  for (const n of notes) console.log(n);
+  const base = rolesById(captured, sponsors, organizerIds, person);
+  for (const e of file.reps) {
+    const already = captured.some((m) => m.author_id && person(m.author_id) === e.person && sponsors[m.channel_name]?.sponsor === e.sponsor && base(m) === "sponsor-side");
+    const name = [...captured].reverse().find((m) => m.author_id && person(m.author_id) === e.person)?.author_name ?? e.person;
+    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind === "self-identified" ? `says they work there (${s.posts.map((p) => (p.phrase ? `“${p.phrase}”` : `in #${p.channel}`)).join("; ")})` : s.kind === "hacker channels" ? `counter-signal: ${s.channels.map((c) => `#${c.channel} ${c.posts}`).join(", ")}` : s.kind)).join("; ")}`);
+  }
+  console.log(`${file.reps.length} reps with a signal (${file.reps.filter((e) => e.standing === "confirmed").length} confirmed) → ${REP_SIGNALS_PATH}`);
+  return 0;
+}
+
+/** Changes whenever a file Plan or Ship reads changes (a sync, a canon run, rep signals): the board polls it and,
+ *  on a change, rebuilds the plan and shows what's new (D5). File times and sizes only, no contents. */
+function dataVersion(): string {
+  const parts = [CANON_PATH, CANON_HISTORY_PATH, MESSAGES_PATH, ITEMS_PATH, EVENT_PATH, SPONSORS_PATH, REP_SIGNALS_PATH, BOARD_DATA_PATH].map((p) => (existsSync(p) ? `${p}:${statSync(p).mtimeMs}:${statSync(p).size}` : `${p}:-`));
+  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/** D4's stale state: canon pages the last sync couldn't fetch (refused, login, error) and the extension didn't read
+ *  either, so Plan says "Devpost as of <the snapshot's time>". */
+function stalePages(): string[] {
+  const d = readJsonFile<{ fetch?: { url: string; status: string; role?: string }[]; extension_pages?: { url: string; action: string }[] }>(DISCOVERED_PATH, {});
+  const read = new Set((d.extension_pages ?? []).filter((x) => x.action === "saved" || x.action === "same").map((x) => pageKey(x.url)));
+  return (d.fetch ?? []).filter((r) => r.role === "canon" && r.status !== "fetched" && !read.has(pageKey(r.url))).map((r) => r.url);
+}
