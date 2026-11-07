@@ -97,6 +97,18 @@ Each fact still needs its path:line, and "the repo has no LICENSE file" is a fac
 **Priority:** P2
 **Depends on:** Plan gaps (built)
 
+### Hand-read the fit pairs the drafted stack lost
+
+**What:** Read, by hand, the won pairs that run B (Built With) had in its top 5 and runs C and C+ (repo-drafted stack) missed, in `events/calhacks-13/review/prefill_eval.json`. For each, write the cause. Look for causes other than the stack, such as a description that names the sponsor, ranking variance between two runs on near-identical input, a track that is title-only, or a Built With tag that names the prize. No model run.
+
+**Why:** P1b closed (user 2026-11-06) with C+ − B at −2.5 points @5 (95% CI −9.5 to +4.7) on 81 pairs. The interval can't say whether the drafted stack costs anything. Reading the 5 lost and 3 gained pairs is the cheapest way to tell a stack gap from noise.
+
+**Context:** Each pair's key is `slug|prize`. Built With tags, drafts and added sponsor products are in the same file (`scores`, `added`). B's hits are in `review/fit_baseline.json` `pair_hits`. The fit rankings themselves are in `data/fit_cache.json`, keyed by fitHash of the request.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** nothing
+
 ## Product
 
 ### Rerun /office-hours in startup mode after the MLH reply

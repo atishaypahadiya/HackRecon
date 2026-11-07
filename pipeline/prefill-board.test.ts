@@ -1,5 +1,5 @@
-// The board's confirm-each-draft flow (board/prefill.js), in a DOM: a draft reaches the input only through Use,
-// one item per click, and the module never touches storage.
+// The board's draft list (board/prefill.js), in a DOM: drafts reach the input only through Use all, minus the rows
+// skipped, and the module never touches storage.
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { parseHTML } from "linkedom";
@@ -25,25 +25,35 @@ const draft = {
 };
 
 describe("Board drafts from a repo", () => {
-  test("nothing reaches the input until Use; each click hands over exactly one draft", () => {
+  test("nothing reaches the input until Use all; Skip drops one row; Use all hands over every row left, once", () => {
     const { document } = parseHTML('<div id="root"></div>');
     const used: Item[] = [];
     const skipped: Item[] = [];
-    let done = false;
+    let done = 0;
     const root = document.getElementById("root")!;
-    HR.mountDrafts(root, HR.draftItems(draft), { head: "From o/r @ abc1234", onUse: (it) => used.push(it), onSkip: (it) => skipped.push(it), onDone: () => (done = true) });
+    const click = (sel: string) => (root.querySelector(sel) as unknown as { click(): void }).click();
+    HR.mountDrafts(root, HR.draftItems(draft), { head: "From o/r @ abc1234", onUse: (it) => used.push(it), onSkip: (it) => skipped.push(it), onDone: () => done++ });
     expect(root.querySelectorAll(".dr").length).toBe(3);
+    expect(root.querySelectorAll(".dr button.use").length).toBe(0);
+    expect(root.querySelector(".useall")!.textContent).toBe("Use all 3");
     expect(used).toEqual([]);
     // Every draft shows its source lines; a non-GitHub link is shown as text, not a link.
     expect([...root.querySelectorAll(".dsrc a")].map((a) => a.getAttribute("href"))).toEqual(["https://github.com/o/r/blob/s/README.md#L15", "https://github.com/o/r/blob/s/api/t.py#L1"]);
     expect(root.querySelector('[data-k="s1"] .dt')!.textContent).toBe("Found in the code; no line says what it does.");
-    (root.querySelector('[data-k="s0"] button.use') as unknown as { click(): void }).click();
-    expect(used.map((x) => x.key)).toEqual(["s0"]);
-    expect(root.querySelector('[data-k="s0"]')).toBeNull();
-    (root.querySelector('[data-k="d"] button.skip') as unknown as { click(): void }).click();
-    expect([used.length, skipped.map((x) => x.key), done]).toEqual([1, ["d"], false]);
-    (root.querySelector('[data-k="s1"] button.use') as unknown as { click(): void }).click();
-    expect([used.map((x) => x.key), done, root.innerHTML]).toEqual([["s0", "s1"], true, ""]);
+    click('[data-k="d"] button.skip');
+    expect([used, skipped.map((x) => x.key), done, root.querySelector(".useall")!.textContent]).toEqual([[], ["d"], 0, "Use all 2"]);
+    click(".useall");
+    expect([used.map((x) => x.key), done, root.innerHTML]).toEqual([["s0", "s1"], 1, ""]);
+  });
+  test("skipping every draft uses none", () => {
+    const { document } = parseHTML('<div id="root"></div>');
+    const root = document.getElementById("root")!;
+    const used: Item[] = [];
+    let done = 0;
+    HR.mountDrafts(root, HR.draftItems({ description: { text: "x", sources: [] }, stack: [] }), { onUse: (it) => used.push(it), onDone: () => done++ });
+    expect(root.querySelector(".useall")!.textContent).toBe("Use this draft");
+    (root.querySelector("button.skip") as unknown as { click(): void }).click();
+    expect([used, done, root.innerHTML]).toEqual([[], 1, ""]);
   });
   test("a used draft fills the form: the description replaces it, a stack item fills its row or a blank one, a typed use stays", () => {
     const items = HR.draftItems(draft);
