@@ -119,7 +119,9 @@ export class Accumulator {
     systemRowsSkipped: number;
     nonPostsSkipped: Partial<Record<NonPost, number>>;
     unresolvedAuthors: Ts[];
+    deletedParents: ({ ts: Ts } & Replies)[];
   } {
+    const deletedParents: ({ ts: Ts } & Replies)[] = [];
     const messages: Captured[] = [];
     const unresolvedAuthors: Ts[] = [];
     const nonPostsSkipped: Partial<Record<NonPost, number>> = {};
@@ -128,18 +130,20 @@ export class Accumulator {
     for (const ts of keys) {
       const r = this.rows.get(ts)!;
       if (r.kind === "system") {
+        // A deleted parent still holds its thread ("This message was deleted." with "N replies").
+        if (r.nonPost === "tombstone" && r.replies) deletedParents.push({ ts, ...r.replies });
         systemRowsSkipped++;
         if (r.nonPost) nonPostsSkipped[r.nonPost] = (nonPostsSkipped[r.nonPost] ?? 0) + 1;
         continue;
       }
       const sender = this.authorOf(ts);
-      if (!sender) unresolvedAuthors.push(ts);
+      if (!sender?.name) unresolvedAuthors.push(ts);
       const m: Captured = { ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink };
       if (r.threadTs) m.threadTs = r.threadTs;
       if (r.replies) m.replies = r.replies;
       messages.push(m);
     }
-    return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors };
+    return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors, deletedParents };
   }
 }
 

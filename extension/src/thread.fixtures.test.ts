@@ -9,6 +9,7 @@ import { findThreadPane, paneRows, ThreadRecorder, threadRunFromRaw, type HtmlTo
 import { expectedAuthorNames, loadExport, normName, readChannel } from "../../pipeline/export.ts";
 import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
+const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const SAMPLE = /^(.+)--thread-(\d{10})(\d{6})-(top|end|more|empty)\.html$/;
 const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => SAMPLE.test(f)).sort() : [];
@@ -30,10 +31,12 @@ describe.skipIf(!exp)("thread pane samples vs the export", () => {
       const byTs = new Map(readChannel(exp!, channel!).map((m) => [m.ts, m]));
       if (at !== "empty") expect(run.replies.length).toBeGreaterThan(0);
       for (const r of run.replies) {
+        if (Number(r.ts) > CUTOFF) continue; // posted after the export
         const e = byTs.get(r.ts);
         expect([r.ts, e?.thread_ts]).toEqual([r.ts, parent]);
         const names = e ? expectedAuthorNames(exp!, e) : [];
-        if (names.length) expect(names.map(normName)).toContain(normName(r.author_name));
+        // A blank author is a header whose name Slack hadn't loaded: unknown, never someone else's name.
+        if (names.length && r.author_name) expect(names.map(normName)).toContain(normName(r.author_name));
       }
     });
   }

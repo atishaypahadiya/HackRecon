@@ -38,7 +38,11 @@ async function scrollToNewest(scroller: Element): Promise<void> {
   }
 }
 
-export type ChannelResult = { file: CaptureFile; summary: string; error?: undefined } | { file: null; error: string; summary?: undefined };
+/** deletedParents: threads whose parent was deleted; not posts, but their replies are (UNVERIFIED: that Slack
+ *  renders a reply bar on the "This message was deleted." row; the export has 2 such threads in the locked 25). */
+export type ChannelResult =
+  | { file: CaptureFile; summary: string; deletedParents: { ts: string; count: number; last?: string }[]; error?: undefined }
+  | { file: null; error: string; summary?: undefined; deletedParents?: undefined };
 
 export async function captureChannelFile(status: (msg: string) => void, stopped: () => boolean, nameHint?: string): Promise<ChannelResult> {
   const channelId = channelIdFromUrl();
@@ -73,7 +77,7 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
 
   const finished = new Date();
   const name = channelName();
-  const { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors } = acc.finalize();
+  const { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors, deletedParents } = acc.finalize();
   const file: CaptureFile = {
     schema_version: SCHEMA_VERSION,
     run_id: runId,
@@ -119,5 +123,5 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
   const secs = Math.round((finished.getTime() - started.getTime()) / 1000);
   const summary =
     `${messages.length} messages in ${secs}s, stop: ${stop}, system rows skipped: ${systemRowsSkipped}` + (unresolvedAuthors.length ? `, ${unresolvedAuthors.length} without an author` : "") + ".";
-  return { file, summary };
+  return { file, summary, deletedParents };
 }

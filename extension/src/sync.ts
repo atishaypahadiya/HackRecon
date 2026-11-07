@@ -381,7 +381,9 @@ async function sync(): Promise<void> {
     if (pages.length) chrome.runtime.sendMessage({ type: "capture-pages", urls: pages });
 
     // Threads: longest first (D17's order); the one-time fixture capture is uncapped.
-    const parents = file.messages.filter((m) => (m.reply_count ?? 0) > 0 && !m.thread_ts).sort((a, b) => b.reply_count! - a.reply_count! || a.ts.localeCompare(b.ts));
+    // Deleted parents aren't posts, but their threads are; readThread needs only ts, reply_count and latest_reply.
+    const deleted = r.deletedParents.map((d): Message => ({ id: `${file.channel_id}:${d.ts}`, channel_id: file.channel_id, channel_name: file.channel_name, ts: d.ts, author_name: "", text: "", links: [], permalink: "", captured_at: file.finished_at, run_id: file.run_id, reply_count: d.count, ...(d.last ? { latest_reply: d.last } : {}) }));
+    const parents = [...file.messages.filter((m) => (m.reply_count ?? 0) > 0 && !m.thread_ts), ...deleted].sort((a, b) => b.reply_count! - a.reply_count! || a.ts.localeCompare(b.ts));
     const threadStart = new Date();
     const raws: ThreadRaw[] = [];
     cl.threads = [];
