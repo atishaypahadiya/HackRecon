@@ -122,6 +122,16 @@ describe("Plan tracks", () => {
     const withSchedule = { ...(e as object), hacking_start: null, schedule: [{ what: "Deadline", at: "2026-10-25T09:00:00-07:00", superseded_by: "Extended", source: "s1" }, { what: "Extended", at: "2026-10-25T09:30:00-07:00", source: "s2" }] } as never;
     expect(planMeta([...ents, rule], withSchedule).deadlines.map((d) => [d.name, d.url])).toEqual([["Extended", "s2"]]);
   });
+  test("plan meta at a review clock: nothing before its post; a superseded time holds until the post replacing it", () => {
+    const rule = { id: "r1", kind: "rule", sponsor: "event", name: { value: "Submit your hack", source: src }, fields: { deadline: { value: "2026-10-25T09:00-07:00", source: { ...src, quote: "October 25th @ 9 AM" } } }, history: [], origin: "page" } as Entity;
+    // Cal Hacks: "due 9:00" posted Sun 1:50 AM, "extended to 9:30" posted Sun 8:59 AM.
+    const p = (ts: string) => `https://x.slack.com/archives/C1/p${ts.replace(".", "")}`;
+    const ev = { ...(e as object), hacking_start: null, schedule: [{ what: "Final Devpost submissions due", at: "2026-10-25T09:00:00-07:00", superseded_by: "Devpost submission deadline extended", source: p("1792918203.114859") }, { what: "Devpost submission deadline extended", at: "2026-10-25T09:30:00-07:00", source: p("1792943981.782739") }] } as never;
+    const at = (iso: string) => planMeta([...ents, rule], ev, Date.parse(iso)).deadlines.map((d) => [d.name, d.at]);
+    expect(at("2026-10-24T12:00:00-07:00")).toEqual([["Submit your hack", "2026-10-25T09:00-07:00"]]);
+    expect(at("2026-10-25T02:00:00-07:00")).toEqual([["Final Devpost submissions due", "2026-10-25T09:00:00-07:00"]]);
+    expect(at("2026-10-25T09:05:00-07:00")).toEqual([["Devpost submission deadline extended", "2026-10-25T09:30:00-07:00"]]);
+  });
   test("a track's drawer detail: requirements, criteria, prizes, verbatim", () => {
     const crit = { id: "c1", kind: "criterion", sponsor: "Acme", name: { value: "Depth", source: src }, fields: { track_id: { value: "t1", source: src }, description: { value: "How deep", source: src } }, history: [], origin: "page" } as Entity;
     const prize = { id: "p1", kind: "prize", sponsor: "Acme", name: { value: "1st", source: src }, fields: { track_id: { value: "t1", source: src }, place: { value: "1st place", source: src }, award_text: { value: "$500", source: src } }, history: [], origin: "page" } as Entity;
