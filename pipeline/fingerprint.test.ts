@@ -24,7 +24,9 @@ const ready = existsSync(BOARD) && key !== null;
 if (!ready)
   console.warn(`SKIPPED D14 Claim regression: ${existsSync(BOARD) ? join(DIR, FINGERPRINT_KEY_PATH) : BOARD} not found (gitignored workspace data). Run \`bun run hr board --build-only\`.`);
 
-describe.skipIf(!ready)("v1 Claim board fingerprint (D14)", () => {
+// describe.skipIf would still run the body, which reads the missing files; a skipped placeholder counts it instead.
+if (!ready) test.skip("v1 Claim board fingerprint (D14)", () => {});
+else describe("v1 Claim board fingerprint (D14)", () => {
   const want = JSON.parse(readFileSync(join(DIR, FINGERPRINT_FILE), "utf8")) as Fingerprint;
   const board = JSON.parse(readFileSync(BOARD, "utf8")) as BoardData;
   const got = fingerprint(board, key!);

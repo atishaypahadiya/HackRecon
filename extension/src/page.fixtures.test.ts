@@ -10,7 +10,9 @@ import { snapshotPage } from "./page.ts";
 const FILE = join(EVENTS_DIR, "calhacks-13", "fixtures/pages/devpost-overview.html");
 if (!existsSync(FILE)) console.warn(`SKIPPED Devpost outline fixture: ${FILE} not found (gitignored)`);
 
-describe.skipIf(!existsSync(FILE))("Devpost overview outline (Cal Hacks 13.0)", () => {
+// describe.skipIf would still run the body, which reads the missing file; a skipped placeholder counts it instead.
+if (!existsSync(FILE)) test.skip("Devpost overview outline (Cal Hacks 13.0)", () => {});
+else describe("Devpost overview outline (Cal Hacks 13.0)", () => {
   const s = snapshotPage(parseHTML(readFileSync(FILE, "utf8")).document as unknown as Document, {
     url: "https://cal-hacks-13-0.devpost.com/",
     captured_at: "fixture",

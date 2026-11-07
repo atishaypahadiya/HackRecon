@@ -25,7 +25,10 @@ const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
 // Channel views only: thread-pane samples saved by "Sync this event" (`--thread-`) are checked in thread.fixtures.test.ts.
 const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html") && !f.includes("--thread-")).sort() : [];
 
-test("calhacks-13 fixtures/slack-dom has samples", () => {
+// Strict locally: a missing sample set is a broken setup. On CI the samples can't exist (workspace data is never
+// tracked, D10), so the check is skipped there, loudly.
+if (process.env.CI && !files.length) console.warn(`SKIPPED Slack DOM fixtures on CI: ${DIR} is gitignored workspace data`);
+test.skipIf(!!process.env.CI && !files.length)("calhacks-13 fixtures/slack-dom has samples", () => {
   if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "DOM samples"`);
 });
 
