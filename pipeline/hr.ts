@@ -25,6 +25,7 @@ import {
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
 import { hackerOnlyChannels } from "./hackerchannels.ts";
+import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
 import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
@@ -221,10 +222,10 @@ const USAGE = `usage:
   bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4]
       P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
       drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
-  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL]
-      --enter defaults to the fixture's "entered" list.
-      Ship's Recheck gaps: the entered tracks' stated requirements and entry steps against the repo's latest
-      commit (the result is reused while the commit is unchanged), open gaps first, then the tracks' checklist.
+  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL] [--at ISO]
+      --enter defaults to the fixture's "entered" list. Prints Ship as of --at (default: now): the deadline with
+      any post that moved it, Recheck gaps when a repo is linked (the entered tracks' stated requirements and
+      entry steps against its latest commit; reused while the commit is unchanged), then the checklist.
       Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
       fit-eval. Prints each track with its fit word, reason, verified quote, and the time to the section.
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
@@ -991,6 +992,18 @@ async function board(args: string[]): Promise<number> {
         return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
       }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+      if (path === "/ship/list") {
+        // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
+        const q = new URL(req.url).searchParams;
+        const { entities, event } = planContext();
+        const trackIds = new Set(entities.filter((x) => x.kind === "track").map((x) => x.id));
+        const entered = (q.get("entered") ?? "").split(",").filter(Boolean).slice(0, 60);
+        const unknown = entered.filter((id) => !trackIds.has(id));
+        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+        const nowMs = q.get("now") ? Date.parse(q.get("now")!) : Date.now();
+        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+        return json(shipListAt(entities, event, entered, nowMs));
+      }
       if (path === "/plan/meta") {
         const { entities, event } = planContext();
         return json(planMeta(entities, event));
@@ -1587,18 +1600,30 @@ function matchTracks(entities: Entity[], parts: string[]): { ids: string[] } | {
   return { ids };
 }
 
+/** Ship's checklist (shiplist.ts) for the entered tracks, as of `nowMs`: the capture's posts by then, rendered as the
+ *  board renders them. */
+function shipListAt(entities: Entity[], event: EventConfig, entered: string[], nowMs: number): ShipList {
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  const person = loadPersonKey();
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, loadRepIndex(person).confirmed);
+  const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
+  return shipList({ entities, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => redact(plainText(m.text)).text, entered, nowSec: nowMs / 1000 });
+}
+
 async function shipCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" }, at: { type: "string" } } });
   const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string; entered?: string[] } | null>(values.from, null) : null;
   if (!dog) {
     console.error(values.from ? `${values.from} not found` : "--from is required");
     return 2;
   }
-  const repo = values.repo ?? dog.repo;
-  if (!repo) {
-    console.error("no repo: pass --repo https://github.com/<owner>/<repo> or set repo in the fixture");
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at: not a date: ${values.at}`);
     return 2;
   }
+  const repo = values.repo ?? dog.repo;
   const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
   const m = matchTracks(entities, values.enter !== undefined ? values.enter.split(",") : (dog.entered ?? []));
   if ("error" in m) {
@@ -1610,34 +1635,56 @@ async function shipCli(args: string[]): Promise<number> {
     return 2;
   }
   const event = readEvent();
-  const { tracks } = shipTracks(entities, m.ids, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
-  const input = { idea: dog.idea, stack: typeof dog.stack === "string" ? parseStack(dog.stack) : dog.stack.length ? dog.stack : null, repo };
-  const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
-  const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
-  const r = await recheckGaps(anthropicClient(), input, tracks, entities, gcache, store);
-  if ("error" in r) {
-    console.error(`couldn't recheck gaps: ${r.error}`);
-    return 1;
-  }
-  writeJsonFile(GAPS_CACHE_PATH, gcache);
-  writeJsonFile(SHIP_GAPS_PATH, store);
   const at = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   const out = (line: string) => console.log(wrapText(line, cliWidth()));
-  out(`Ship: ${tracks.length} tracks you plan to enter`);
-  out(`Recheck gaps: ${r.repo} @ ${r.commit.slice(0, 7)}, the latest commit as of ${at(r.latest_at)}. ${r.from === "reused" ? `Checked ${at(r.checked_at)}; the commit hasn't changed since, so that result stands.` : `Checked ${at(r.checked_at)}.`} ${r.checked} stated requirements and entry steps, ${r.repo_lines} repo lines.`);
-  out(r.gaps.length ? `\nOpen gaps (${r.gaps.length})` : !r.checked ? "\nOpen gaps: nothing to check. None of these tracks states a requirement or entry step on the pages read." : "\nOpen gaps: none found. That says nothing about whether the requirements are met.");
-  for (const g of r.gaps) {
-    out(`  ${g.track}\n    ${g.gap}`);
-    out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
-    for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+  const list = shipListAt(entities, event, m.ids, nowMs);
+  const left = list.deadline ? Date.parse(list.deadline.at) - nowMs : null;
+  out(`Ship at ${at(new Date(nowMs).toISOString())}: ${m.ids.length} tracks you plan to enter`);
+  if (list.deadline) {
+    const d = list.deadline;
+    out(`${left! > 0 ? "Submissions close" : "Submissions closed"} ${at(d.at)}${left! > 0 ? ` · in ${durationText(left!)}` : ""}${d.was ? ` · Devpost said ${at(d.was.at)}` : ""}`);
+    out(`  "${d.quote}"  ${d.from === "slack" ? `#${d.channel} ` : ""}${d.source_url}`);
+    if (d.was) out(`  Devpost: "${d.was.quote}"  ${d.was.source_url}`);
+  } else out("No submission deadline found on the pages or in the posts read.");
+  const lastHour = left !== null && left > 0 && left < 3_600_000;
+  if (lastHour) out("Last hour: Ship shows the countdown and the unticked Required items; the other groups fold to one line each.");
+
+  if (repo) {
+    const { tracks } = shipTracks(entities, m.ids, event, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
+    const input = { idea: dog.idea, stack: typeof dog.stack === "string" ? parseStack(dog.stack) : dog.stack.length ? dog.stack : null, repo };
+    const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+    const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+    const r = await recheckGaps(anthropicClient(), input, tracks, entities, gcache, store);
+    if ("error" in r) {
+      console.error(`couldn't recheck gaps: ${r.error}`);
+      return 1;
+    }
+    writeJsonFile(GAPS_CACHE_PATH, gcache);
+    writeJsonFile(SHIP_GAPS_PATH, store);
+    out(`\nRecheck gaps: ${r.repo} @ ${r.commit.slice(0, 7)}, the latest commit as of ${at(r.latest_at)}. ${r.from === "reused" ? `Checked ${at(r.checked_at)}; the commit hasn't changed since, so that result stands.` : `Checked ${at(r.checked_at)}.`} ${r.checked} stated requirements and entry steps, ${r.repo_lines} repo lines.`);
+    out(r.gaps.length ? `Open gaps (${r.gaps.length})` : !r.checked ? "Open gaps: nothing to check. None of these tracks states a requirement or entry step on the pages read." : "Open gaps: none found. That says nothing about whether the requirements are met.");
+    for (const g of r.gaps) {
+      out(`  ${g.track}\n    ${g.gap}`);
+      out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
+      for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
+    }
   }
-  out("\nFor the tracks you entered (the rest of Ship's checklist comes with P9)");
-  for (const t of tracks) {
-    const d = trackDetail(entities, t.track_id);
-    out(`  ${t.name}${!d.requirements.length && !t.steps.length ? "   (no requirements or entry steps stated)" : ""}`);
-    for (const s of t.steps) out(`    [ ] ${s.label}: "${s.quote}"`);
-    for (const q of d.requirements.filter((q) => !t.steps.some((s) => s.quote === q))) out(`    [ ] requirement: "${q}"`);
+
+  const item = (x: ShipItem) => {
+    out(`    [ ] ${x.label}${x.at ? `   (${at(x.at)}${x.until ? `–${new Date(x.until).toLocaleString("en-US", { timeZone: event.timezone, hour: "numeric", minute: "2-digit" })}` : ""})` : ""}`);
+    if (x.quote) out(`        "${x.quote}"`);
+    out(`        ${x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? `added in #${x.channel}  ${x.source_url}` : x.source_url}`);
+  };
+  out(`\nRequired to submit (${list.required.length})`);
+  list.required.forEach(item);
+  const tracksN = list.tracks.reduce((n, t) => n + t.items.length, 0);
+  out(`\nFor the tracks you entered (${tracksN})${lastHour ? "   folded in the last hour" : ""}`);
+  for (const t of list.tracks) {
+    out(`  ${t.name}${t.items.length ? "" : "   (no requirements or entry steps stated)"}`);
+    t.items.forEach(item);
   }
+  out(`\nJudging (${list.judging.length})${lastHour ? "   folded in the last hour" : ""}`);
+  list.judging.forEach(item);
   return 0;
 }
 
