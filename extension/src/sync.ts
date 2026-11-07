@@ -419,8 +419,7 @@ async function sync(): Promise<void> {
     cl.stop = file.stop_reason;
     if (await save(`captures/${file.channel_id}.json`, JSON.stringify(file, null, 2))) cl.saved.push(`${file.channel_id}.json`);
     const pages = autoPageTargets(file);
-    // draft: after the pages, the worker reads the user's own submission for this event (read-only; devpostdraft.ts).
-    if (pages.length) chrome.runtime.sendMessage({ type: "capture-pages", urls: pages, draft: true });
+    if (pages.length) chrome.runtime.sendMessage({ type: "capture-pages", urls: pages });
 
     // Threads: longest first (D17's order); the one-time fixture capture is uncapped.
     // Deleted parents aren't posts, but their threads are; readThread needs only ts, reply_count and latest_reply.

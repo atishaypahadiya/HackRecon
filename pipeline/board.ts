@@ -1,12 +1,11 @@
 // `hr board`: the data the board renders (data/board.json, workspace data, gitignored) and the local
 // server for board/index.html. Offers come only from the Opus grouping pass (`hr group`); the board
 // never shows a number it can't link to source posts. Demo mode (D18, amended 2026-10-27) hides author
-// names only: offer text is the evidence, so excerpts are shown, with people's names in the text
-// redacted the same way as the classifier input.
+// names only: offer text is the evidence, so excerpts are shown as posted (user 2026-11-07: no name
+// redaction in quotes).
 import type { EventConfig } from "./classify.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
-import { buildNameList, compileRedactor } from "./redact.ts";
 import { likelySince, signalLabels, staffSince, type RepIndex } from "./reps.ts";
 import { sponsorSignals, type A5Signal, type PosterRole } from "./roles.ts";
 import type { Message } from "./schema.ts";
@@ -235,7 +234,6 @@ export function boardData(o: {
   permalinks?: Map<string, string>;
 }): BoardData {
   const byId = new Map(o.messages.map((m) => [m.id, m]));
-  const redact = compileRedactor(buildNameList(new Set(o.messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), o.sponsors));
   const posts = o.messages.filter((m) => !m.subtype && m.author_kind !== "bot").map((m) => Number(m.ts)).sort((a, b) => a - b);
   const ids = offerIds(
     o.offers.map((f) => {
@@ -248,7 +246,7 @@ export function boardData(o: {
       const m = byId.get(id);
       return { ts: Number(m?.ts ?? id.split(":")[1]), permalink: m?.permalink ?? o.permalinks?.get(id) ?? "", channel: m?.channel_name ?? "" };
     });
-    const texts = f.posts.map((id) => byId.get(id)).filter((m): m is Message => !!m).map((m) => ({ raw: m.text, plain: redact(plainText(m.text)).text }));
+    const texts = f.posts.map((id) => byId.get(id)).filter((m): m is Message => !!m).map((m) => ({ raw: m.text, plain: plainText(m.text) }));
     return {
       id: ids[i]!,
       sponsor: f.sponsor === "event" ? o.event : f.sponsor,

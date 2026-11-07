@@ -18,6 +18,10 @@
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
 
+### Capture is frozen for Cal Hacks (user 2026-11-07)
+
+No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders), and the general no-action-URL rule (requested 2026-11-07, not built: today only the Devpost page capture's host check guards loads).
+
 ### Sync this event: follow-ups from the first build (user, 2026-11-06)
 
 `extension/src/sync.ts` is the one-time fixture run. Before syncs become something a hacker runs during an event:
@@ -84,9 +88,17 @@ Two accounts of one person are linked by `hr person-links` (user 2026-11-07; des
 
 `hr rep-signals` (`pipeline/reps.ts`) adds three signals: an email on the sponsor's domain, an organizer mentioning the user ID beside the sponsor's name, and likely staff (a staff post, an answer to a hacker, never in a hacker-only channel). Likely staff is shown with its evidence and never gets a role. Apify's rep is Petros Hong (likely staff). Design doc §Step 1 notes.
 
-### ~~Hacker-only channels at a live event~~ Done 2026-11-07
+### ~~Hacker-only channels at a live event~~ Changed 2026-11-07
 
-"Sync this event" reads team formation and introductions last and authors-only: sender IDs and post counts in `captures/<id>.authors.json`, no text. sync-ingest refuses anything else from those channels, and `hr rep-signals` prefers these files to the export. UNVERIFIED in Chrome until the next sync. Design doc §Step 1 notes (Rep signals).
+Captured normally, with text (user 2026-11-07). The authors-only files from the 2026-11-07 sync still feed `hr rep-signals`.
+
+### Model inputs still redact names
+
+**What:** Quotes no longer redact names (user 2026-11-07), but the classifier, grouping and prelabel inputs are still built redacted (`inputs.ts`, `redact.ts`). Dropping that changes every cache key, so classify, group and the judge re-run [cost not measured; state it before running].
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** the demo
 
 ### Sponsor email domains
 
@@ -114,13 +126,9 @@ Two accounts of one person are linked by `hr person-links` (user 2026-11-07; des
 
 Now task P1b in docs/designs/hackrecon-v2.md, ahead of P2–P6 (user 2026-11-06).
 
-### Read your own Devpost draft's selected prizes (Ship prefill)
+### ~~Read your own Devpost draft's selected prizes (Ship prefill)~~ Dropped 2026-11-07
 
-**What:** During sync's Devpost background visit, read the user's own draft submission and prefill Ship's "Tracks you're entering" with its selected prizes, labeled "from your Devpost draft" with the read time. Empty with no draft; never from Plan (user 2026-11-07).
-
-**Why:** What you entered on Devpost is the truth; ticking it again in Ship is a second place to get wrong.
-
-**Status (2026-11-07):** the read-only visit and the scrubbed sample are built (`pipeline/devpostdraft.ts`, `extension/src/devpost-snap.ts`); the user runs Sync once. Next: write the selected-prizes parser and its test from `fixtures/devpost/<slug>.submission.html`, then prefill Ship's chooser labeled "from your Devpost draft". If the visit log shows a hop rule missed Devpost's real links, fix the rule from the links it logged.
+The user ticks tracks in Ship (user 2026-11-07). The visit was removed.
 
 ### Gap check: find counter-evidence for requirements that name no product
 

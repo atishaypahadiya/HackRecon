@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findTokens, scrubTokens, total } from "./domscrub.ts";
-import { DEVPOST_FIXTURES_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "./event.ts";
+import { EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "./event.ts";
 
 // Fake values shaped like the real ones; none of these is a live credential.
 const DIRTY = [
@@ -51,15 +51,6 @@ describe("scrubTokens", () => {
 });
 
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
-const DEVPOST_DIR = join(EVENTS_DIR, "calhacks-13", DEVPOST_FIXTURES_DIR);
-describe.skipIf(!existsSync(DEVPOST_DIR))("saved Devpost samples carry no session values", () => {
-  test("every sample scans clean", () => {
-    const dirty = readdirSync(DEVPOST_DIR)
-      .filter((f) => f.endsWith(".html"))
-      .filter((f) => total(findTokens(readFileSync(join(DEVPOST_DIR, f), "utf8"))) > 0);
-    expect(dirty).toEqual([]);
-  });
-});
 describe.skipIf(!existsSync(DIR))("saved DOM samples carry no session tokens", () => {
   test("every sample scans clean (run `bun run hr scrub-dom` if this fails)", () => {
     const dirty = readdirSync(DIR)
