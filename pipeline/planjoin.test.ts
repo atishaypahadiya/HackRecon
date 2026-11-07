@@ -103,8 +103,14 @@ describe("planSessions (P4)", () => {
       S,
       NOW,
       deadline,
+      (m) => m.text,
     );
     expect(r.map((x) => [x.sponsor, x.quote])).toEqual([["Factory", "Factory workshop at 1pm"], ["Apify", "Apify office hours at 3pm"]]);
+  });
+  test("the quote is the board's rendering of the post, so a redacted name never shows", () => {
+    const m = msg("m1", "Ask Jane Doe at office hours 3pm", "2026-10-24T09:00:00-07:00");
+    const r = planSessions([item("m1", "Apify", "2026-10-24T15:00:00-07:00")], new Map([[m.id, m]]), S, NOW, deadline, (x) => x.text.replace("Jane Doe", "[name]"));
+    expect(r.map((x) => x.quote)).toEqual(["Ask [name] at office hours 3pm"]);
   });
 });
 
@@ -122,7 +128,9 @@ describe("planPeople (P5)", () => {
   test("likely tracks' sponsors only; by person, sponsor-side, posted by now; the latest name, every account counted", () => {
     const person = personKeys([{ ids: ["UG", "UM"] }]);
     const role = rolesById(messages, sponsors, new Set(), person);
-    const p = planPeople(messages, S, sponsors, role, person, 1000);
+    const p = planPeople(messages, S, sponsors, role, person, 1000, (m) => m.text);
     expect(p).toEqual([{ sponsor: "Factory", why: ["likely track: [Factory] Droid"], reps: [{ person: "UG", name: "David", accounts: 2, posts: 2, first: 100, quote: "post 100", source_url: "p/100" }] }]);
+    const redacted = planPeople(messages, S, sponsors, role, person, 1000, (m) => (m.ts === "100" ? "post by [name]" : m.text));
+    expect(redacted[0]!.reps[0]!.quote).toBe("post by [name]");
   });
 });
