@@ -253,7 +253,9 @@
   .dr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .dr > :not(.skip) { grid-column: 1; }
   .dr .skip { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: -10px; }
-  .dgo { padding-top: 12px; border-top: 1px solid var(--line); }
+  /* Use all stays in reach while the list scrolls; the space below keeps it apart from Make my plan. */
+  .drafts { margin-bottom: 16px; }
+  .dgo { position: sticky; bottom: 0; z-index: 1; padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fff; }
   .sum { display: flex; align-items: center; gap: 16px; }
   .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sum .stk { color: var(--muted); }
