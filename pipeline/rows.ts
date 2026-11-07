@@ -14,6 +14,21 @@ export function isSlackUiNotice(text: string): boolean {
   return SLACK_UI_NOTICE.test(text.trim());
 }
 
+/** Slack's own workspace and plan banners, posted into the channel by Slackbot (user 2026-11-07, after the sync
+ *  captured "Upgrade to reconnect this channel … Your trial has ended. Capital One has been removed from this
+ *  channel." in spons-capital-one). Never a post by anyone at the event. Matched on Slack's fixed wording. */
+const SLACK_BANNER = [
+  /^Upgrade to reconnect this channel\b/i,
+  /^Your trial has ended\b/i,
+  /\bhas been removed from this channel\. To (?:automatically )?reconnect this channel\b/i,
+  /^This channel (?:is|has been) disconnected\b/i,
+];
+
+export function isSlackBanner(text: string): boolean {
+  const t = text.trim();
+  return SLACK_BANNER.some((re) => re.test(t));
+}
+
 /** Reply also sent to the channel: its permalink carries `?thread_ts=<parent>` (verified: all 26
  *  export thread_broadcasts in the locked 25, no false positives across 1,011 captured rows). */
 export function broadcastParent(permalink: string, ts: Ts): Ts | null {
@@ -21,7 +36,7 @@ export function broadcastParent(permalink: string, ts: Ts): Ts | null {
   return m && m[1] !== ts ? m[1]! : null;
 }
 
-export type NonPost = "list_top" | "tombstone" | "slack_ui_notice";
+export type NonPost = "list_top" | "tombstone" | "slack_ui_notice" | "slack_banner";
 
 /** Why a row that has a ts is not a post, or null if it is one.
  *  `tombstone`: deleted parents render with no permalink and no body; every real post,
@@ -30,6 +45,7 @@ export function nonPostReason(row: { ts: Ts; permalink: string; text: string; ha
   if (row.ts === LIST_TOP_TS) return "list_top";
   if (!row.permalink && !row.hasBody) return "tombstone";
   if (isSlackUiNotice(row.text)) return "slack_ui_notice";
+  if (isSlackBanner(row.text)) return "slack_banner";
   return null;
 }
 

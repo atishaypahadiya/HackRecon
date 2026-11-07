@@ -119,7 +119,7 @@ export interface CaptureFile {
   /** Joins, renames, topic changes etc. seen and not captured (D8). Includes non_posts_skipped. */
   system_rows_skipped: number;
   /** Rows with a ts that aren't posts, by reason (pipeline/rows.ts). Absent in captures made before 2026-10-27 cleanup. */
-  non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice", number>>;
+  non_posts_skipped?: Partial<Record<"list_top" | "tombstone" | "slack_ui_notice" | "slack_banner", number>>;
   /** ts of messages whose grouped author never resolved to a rendered header. */
   unresolved_authors: Ts[];
   /** v2 (D19, discovery): Slack shows the composer replaced by a "who can post" notice. null: no composer
