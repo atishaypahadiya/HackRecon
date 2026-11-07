@@ -725,13 +725,17 @@ function drawerContent(kind, now, prev) {
     // rep_signals: what each candidate matched (aligned the same way); rep_likely: likely staff, never counted as reps.
     const matched = (r) => {
       const n = new Map();
-      (D.rep_signals?.[r.channel] ?? []).forEach((ls, i) => { if (r.candidate_first[i] <= now) for (const l of ls) n.set(l, (n.get(l) ?? 0) + 1); });
+      (D.rep_signals?.[r.channel] ?? []).forEach((ls, i) => {
+        if (r.candidate_first[i] > now) return;
+        const self = D.rep_self?.[r.channel]?.[i];
+        for (const l of [...ls, ...(self != null && self <= now ? ["says they work there"] : [])]) n.set(l, (n.get(l) ?? 0) + 1);
+      });
       return [...n].map(([k, c]) => `${k} (${c})`).join(", ");
     };
     const likely = (r) => (D.rep_likely?.[r.channel] ?? []).filter((x) => x.first <= now);
     const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length, m: multi(r), l: likely(r) })).sort((a, b) => b.c - a.c || b.l.length - a.l.length || b.offers - a.offers || b.posts - a.posts);
     return ["Reps", "Sponsor-side posters in each sponsor channel, with the signals they matched. Likely staff is listed apart and never counted. Names are hidden here; confirm a candidate yourself before you message anyone.",
-      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span>${r.c ? `<span class="s">Matched: ${esc(matched(r))}</span>` : ""}${r.l.map((x) => { const p = x.posts.filter((t) => t <= now).length, a = x.answers.filter((t) => t <= now).length; return `<span class="s">Likely staff, not counted: ${plural(p, "offer, prize or workshop post")}, ${plural(a, "answer")} to hackers, never in a hacker-only channel</span>`; }).join("")}</div>`).join("")];
+      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span>${r.c ? `<span class="s">Matched: ${esc(matched(r))}</span>` : ""}${r.l.map((x) => { const p = x.posts.filter((t) => t <= now).length, a = x.answers.filter((t) => t <= now).length; return `<span class="s">Likely staff, not counted: ${plural(p, "offer, prize or workshop post")}, ${plural(a, "answer")} to hackers${x.self != null && x.self <= now ? ", says they work there" : ""}${x.hacker ? `; also posted in a hacker-only channel (${plural(x.hacker, "post")})` : ", never in a hacker-only channel"}</span>`; }).join("")}</div>`).join("")];
   }
   if (kind === "activity") {
     const rows = days.map((d) => {

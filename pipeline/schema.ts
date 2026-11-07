@@ -165,6 +165,53 @@ export function threadCaptureName(channelId: string): string {
   return `${channelId}.threads.json`;
 }
 
+/** A hacker-only channel read authors-only (pipeline/hackerchannels.ts): who posted there and how often, from the
+ *  channel and its threads. No text, no names, no permalinks: the parser rejects any other field. */
+export interface AuthorsCaptureFile {
+  schema_version: typeof SCHEMA_VERSION;
+  kind: "authors";
+  source: "extension";
+  run_id: string;
+  channel_id: string;
+  channel_name: string;
+  started_at: string;
+  finished_at: string;
+  stop_reason: StopReason;
+  /** Threads with replies, and how many of them were read to their end. */
+  threads: { parents: number; read: number };
+  authors: { id: string; posts: number }[];
+  unidentified: number;
+}
+
+export function authorsFileName(channelId: string): string {
+  return `${channelId}.authors.json`;
+}
+
+const AUTHORS_KEYS = ["schema_version", "kind", "source", "run_id", "channel_id", "channel_name", "started_at", "finished_at", "stop_reason", "threads", "authors", "unidentified"];
+
+/** Throws with a path-qualified reason if `v` isn't an AuthorsCaptureFile, or carries anything besides its fields. */
+export function parseAuthorsCaptureFile(v: unknown, where = "authors"): AuthorsCaptureFile {
+  const o = obj(v, where);
+  for (const k of Object.keys(o)) if (!AUTHORS_KEYS.includes(k)) fail(`${where}.${k}`, "not an authors-only field");
+  if (o.schema_version !== SCHEMA_VERSION) fail(`${where}.schema_version`, `expected ${SCHEMA_VERSION}`);
+  if (o.kind !== "authors") fail(`${where}.kind`, 'expected "authors"');
+  if (o.source !== "extension") fail(`${where}.source`, 'expected "extension"');
+  for (const k of ["run_id", "channel_id", "channel_name", "started_at", "finished_at"]) str(o[k], `${where}.${k}`);
+  if (!STOP_REASONS.includes(o.stop_reason as StopReason)) fail(`${where}.stop_reason`, `not one of ${STOP_REASONS.join("|")}`);
+  const t = obj(o.threads, `${where}.threads`);
+  if (Object.keys(t).some((k) => k !== "parents" && k !== "read")) fail(`${where}.threads`, "expected only parents and read");
+  num(t.parents, `${where}.threads.parents`);
+  num(t.read, `${where}.threads.read`);
+  arr(o.authors, `${where}.authors`).forEach((a, i) => {
+    const x = obj(a, `${where}.authors[${i}]`);
+    if (Object.keys(x).some((k) => k !== "id" && k !== "posts")) fail(`${where}.authors[${i}]`, "expected only id and posts");
+    if (typeof x.id !== "string" || !/^[UWB][A-Z0-9]{6,}$/.test(x.id)) fail(`${where}.authors[${i}].id`, "expected a Slack user ID");
+    if (!Number.isInteger(x.posts) || (x.posts as number) < 1) fail(`${where}.authors[${i}].posts`, "expected a positive integer");
+  });
+  num(o.unidentified, `${where}.unidentified`);
+  return o as unknown as AuthorsCaptureFile;
+}
+
 /** Throws with a path-qualified reason if `v` isn't a ThreadCaptureFile. */
 export function parseThreadCaptureFile(v: unknown, where = "threads"): ThreadCaptureFile {
   const o = obj(v, where);
