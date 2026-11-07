@@ -20,7 +20,7 @@
 
 ### Capture is frozen for Cal Hacks (user 2026-11-07)
 
-No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders), and the general no-action-URL rule (requested 2026-11-07, not built: today only the Devpost page capture's host check guards loads).
+No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders). The no-action-URL rule (`pipeline/urlsafety.ts`) guards the fetcher and the extension's page capture.
 
 ### Sync this event: follow-ups from the first build (user, 2026-11-06)
 
