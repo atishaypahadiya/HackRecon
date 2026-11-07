@@ -6,8 +6,12 @@
 //
 // Everything lands under ~/Downloads/hackrecon/sync/<stamp>/ for `hr sync-ingest`:
 //   captures/<channel_id>.json, .threads.json, .threads.raw.json   slack-dom/<channel>--thread-*.html   sync.json
+// Hacker-only channels (team formation, introductions; user 2026-11-07) are read last and authors-only: the same
+// scroll and threads, but only sender IDs and post counts are saved (captures/<channel_id>.authors.json). No text,
+// raw rows, DOM samples or page fetches leave the tab for them.
 // UNVERIFIED in Chrome until the first run: sidebar clicks, the thread pane, its scroller and close button.
-import { SCHEMA_VERSION, type Message, type ThreadCaptureFile, type ThreadStopReason, type Ts } from "../../pipeline/schema.ts";
+import { countAuthors } from "../../pipeline/hackerchannels.ts";
+import { SCHEMA_VERSION, authorsFileName, type AuthorsCaptureFile, type Message, type ThreadCaptureFile, type ThreadStopReason, type Ts } from "../../pipeline/schema.ts";
 import { STEP_WAIT_MS, NO_NEW_KEYS_STEPS } from "./accumulate.ts";
 import { autoPageTargets } from "./autopages.ts";
 import { captureChannelFile, channelIdFromUrl, sleep } from "./channel.ts";
@@ -68,6 +72,9 @@ interface ThreadLog {
 interface ChannelLog {
   id: string;
   name: string;
+  /** "authors": a hacker-only channel, saved as sender IDs and counts only. */
+  mode?: "authors";
+  authors?: number;
   opened: boolean;
   error?: string;
   messages?: number;
@@ -87,7 +94,7 @@ interface SyncLog {
   sidebar: SidebarChannel[];
   targets: string[];
   /** Selection source (user 2026-11-06): config channels, those missing from the sidebar, and prefix finds. */
-  config?: { event: string | null; channels: number; missing: string[]; discovered: string[] };
+  config?: { event: string | null; channels: number; missing: string[]; discovered: string[]; authors_only: string[] };
   channels: ChannelLog[];
   samples: { file: string; why: string }[];
   save_errors: string[];
@@ -186,11 +193,11 @@ async function sync(): Promise<void> {
   } else readSidebar();
   log.sidebar = [...seen.values()];
   const config = window.__hackreconSyncConfig;
-  const pick = syncTargets(log.sidebar, config?.channels ?? []);
+  const pick = syncTargets(log.sidebar, config?.channels ?? [], config?.authors_only ?? []);
   const targets = pick.targets;
   log.targets = targets.map((c) => c.name);
-  log.config = { event: config?.event ?? null, channels: config?.channels.length ?? 0, missing: pick.missing, discovered: pick.discovered };
-  if (!targets.length) {
+  log.config = { event: config?.event ?? null, channels: config?.channels.length ?? 0, missing: pick.missing, discovered: pick.discovered, authors_only: pick.authors.map((c) => c.name) };
+  if (!targets.length && !pick.authors.length) {
     ui.set(`HackRecon: none of the config's ${config?.channels.length ?? 0} channels, and no spons-, partner-, cohost- or announcement channels, in the sidebar (${log.sidebar.length} channels read).`);
     await saveLog();
     ui.done();
@@ -253,8 +260,10 @@ async function sync(): Promise<void> {
     return sel ?? "escape";
   };
 
-  /** Opens one thread, reads its pane top to bottom, and returns the raw rows. */
-  const readThread = async (ch: SidebarChannel, parent: Message): Promise<{ raw: ThreadRaw; tl: ThreadLog }> => {
+  /** Opens one thread, reads its pane top to bottom, and returns the raw rows. `samples: false` (authors-only
+   *  channels) saves no pane HTML. */
+  const readThread = async (ch: SidebarChannel, parent: Message, samples = true): Promise<{ raw: ThreadRaw; tl: ThreadLog }> => {
+    const take = samples ? sample : async (_name: string, _html: string, _why: string) => {};
     const t0 = Date.now();
     const raw: ThreadRaw = { thread_ts: parent.ts, reply_count_shown: parent.reply_count ?? null, stop_reason: "not_opened", batches: [], rows: {} };
     if (parent.latest_reply) raw.latest_reply_shown = parent.latest_reply;
@@ -281,7 +290,7 @@ async function sync(): Promise<void> {
       if (counts.not_found < SAMPLE_CAP.not_found) {
         counts.not_found++;
         // No pane to save, so the page: the only way to see what the pane looks like.
-        await sample(`${ch.name}--thread-notfound-${parent.ts.replace(".", "")}`, cleanHtml(document.body.outerHTML, { dropSvg: true }), "clicked N replies; no pane rendered the parent");
+        await take(`${ch.name}--thread-notfound-${parent.ts.replace(".", "")}`, cleanHtml(document.body.outerHTML, { dropSvg: true }), "clicked N replies; no pane rendered the parent");
       }
       return done(`clicked "N replies" twice; no pane rendered the parent within ${PANE_WAIT_MS / 1000} s`);
     }
@@ -305,7 +314,7 @@ async function sync(): Promise<void> {
     const why = first ? "first thread of the sync" : want >= SAMPLE_MIN_REPLIES && counts.long < SAMPLE_CAP.long ? `${want} replies` : "";
     if (why && !first) counts.long++;
     const tag = `${ch.name}--thread-${parent.ts.replace(".", "")}`;
-    if (why) await sample(`${tag}-top`, root().outerHTML, `${why}; pane at its top`);
+    if (why) await take(`${tag}-top`, root().outerHTML, `${why}; pane at its top`);
 
     // Down to the end.
     let quiet = 0;
@@ -324,7 +333,7 @@ async function sync(): Promise<void> {
       if (more && tl.more_clicks < MAX_MORE_CLICKS) {
         if (!sawMore && counts.more < SAMPLE_CAP.more) {
           counts.more++;
-          await sample(`${tag}-more`, root().outerHTML, `pane shows "${(more.textContent ?? "").trim().slice(0, 40)}"`);
+          await take(`${tag}-more`, root().outerHTML, `pane shows "${(more.textContent ?? "").trim().slice(0, 40)}"`);
         }
         sawMore = true;
         press(more);
@@ -357,10 +366,10 @@ async function sync(): Promise<void> {
     raw.batches = rec.batches;
     raw.rows = rec.rows;
     tl.replies = replies();
-    if (why) await sample(`${tag}-end`, root().outerHTML, `${why}; pane at its end`);
+    if (why) await take(`${tag}-end`, root().outerHTML, `${why}; pane at its end`);
     if (!tl.replies && counts.empty < SAMPLE_CAP.empty) {
       counts.empty++;
-      await sample(`${tag}-empty`, root().outerHTML, "pane rendered the parent but no replies were read");
+      await take(`${tag}-empty`, root().outerHTML, "pane rendered the parent but no replies were read");
     }
     tl.close = await closePane(root());
     return done(sawParent ? undefined : "the parent never rendered at the top of the pane");
@@ -425,6 +434,62 @@ async function sync(): Promise<void> {
       const rawFile = { kind: "threads_raw", schema_version: SCHEMA_VERSION, run_id: runId, channel_id: file.channel_id, channel_name: file.channel_name, started_at: tf.started_at, finished_at: finished, base: location.href, threads: raws };
       if (await save(`captures/${file.channel_id}.threads.raw.json`, JSON.stringify(rawFile))) cl.saved.push(`${file.channel_id}.threads.raw.json`);
     }
+    cl.secs = Math.round((Date.now() - t0) / 1000);
+    await saveLog();
+    await sleep(CHANNEL_PAUSE_MS);
+  }
+
+  // 3. Hacker-only channels, authors-only: the channel and its threads are read as above, then reduced in the tab to
+  // sender IDs and post counts. Only that is saved.
+  for (const [i, ch] of pick.authors.entries()) {
+    if (stopped) break;
+    const cl: ChannelLog = { id: ch.id, name: ch.name, mode: "authors", opened: false, saved: [] };
+    log.channels.push(cl);
+    ui.set(`HackRecon: #${ch.name}, authors only (${i + 1}/${pick.authors.length})…`);
+    const err = await openChannel(ch);
+    if (err) {
+      cl.error = err;
+      continue;
+    }
+    cl.opened = true;
+    const t0 = Date.now();
+    const r = await captureChannelFile(ui.set, () => stopped, ch.name);
+    if (!r.file) {
+      cl.error = r.error;
+      continue;
+    }
+    const file = r.file;
+    cl.messages = file.messages.length;
+    cl.stop = file.stop_reason;
+    const parents = file.messages.filter((m) => (m.reply_count ?? 0) > 0 && !m.thread_ts).sort((a, b) => b.reply_count! - a.reply_count! || a.ts.localeCompare(b.ts));
+    const replies: Message[] = [];
+    cl.threads = [];
+    const runId = `${file.channel_id}-authors-${t0}`;
+    for (const p of parents) {
+      if (stopped) break;
+      const { raw, tl } = await readThread(ch, p, false);
+      cl.threads.push(tl);
+      const ctx = { channelId: file.channel_id, channelName: file.channel_name, runId, capturedAt: new Date().toISOString(), base: location.href };
+      // Sent-to-channel copies are already among the channel's posts.
+      replies.push(...threadRunFromRaw(raw, ctx, browserRows).replies.filter((m) => !m.subtype));
+      await sleep(THREAD_PAUSE_MS);
+    }
+    const counted = countAuthors([...file.messages, ...replies]);
+    const af: AuthorsCaptureFile = {
+      schema_version: SCHEMA_VERSION,
+      kind: "authors",
+      source: "extension",
+      run_id: runId,
+      channel_id: file.channel_id,
+      channel_name: file.channel_name,
+      started_at: file.started_at,
+      finished_at: new Date().toISOString(),
+      stop_reason: file.stop_reason,
+      threads: { parents: parents.length, read: cl.threads.filter((t) => t.stop === "parent_seen").length },
+      ...counted,
+    };
+    cl.authors = af.authors.length;
+    if (await save(`captures/${authorsFileName(file.channel_id)}`, JSON.stringify(af, null, 2))) cl.saved.push(authorsFileName(file.channel_id));
     cl.secs = Math.round((Date.now() - t0) / 1000);
     await saveLog();
     await sleep(CHANNEL_PAUSE_MS);

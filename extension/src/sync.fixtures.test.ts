@@ -79,6 +79,17 @@ describe.skipIf(!exp)("sidebar", () => {
     expect(pick.targets.map((c) => c.name).filter((n) => !/^(spons|partner|cohost)-|announce/.test(n) && !["0-announcements"].includes(n))).toEqual([]);
     expect(syncTargets(sidebarChannels(doc!), ["no-such-channel"]).missing).toEqual(["no-such-channel"]);
   });
+
+  test("hacker-only channels are picked authors-only, never as full targets, even when a config lists them", () => {
+    const found = sidebarChannels(doc!);
+    const pick = syncTargets(found, ["0-announcements", "1-team-formation"]);
+    expect(pick.authors.map((c) => c.name).sort()).toEqual(found.map((c) => c.name).filter((n) => /(^|[-_])(team[-_]?formation|introductions?)$/i.test(n)).sort());
+    expect(pick.authors.map((c) => c.name)).toContain("1-team-formation");
+    expect(pick.targets.map((c) => c.name)).not.toContain("1-team-formation");
+    // event.json's list replaces the name pattern.
+    const own = syncTargets(found, [], ["1-introductions"]);
+    expect(own.authors.map((c) => c.name)).toEqual(["1-introductions"]);
+  });
 });
 
 describe.skipIf(!files.length)("thread pane reader (pane built from the sample's own rows)", () => {

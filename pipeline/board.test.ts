@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { boardData, eventDeadlines, excerpt, morningOf, permalinkTs, plainText, offerIds, replayFrames, v1Ids, type BoardOffer } from "./board.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
+import { repEvidence, repIndex } from "./reps.ts";
 import type { Message } from "./schema.ts";
 
 const TZ = "America/Los_Angeles";
@@ -94,5 +95,31 @@ describe("offer ids (OV5)", () => {
   test("an existing map is carried forward, dropping ids no longer on the board", () => {
     expect(v1Ids({ offers: now, v1_ids: { o1: "o-b-1", o9: "o-gone-5" } }, now)).toEqual({ o1: "o-b-1" });
     expect(v1Ids(null, now)).toEqual({});
+  });
+});
+
+describe("rep signals on the board", () => {
+  test("2b is a time with no phrase; likely staff carries it and the hacker-channel count", () => {
+    const sp = { "spons-apify": { sponsor: "Apify", kind: "sponsor", aliases: [] } } as unknown as Sponsors;
+    const m = (ts: string, author_id: string, author_name: string): Message => ({ id: `C:${ts}`, channel_id: "C", channel_name: "spons-apify", ts, author_id, author_name, text: "hi", links: [], permalink: `p/${ts}`, captured_at: "", run_id: "r" });
+    const messages = [m("100", "UA", "Ana [Apify]"), m("200", "UP", "Petros")];
+    const ev = repEvidence({
+      email: [],
+      mention: [],
+      selfId: [
+        { person: "UA", accounts: ["UA"], sponsor: "Apify", posts: [{ ts: 150, permalink: "p/150", phrase: "I'm Ana with Apify" }] },
+        { person: "UP", accounts: ["UP"], sponsor: "Apify", posts: [{ ts: 300, permalink: "p/300", phrase: "I'm Petros with Apify" }] },
+      ],
+      likely: [{ person: "UP", accounts: ["UP"], sponsor: "Apify", posts: [{ ts: 200, permalink: "p/200" }], answers: [{ ts: 250, permalink: "p/250" }] }],
+      hacker: new Map([["UP", [{ channel: "1-introductions", posts: 2 }]]]),
+      person: (id) => id,
+    });
+    const reps = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: ev });
+    const d = boardData({ event: "e", timezone: TZ, run_id: "r", channels: ["spons-apify"], messages, sponsors: sp, offers: [], role: (x) => (x.author_id === "UA" ? "sponsor-side" : "other"), reps, basis: { grouping: "", model: "", written_at: "" } });
+    expect(d.rep_signals["spons-apify"]).toEqual([["name or title"]]);
+    expect(d.rep_self["spons-apify"]).toEqual([150]);
+    // Petros passes the hacker-channel rule only from his self-identification at 300.
+    expect(d.rep_likely["spons-apify"]).toEqual([{ first: 300, posts: [200], answers: [250], self: 300, hacker: 2 }]);
+    expect(JSON.stringify(d)).not.toContain("with Apify");
   });
 });

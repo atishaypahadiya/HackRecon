@@ -3,6 +3,7 @@
 // message pane that renders the parent's message container (data-msg-ts, verified in the channel samples).
 // Rows are kept as scrubbed HTML in scroll-step batches (ThreadRaw), and the ThreadRun is built from those batches,
 // so the same code runs in the browser and offline (`hr rebuild-threads`) once the selectors are corrected.
+import { hackerOnlyChannels } from "../../pipeline/hackerchannels.ts";
 import { messageId, type Message, type ThreadRun, type ThreadStopReason, type Ts } from "../../pipeline/schema.ts";
 import { scrubTokens } from "../../pipeline/domscrub.ts";
 import { Accumulator, type RawRow } from "./accumulate.ts";
@@ -179,14 +180,16 @@ export function sidebarChannels(doc: ParentNode): SidebarChannel[] {
  *  and announcement channels (design doc §Sync). */
 export const SYNC_CHANNEL = /^(?:spons|partner|cohost)-|announce/i;
 
-/** What the build hands the sync (extension/build-config.ts): the event's configured channels, in config order. */
+/** What the build hands the sync (extension/build-config.ts): the event's configured channels, in config order, and
+ *  its hacker-only channels (event.json hacker_only_channels), read authors-only. */
 export interface SyncConfig {
   event: string;
   channels: string[];
+  authors_only?: string[];
 }
 
-export function syncConfigFrom(sponsors: Record<string, unknown>, event: { event?: string; authority_channels?: string[] }): SyncConfig {
-  return { event: event.event ?? "", channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])] };
+export function syncConfigFrom(sponsors: Record<string, unknown>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }): SyncConfig {
+  return { event: event.event ?? "", channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])], authors_only: event.hacker_only_channels ?? [] };
 }
 
 export interface SyncSelection {
@@ -195,20 +198,25 @@ export interface SyncSelection {
   missing: string[];
   /** Not in the config; picked by SYNC_CHANNEL. Add them to sponsors.json if they belong to the event. */
   discovered: string[];
+  /** Hacker-only channels (pipeline/hackerchannels.ts), read authors-only: sender IDs and counts, never text. A
+   *  channel here is never a full target, even if a config lists it. */
+  authors: SidebarChannel[];
 }
 
 /** Config channels first, in config order (user 2026-11-06: selection comes from the event config); then
  *  channels the prefixes find that the config doesn't list yet, in sidebar order. */
-export function syncTargets(found: SidebarChannel[], config: string[] = []): SyncSelection {
+export function syncTargets(found: SidebarChannel[], config: string[] = [], authorsOnly: string[] = []): SyncSelection {
   const byName = new Map(found.map((c) => [c.name, c]));
+  const hacker = new Set(hackerOnlyChannels(found.map((c) => c.name), authorsOnly));
   const targets = config.map((n) => byName.get(n)).filter((c): c is SidebarChannel => !!c);
   const inConfig = new Set(config);
   const extra = found.filter((c) => !inConfig.has(c.name) && SYNC_CHANNEL.test(c.name));
   const seen = new Set<string>();
   return {
-    targets: [...targets, ...extra].filter((c) => !seen.has(c.id) && seen.add(c.id)),
+    targets: [...targets, ...extra].filter((c) => !hacker.has(c.name) && !seen.has(c.id) && seen.add(c.id)),
     missing: config.filter((n) => !byName.has(n)),
-    discovered: extra.map((c) => c.name),
+    discovered: extra.filter((c) => !hacker.has(c.name)).map((c) => c.name),
+    authors: found.filter((c) => hacker.has(c.name)),
   };
 }
 

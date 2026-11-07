@@ -24,7 +24,8 @@ import {
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
-import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, type MentionPost, type RepSignalsFile } from "./reps.ts";
+import { hackerOnlyChannels } from "./hackerchannels.ts";
+import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
@@ -148,7 +149,7 @@ import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestric
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, Message, PageSnapshot } from "./schema.ts";
-import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parsePageSnapshot, parseThreadCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
+import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parseAuthorsCaptureFile, parsePageSnapshot, parseThreadCaptureFile, type AuthorsCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -353,6 +354,9 @@ function syncIngest(args: string[]): number {
   mkdirSync(out, { recursive: true });
   mkdirSync(SLACK_DOM_FIXTURES_DIR, { recursive: true });
   const read = (sub: string, parts: string[]) => Buffer.concat(parts.map((p) => readFileSync(join(dir, sub, p))));
+  // Hacker-only channels are authors-only (user 2026-11-07): any file holding their text is refused, whatever the
+  // bundle says. Names come from event.json, else hackerchannels.ts's pattern.
+  const hackerOnly = (name: string) => (readEvent().hacker_only_channels?.length ? readEvent().hacker_only_channels!.includes(name) : HACKER_ONLY.test(name));
   let bad = 0;
   for (const sub of ["captures", "slack-dom"]) {
     if (!existsSync(join(dir, sub))) continue;
@@ -364,6 +368,11 @@ function syncIngest(args: string[]): number {
       }
       const text = read(sub, f.parts).toString("utf8");
       if (sub === "slack-dom") {
+        if (hackerOnly(f.name.split("--")[0]!)) {
+          console.error(`slack-dom/${f.name}: a hacker-only channel's page; refused (authors-only)`);
+          bad++;
+          continue;
+        }
         const { html, found } = scrubTokens(text);
         writeFileSync(join(SLACK_DOM_FIXTURES_DIR, f.name), html);
         if (total(found)) console.log(`slack-dom/${f.name}: stripped ${total(found)} token${total(found) === 1 ? "" : "s"} the extension missed`);
@@ -371,7 +380,9 @@ function syncIngest(args: string[]): number {
       }
       try {
         const v = JSON.parse(text);
-        if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
+        if (/\.authors\.json$/.test(f.name)) parseAuthorsCaptureFile(v, f.name);
+        else if (typeof v?.channel_name === "string" && hackerOnly(v.channel_name)) throw new Error(`#${v.channel_name} is hacker-only: only its .authors.json is kept`);
+        else if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
         writeFileSync(join(out, f.name), text);
       } catch (e) {
         console.error(`captures/${f.name}: ${(e as Error).message}; skipped`);
@@ -2296,33 +2307,60 @@ async function repSignals(args: string[]): Promise<number> {
   const mention = mentionReps(mentionPosts, sponsors, authority, (id) => organizerIds.has(id));
   notes.push(`organizer mention: ${authorityIds.size} admin/owner-backed organizer ids, ${authorityChannels.size} authority channel${authorityChannels.size === 1 ? "" : "s"}; ${mentionPosts.filter(authority).length} authority posts with a mention read; ${mention.ambiguous} line${mention.ambiguous === 1 ? "" : "s"} naming two or more sponsors skipped`);
 
-  // Signal 3: hacker-only channels' posters, from the capture if synced, else the export (author IDs only).
+  // Hacker-only channels' posters: the newest authors-only capture of each (IDs and counts, no text), else the export
+  // (author IDs only). Signal 3's exclusion, or with signal 2b, its counter-signal.
   const known = new Set([...messages.map((m) => m.channel_name), ...(exp ? exp.channelsById.values() : [])]);
-  const hackerChannels = event.hacker_only_channels ?? [...known].filter((c) => HACKER_ONLY.test(c)).sort();
-  const inCapture = hackerChannels.filter((c) => messages.some((m) => m.channel_name === c));
+  const authorsFiles = new Map<string, AuthorsCaptureFile>();
+  for (const d of syncDirs) {
+    for (const f of readdirSync(d).filter((f) => /\.authors\.json$/.test(f)).sort()) {
+      const a = parseAuthorsCaptureFile(JSON.parse(readFileSync(join(d, f), "utf8")), f);
+      authorsFiles.set(a.channel_name, a);
+      known.add(a.channel_name);
+    }
+  }
+  const hackerChannels = hackerOnlyChannels(known, event.hacker_only_channels);
+  const hackerCounts = new Map<string, { channel: string; posts: number }[]>();
+  const count = (who: string, channel: string, n: number) => {
+    const xs = hackerCounts.get(who) ?? [];
+    const x = xs.find((c) => c.channel === channel);
+    if (x) x.posts += n;
+    else xs.push({ channel, posts: n });
+    hackerCounts.set(who, xs);
+  };
+  const fromCapture = hackerChannels.filter((c) => authorsFiles.has(c));
+  const fromExport = hackerChannels.filter((c) => !authorsFiles.has(c) && exp && existsSync(join(dir, c)));
+  const unread = hackerChannels.filter((c) => !fromCapture.includes(c) && !fromExport.includes(c));
   let hackerPosters: Set<string> | null = null;
   let hackerSrc: string;
   if (!hackerChannels.length) hackerSrc = "not checked: no hacker-only channel known";
-  else if (inCapture.length === hackerChannels.length) {
-    hackerPosters = new Set(messages.filter((m) => hackerChannels.includes(m.channel_name) && m.author_id).map((m) => person(m.author_id!)));
-    hackerSrc = "capture";
-  } else if (exp && hackerChannels.every((c) => existsSync(join(dir, c)))) {
-    hackerPosters = new Set(hackerChannels.flatMap((c) => readChannel(exp, c).filter((m) => m.user).map((m) => person(m.user!))));
-    hackerSrc = `export (${dir}): author IDs only; these channels aren't synced`;
-  } else hackerSrc = `not checked: ${hackerChannels.filter((c) => !inCapture.includes(c)).join(", ")} not in the capture or the export, so no one is likely staff`;
+  else if (unread.length) hackerSrc = `not checked: ${unread.join(", ")} not in an authors-only capture or the export, so no one is likely staff`;
+  else {
+    for (const c of fromCapture) for (const a of authorsFiles.get(c)!.authors) count(person(a.id), c, a.posts);
+    for (const c of fromExport) for (const m of readChannel(exp!, c)) if (m.user && !m.bot_id && m.subtype !== "thread_broadcast") count(person(m.user), c, 1);
+    hackerPosters = new Set(hackerCounts.keys());
+    hackerSrc = [
+      fromCapture.length ? `authors-only capture: ${fromCapture.map((c) => { const a = authorsFiles.get(c)!; return `${c} (${a.threads.read} of ${a.threads.parents} threads read to the end${a.unidentified ? `, ${a.unidentified} posts with no sender ID` : ""})`; }).join(", ")}` : "",
+      fromExport.length ? `export (${dir}): author IDs only for ${fromExport.join(", ")}` : "",
+    ].filter(Boolean).join("; ");
+  }
   if (hackerPosters) notes.push(`hacker-only: ${hackerPosters.size} people posted in ${hackerChannels.join(", ")}`);
+
+  // Signal 2b: each person's own posts and replies in sponsor channels.
+  const selfId = selfIdReps([...messages, ...replies.values()], sponsors, person);
+  notes.push(`self-identified: ${selfId.length} person-sponsor pairs name the sponsor as their employer or company in their own post`);
 
   const confirmedIds = new Map<string, Set<string>>();
   for (const x of [...email, ...mention.hits]) confirmedIds.set(person(x.id), (confirmedIds.get(person(x.id)) ?? new Set()).add(x.sponsor));
   const role = rolesById(captured, sponsors, organizerIds, person, confirmedIds);
-  const likely = likelyReps({ messages, replies: [...replies.values()], items: readJsonFile<Item[]>(ITEMS_PATH, []), sponsors, role, person, hackerPosters });
+  const selfIdentified = new Set(selfId.map((x) => `${x.person}|${x.sponsor}`));
+  const likely = likelyReps({ messages, replies: [...replies.values()], items: readJsonFile<Item[]>(ITEMS_PATH, []), sponsors, role, person, hackerPosters, selfIdentified });
 
   const file: RepSignalsFile = {
     built_at: new Date().toISOString(),
     sources: { emails: emailsSrc, mentions: mentionsSrc, replies: repliesSrc, hacker_only: hackerSrc },
     hacker_only_channels: hackerChannels,
     rule_notes: notes,
-    reps: repEvidence(email, mention.hits, likely, person),
+    reps: repEvidence({ email, mention: mention.hits, selfId, likely, hacker: hackerCounts, person }),
   };
   mkdirSync(dirname(REP_SIGNALS_PATH), { recursive: true });
   writeFileSync(REP_SIGNALS_PATH, JSON.stringify(file, null, 2) + "\n");
@@ -2332,7 +2370,7 @@ async function repSignals(args: string[]): Promise<number> {
   for (const e of file.reps) {
     const already = captured.some((m) => m.author_id && person(m.author_id) === e.person && sponsors[m.channel_name]?.sponsor === e.sponsor && base(m) === "sponsor-side");
     const name = [...captured].reverse().find((m) => m.author_id && person(m.author_id) === e.person)?.author_name ?? e.person;
-    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind)).join("; ")}`);
+    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind === "self-identified" ? `self-identified (“${s.posts[0]!.phrase}”)` : s.kind === "hacker channels" ? `counter-signal: ${s.channels.map((c) => `#${c.channel} ${c.posts}`).join(", ")}` : s.kind)).join("; ")}`);
   }
   console.log(`${file.reps.length} reps with a signal (${file.reps.filter((e) => e.standing === "confirmed").length} confirmed) → ${REP_SIGNALS_PATH}`);
   return 0;

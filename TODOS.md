@@ -84,21 +84,13 @@ Two accounts of one person are linked by `hr person-links` (user 2026-11-07; des
 
 `hr rep-signals` (`pipeline/reps.ts`) adds three signals: an email on the sponsor's domain, an organizer mentioning the user ID beside the sponsor's name, and likely staff (a staff post, an answer to a hacker, never in a hacker-only channel). Likely staff is shown with its evidence and never gets a role. Apify's rep is Petros Hong (likely staff). Design doc §Step 1 notes.
 
-### Hacker-only channels at a live event
+### ~~Hacker-only channels at a live event~~ Done 2026-11-07
 
-**What:** Read who posts in team formation and introductions without the export. At Cal Hacks, `hr rep-signals` takes those posters from the slackdump export (author IDs only). A live event has no export, so likely staff (reps.ts signal 3) can't be checked, and no one gets it.
-
-**Why:** Plan's People found Apify's only rep (Petros Hong) through signal 3 alone.
-
-**Context:** A plain sync of those channels would put about 870 hacker posts, mostly personal intros, into messages.json, and the classifier reads every message there. The capture needs an authors-only mode for these channels: the extension keeps sender IDs and drops text, and sync-ingest stores IDs only.
-
-**Effort:** M
-**Priority:** P2
-**Depends on:** nothing
+"Sync this event" reads team formation and introductions last and authors-only: sender IDs and post counts in `captures/<id>.authors.json`, no text. sync-ingest refuses anything else from those channels, and `hr rep-signals` prefers these files to the export. UNVERIFIED in Chrome until the next sync. Design doc §Step 1 notes (Rep signals).
 
 ### Sponsor email domains
 
-**What:** Fill sponsors.json `domains` so reps.ts signal 1 can fire where a workspace shows emails. None are listed. At Cal Hacks it's moot: 1 of 2,900 accounts shows an email.
+**What:** Fill sponsors.json `domains` so reps.ts signal 1 can fire where a workspace shows emails. None are listed. At Cal Hacks it's moot: 1 of 2,900 accounts shows an email. Left dormant (user 2026-11-07).
 
 **Effort:** S
 **Priority:** P4

@@ -80,10 +80,13 @@ export interface BoardData {
   /** Per sponsor channel, what each rep candidate matched (reps.ts signalLabels), aligned with candidate_first.
    *  Signal 3 is left out here (Plan shows it): its counts depend on the replay's time. */
   rep_signals: Record<string, string[][]>;
+  /** Per sponsor channel, when each candidate first named the sponsor as their employer (reps.ts signal 2b), aligned
+   *  the same way; null if never. A time, so a replay shows it only once posted; no phrase, which can hold a name. */
+  rep_self: Record<string, (number | null)[]>;
   /** Per sponsor channel, likely staff (reps.ts signal 3) who aren't sponsor-side: shown apart, never counted as
    *  reps, never given authority. `first` is when the signal first holds (a staff post and an answer both in);
    *  posts and answers are their times, so a replay counts only what was posted by then. Never names. */
-  rep_likely: Record<string, { first: number; posts: number[]; answers: number[] }[]>;
+  rep_likely: Record<string, { first: number; posts: number[]; answers: number[]; self: number | null; hacker: number }[]>;
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
@@ -264,7 +267,8 @@ export function boardData(o: {
   });
   const repAccounts: Record<string, number[]> = {};
   const repSignals: Record<string, string[][]> = {};
-  const repLikely: Record<string, { first: number; posts: number[]; answers: number[] }[]> = {};
+  const repSelf: Record<string, (number | null)[]> = {};
+  const repLikely: BoardData["rep_likely"] = {};
   const reps = Object.entries(o.sponsors)
     .filter(([ch, s]) => o.channels.includes(ch) && s.sponsor !== "event")
     .map(([ch, s]) => {
@@ -290,10 +294,22 @@ export function boardData(o: {
       const ranked = [...firstBy].sort((a, b) => a[1] - b[1]);
       repAccounts[ch] = ranked.map(([who]) => accounts.get(who)!.size);
       const fileSignals = (who: string) => o.reps?.signals.get(`${who}|${s.sponsor}`) ?? [];
-      repSignals[ch] = ranked.map(([who]) => signalLabels([...(a5.get(who) ?? [])], fileSignals(who).filter((x) => x.kind !== "likely staff")));
+      const selfSince = (who: string) => {
+        const x = fileSignals(who).find((x) => x.kind === "self-identified");
+        return x?.kind === "self-identified" ? (x.posts[0]?.ts ?? null) : null;
+      };
+      repSignals[ch] = ranked.map(([who]) => signalLabels([...(a5.get(who) ?? [])], fileSignals(who).filter((x) => x.kind === "email domain" || x.kind === "organizer mention" || x.kind === "hacker channels")));
+      repSelf[ch] = ranked.map(([who]) => selfSince(who));
       repLikely[ch] = [...likelyFirst].sort((a, b) => a[1] - b[1]).map(([who, first]) => {
         const l = fileSignals(who).find((x) => x.kind === "likely staff");
-        return { first, posts: l?.kind === "likely staff" ? l.posts.map((e) => e.ts) : [], answers: l?.kind === "likely staff" ? l.answers.map((e) => e.ts) : [] };
+        const h = fileSignals(who).find((x) => x.kind === "hacker channels");
+        return {
+          first,
+          posts: l?.kind === "likely staff" ? l.posts.map((e) => e.ts) : [],
+          answers: l?.kind === "likely staff" ? l.answers.map((e) => e.ts) : [],
+          self: selfSince(who),
+          hacker: h?.kind === "hacker channels" ? h.channels.reduce((n, c) => n + c.posts, 0) : 0,
+        };
       });
       return {
         sponsor: s.sponsor,
@@ -316,6 +332,7 @@ export function boardData(o: {
     reps,
     rep_accounts: repAccounts,
     rep_signals: repSignals,
+    rep_self: repSelf,
     rep_likely: repLikely,
     event_deadlines: eventDeadlines(o.schedule ?? []),
     basis: o.basis,
