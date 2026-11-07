@@ -74,17 +74,9 @@ Folded into `hr sync` (D11 reversed by the user, 2026-11-06): public pages are f
 
 ## Reps
 
-### organizers.json: user IDs only
+### ~~organizers.json: user IDs only~~ Done 2026-11-06
 
-**What:** Reduce `config/organizers.json` to Slack user IDs only, with no names, once the DevTools hour confirms the DOM exposes the sender's user ID.
-
-**Why:** It's the one baseline-derived product input (A5). Names in a config file are personal data the tool doesn't need if IDs can be matched.
-
-**Context:** A5 built it once from the export's `users.json` (admins, owners, CAL HACKS tags, director/exec/organizer/logistics titles; 55 accounts) with names and IDs, because the DOM's ID attribute was unconfirmed. If the DOM shows no user ID, keep the display-name fallback and close this item with that reason. Note (v2, D19): override authority uses ids backed by admin/owner status or listed by the user; names never grant authority, so ids matter more in v2.
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** the day-1 DevTools hour (sender user-ID attribute)
+The DOM exposes the sender's user ID (`data-message-sender`): 1004 of 1006 human posts in the Oct 27 captures carry one, and 1186 of 1186 in the Nov 6 sync. `organizers.json` is now `{id, why}` only. Reps and organizers are keyed by ID (`rolesById` in `pipeline/roles.ts`), because display names change mid-event: "LaurenElize (Annapurna Labs)" became "LaurenElize" between captures. A post with no ID gets no role.
 
 ## Plan
 
