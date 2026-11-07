@@ -1726,7 +1726,22 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
     - **Facts picked in code:** README lines, a file-type and config summary, each declared dependency's line, and where each is imported (up to 6 files, with the file's opening comment).
     - **Model:** one Sonnet call drafts; every citation is checked like the gap check.
     - **Repos:** now partial clones with no working tree (blobs over 300 kB stay on GitHub), read from git's objects. Nothing from a repo is a file on disk.
-    - **Reachability:** of the 90 winners, 86 link a GitHub repo and 75 of those are readable. 7 are gone or private; 4 were `http://` links, now read over https.
+    - **Reachability:** of the 90 winners, 86 link a GitHub repo and 79 are readable. The other 7 are gone or private. 4 of the readable ones were `http://` links, now read over https.
+  - **Smoke test (Hindsight):** partial.
+    - Apify: "scan campus sources and read university guide pages". Matches the confirmed use.
+    - Claude API: "parse transcripts and class schedules, and answer student questions with sources". Misses the fit reasons and the university guide.
+    - Droid: "scan campus sources on a schedule and rank what it finds". Misses repairing a broken extractor.
+    - Reading 6 import sites per dependency instead of 2 fixed the Claude draft.
+  - **Eval run (2026-11-06; 79 repos; $3.52 Sonnet, plus the $0.11 pilot):**
+    - **(a) Built With recall:** strict 50.8% (599/1180 tags), loose 62.3% (735/1180), per-project mean 63.0%. 70 of the projects have a Built With list. The draft averages 16.4 items.
+    - **Most-missed tags:**
+      - Naming, which a rule without aliases counts as a miss: anthropic 19 (vs "Claude API"), node.js 17, claude 8, javascript 8.
+      - Sponsor products, which matter for fit: elasticsearch 7, mcp 7, vultr 5, fetch.ai 4, agentverse 4, figma 5, mana 6.
+      - Dev tools and categories: vitest 7, pytest 6.
+    - **(b) Fit run C vs run B, on the 81 won pairs those projects have (of 94):**
+      - recall@3: 60.5% (B) → 58.0% (C); 5 lost, 3 gained; McNemar p = 0.73.
+      - recall@5: 74.1% (B) → 70.4% (C); 6 lost, 3 gained; McNemar p = 0.51.
+      - No significant difference either way. C's recall@5 of 70.4% is above the 67% gate floor.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
