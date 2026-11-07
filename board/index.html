@@ -254,7 +254,7 @@
   .dsrc q { display: block; margin-top: 2px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 13px; quotes: none; overflow-wrap: anywhere; }
   .dr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
   .dr > :not(.skip) { grid-column: 1; max-width: 75ch; }
-  .dr .skip { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: -10px; }
+  .dr .skip { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: -10px; min-width: 44px; text-align: right; }
   /* Use all stays in reach while the list scrolls; the space below keeps it apart from Make my plan. */
   .drafts { margin-bottom: 16px; }
   .dgo { position: sticky; bottom: 0; z-index: 1; padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: #fff; }
@@ -287,6 +287,8 @@
   .bq p { margin: 2px 0 6px; }
   .bq p + p { margin-top: 8px; }
   .bq .how { min-width: 0; height: 32px; margin-right: 12px; font: 650 13px/1 Manrope, sans-serif; }
+  .bq .how { position: relative; }
+  .bq .how::before { content: ""; position: absolute; inset: -6px 0; } /* 44px tall hit area, same 32px pill */
   .item ul.dl { display: block; margin: 0; padding: 0; font: 500 14px/1.5 Manrope, sans-serif; color: var(--text); }
   .item ul.dl li + li { margin-top: 6px; }
   .item .ck + q { margin: 0 0 8px 28px; }
