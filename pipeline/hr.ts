@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
-import { captureFiles, loadCapture, type LoadedCapture } from "./captures.ts";
+import { captureFiles, loadCapture, threadCaptureFiles, type LoadedCapture } from "./captures.ts";
 import {
   classifyOne,
   MODEL,
@@ -21,7 +21,7 @@ import {
   type ClassifyInput,
   type ClassifyRun,
 } from "./classify.ts";
-import { compareChannel, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport } from "./compare.ts";
+import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { loadExport } from "./export.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
@@ -96,11 +96,13 @@ import {
   RULES_PATH,
   RUN_PATH,
   RUNS_PATH,
+  SLACK_DOM_FIXTURES_DIR,
   SPONSORS_PATH,
   fromCaller,
   takeEventArg,
   useEvent,
 } from "./event.ts";
+import { scrubTokens, total } from "./domscrub.ts";
 import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
 import type { EventConfig } from "./classify.ts";
 import {
@@ -139,7 +141,7 @@ import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestric
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, PageSnapshot } from "./schema.ts";
-import { PAGE_ACCESS, pageFileName, parsePageSnapshot, type Item, type PageAccess } from "./schema.ts";
+import { PAGE_ACCESS, pageFileName, parsePageSnapshot, parseThreadCaptureFile, type Item, type PageAccess } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -195,6 +197,9 @@ const USAGE = `usage:
   bun run hr prefill --repo https://github.com/<owner>/<repo>
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
+  bun run hr scrub-dom [files…]
+      Strips Slack session tokens (xoxc-, xoxd-, bearer, JWT, signed file URLs) from saved DOM samples in
+      ${SLACK_DOM_FIXTURES_DIR}/, in place. Prints counts only. Run it after saving any sample.
   bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4]
       P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
       drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
@@ -225,7 +230,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -247,6 +252,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "ship") return shipCli(rest);
   if (cmd === "prefill") return prefillCli(rest);
   if (cmd === "prefill-eval") return prefillEval(rest);
+  if (cmd === "scrub-dom") return scrubDom(rest);
   if (cmd === "sync") return sync(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
@@ -268,8 +274,10 @@ function compare(args: string[]): number {
       sponsors: { type: "string", default: SPONSORS_PATH },
     },
   });
-  const files = captureFiles(positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR]);
-  if (!files.length) {
+  const paths = positionals.length ? positionals.map(fromCaller) : [CAPTURES_DIR];
+  const files = captureFiles(paths);
+  const threadFiles = threadCaptureFiles(paths);
+  if (!files.length && !threadFiles.length) {
     console.error("No capture files found. Pass paths, e.g. bun run hr compare ~/Downloads/C0C7TCNCR1N.json");
     return 2;
   }
@@ -287,14 +295,78 @@ function compare(args: string[]): number {
     reports.push(compareChannel(loaded.capture, exp, cutoff, loaded.dropped));
   }
 
-  printTable(reports);
-  for (const r of reports) printDetails(r);
-  printLockedCoverage(values.sponsors!, reports);
+  if (reports.length) {
+    printTable(reports);
+    for (const r of reports) printDetails(r);
+    printLockedCoverage(values.sponsors!, reports);
+  }
+  const threads = compareThreadFiles(threadFiles, exp, cutoff, values.sponsors!);
   if (values.json) {
-    writeFileSync(fromCaller(values.json), JSON.stringify(reports, null, 2));
+    writeFileSync(fromCaller(values.json), JSON.stringify(threadFiles.length ? { channels: reports, threads } : reports, null, 2));
     console.log(`\nwrote ${fromCaller(values.json)}`);
   }
-  return reports.some((r) => !r.pass.recall) ? 1 : 0;
+  return reports.some((r) => !r.pass.recall) || (threads && !threads.totals.pass) ? 1 : 0;
+}
+
+function scrubDom(args: string[]): number {
+  const files = args.length ? args.map(fromCaller) : existsSync(SLACK_DOM_FIXTURES_DIR) ? readdirSync(SLACK_DOM_FIXTURES_DIR).filter((f) => f.endsWith(".html")).sort().map((f) => join(SLACK_DOM_FIXTURES_DIR, f)) : [];
+  if (!files.length) {
+    console.error(`No DOM samples in ${SLACK_DOM_FIXTURES_DIR}/`);
+    return 2;
+  }
+  let stripped = 0;
+  for (const f of files) {
+    const { html, found } = scrubTokens(readFileSync(f, "utf8"));
+    const n = total(found);
+    if (n) writeFileSync(f, html);
+    stripped += n;
+    const kinds = Object.entries(found).filter(([, c]) => c).map(([k, c]) => `${k} ${c}`).join(", ");
+    console.log(`${f.split("/").pop()}: ${n ? `stripped ${n} (${kinds})` : "clean"}`);
+  }
+  console.log(`${files.length} samples, ${stripped} token${stripped === 1 ? "" : "s"} stripped`);
+  return 0;
+}
+
+/** Step 1's gate (D5): thread recall over the locked 25's export replies by ts, at least RECALL_MIN. */
+function compareThreadFiles(files: string[], exp: ReturnType<typeof loadExport>, cutoff: number, sponsorsPath: string) {
+  if (!files.length) return null;
+  const reports: ThreadReport[] = [];
+  for (const f of files) {
+    try {
+      reports.push(compareThreads(parseThreadCaptureFile(JSON.parse(readFileSync(f, "utf8")), f), exp, cutoff));
+    } catch (e) {
+      console.error(`skip ${f}: ${(e as Error).message}`);
+    }
+  }
+  const sponsors = JSON.parse(readFileSync(sponsorsPath, "utf8")) as Record<string, { stretch?: boolean }>;
+  const locked = Object.entries(sponsors).filter(([, v]) => !v.stretch).map(([k]) => k);
+  const totals = threadTotals(exp, locked, reports.filter((r) => locked.includes(r.channel_name)));
+  const rows = reports.map((r) => [
+    r.channel_name,
+    `${r.matched}/${r.export_replies}`,
+    `${pct(r.recall)} ${mark(r.pass.recall)}`,
+    `${r.author.matched}/${r.author.checked} ${mark(r.pass.author)}`,
+    `${r.threads_opened}/${r.threads_attempted}/${r.threads_in_export}`,
+    Object.entries(r.stop_reasons).map(([k, n]) => `${k} ${n}`).join(", "),
+    `${r.extras.length}`,
+    `${r.duration_s}s`,
+  ]);
+  const head = ["channel", "replies found", "recall", "author", "threads open/tried/export", "stops", "extra", "time"];
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((x) => x[i]!.length)));
+  const line = (cells: string[]) => cells.map((c, i) => c.padEnd(w[i]!)).join("  ");
+  console.log(`\nThread replies (step 1) against the export, by ts`);
+  console.log(line(head));
+  console.log(w.map((n) => "-".repeat(n)).join("  "));
+  rows.forEach((x) => console.log(line(x)));
+  for (const r of reports) {
+    const why = (k: string) => r.missed.filter((m) => m.why === k).length;
+    if (r.missed.length) console.log(`  ${r.channel_name}: missed ${r.missed.length} (in an opened pane ${why("in_pane")}, pane not opened ${why("not_opened")}, thread not tried ${why("not_attempted")})`);
+    for (const m of r.missed.filter((m) => m.why === "in_pane").slice(0, 5)) console.log(`    ${m.permalink}  ${m.author}: ${m.text}`);
+    for (const x of r.extras) console.log(`    extra ${x.ts} (${x.why}): ${x.text}`);
+    for (const c of r.count_mismatches) console.log(`    ${c.thread_ts}: Slack showed ${c.shown} replies, the export has ${c.export}`);
+  }
+  console.log(`\nlocked ${locked.length} thread recall: ${totals.matched}/${totals.replies} = ${pct(totals.recall)} ${mark(totals.pass)} (gate ${pct(RECALL_MIN)})` + (totals.uncaptured.length ? `; no thread file yet: ${totals.uncaptured.join(", ")}` : ""));
+  return { reports, totals };
 }
 
 function recordRun(args: string[]): number {

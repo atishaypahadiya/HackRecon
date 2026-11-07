@@ -66,7 +66,7 @@ To save one: scroll a channel to the spot you want, open DevTools → Console, a
 copy(document.body.outerHTML)
 ```
 
-Then in a terminal: `pbpaste > events/<slug>/fixtures/slack-dom/<channel>-<case>.html`. Cover each of these at least once (the coverage tests name any that are missing):
+Then in a terminal: `pbpaste > events/<slug>/fixtures/slack-dom/<channel>--<case>.html`, and then `bun run hr scrub-dom`. `outerHTML` can carry the session (xoxc- tokens in boot data, the xoxd- cookie, signed file URLs); scrub-dom strips them in place and prints counts only, and `bun test` fails while any sample still has one. Cover each of these at least once (the coverage tests name any that are missing):
 
 | Case | Where to find one | File name |
 |---|---|---|
@@ -75,5 +75,9 @@ Then in a terminal: `pbpaste > events/<slug>/fixtures/slack-dom/<channel>-<case>
 | Bot post | Slackbot "… from Moss was added to this channel" (spons-moss, spons-wajo-ai, spons-capital-one) | |
 | System rows | "joined #channel" rows (most channels) | |
 | Labeled link | a post with "Use this link"-style text | |
+| Thread pane, top (step 1) | a thread open in the side pane, scrolled up until the parent message shows | `--thread-top` |
+| Thread pane, end (step 1) | the same pane scrolled to its last reply | `--thread-end` |
+| Reply row (step 1) | the channel with the pane closed, a post showing "N replies · Last reply …" | `--reply-row` |
+| More replies (step 1) | a pane showing a "Show more replies"-style control, if Slack renders one | `--thread-more` |
 
 Then `bun test extension/`. Fix `src/selectors.ts` until it passes, and rebuild.
