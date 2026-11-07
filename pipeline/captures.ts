@@ -23,6 +23,18 @@ export function captureFiles(paths: string[]): string[] {
   });
 }
 
+/** Step 1's `<channel_id>.threads.json` files in the given paths (directories are listed, files kept). */
+export function threadCaptureFiles(paths: string[]): string[] {
+  return paths.flatMap((p) => {
+    if (!existsSync(p)) return [];
+    if (!statSync(p).isDirectory()) return /\.threads\.json$/.test(p) ? [p] : [];
+    return readdirSync(p)
+      .filter((f) => /^[CG][A-Z0-9]+\.threads\.json$/.test(f))
+      .sort()
+      .map((f) => join(p, f));
+  });
+}
+
 export function loadCapture(file: string): LoadedCapture {
   const capture = parseCaptureFile(JSON.parse(readFileSync(file, "utf8")), file);
   return { file, ...normalizeCapture(capture) };
