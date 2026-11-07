@@ -7,6 +7,7 @@
 //   config/event.json, config/sponsors.json   tracked: hand-written, no workspace text
 //   config/organizers.json                    gitignored: Slack ids
 //   config/person_links.json                  gitignored: Slack ids linked as one person, with hashed evidence
+//   config/rep_signals.json                   gitignored: sponsor reps beyond A5's signals, with their evidence (reps.ts)
 //   captures/ data/ review/ fixtures/         gitignored: workspace content
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,7 +18,7 @@ export const EVENTS_DIR = join(REPO_ROOT, "events");
 export const DEFAULT_EVENT = "current";
 
 /** Paths under an event directory that hold workspace content and must never be tracked by git. */
-export const UNTRACKED_EVENT_PATHS = ["captures/", "review/", "data/", "fixtures/", "config/organizers.json", "config/person_links.json"] as const;
+export const UNTRACKED_EVENT_PATHS = ["captures/", "review/", "data/", "fixtures/", "config/organizers.json", "config/person_links.json", "config/rep_signals.json"] as const;
 
 // Event-relative paths.
 export const EVENT_PATH = "config/event.json";
@@ -25,6 +26,7 @@ export const SPONSORS_PATH = "config/sponsors.json";
 export const ORGANIZERS_PATH = "config/organizers.json";
 /** Same-person links between Slack ids (people.ts, `hr person-links`). */
 export const PERSON_LINKS_PATH = "config/person_links.json";
+export const REP_SIGNALS_PATH = "config/rep_signals.json";
 export const CAPTURES_DIR = "captures";
 /** Page snapshots from the extension's "Capture this page" (D11): canon. */
 export const PAGES_DIR = "captures/pages";

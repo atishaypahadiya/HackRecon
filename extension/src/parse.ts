@@ -36,7 +36,7 @@ export function parseRow(el: Element, base?: string): RawRow | null {
 
   const sender = parseSender(el);
   const bodyEl = el.querySelector(SEL.body);
-  const { text, links } = bodyEl ? serializeBody(bodyEl, base) : { text: "", links: [] };
+  const { text, links, mentions } = bodyEl ? serializeBody(bodyEl, base) : { text: "", links: [] };
   const nonPost = nonPostReason({ ts, permalink, text, hasBody: !!bodyEl });
   const replies = parseReplyBar(el);
   if (nonPost) return replies ? { kind: "system", ts, sender, text, links, permalink, nonPost, replies } : { kind: "system", ts, sender, text, links, permalink, nonPost };
@@ -44,6 +44,7 @@ export function parseRow(el: Element, base?: string): RawRow | null {
   const threadTs = broadcastParent(permalink, ts);
   const row: RawRow = threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
   if (replies) row.replies = replies;
+  if (mentions?.length) row.mentions = mentions;
   return row;
 }
 
@@ -91,9 +92,11 @@ function isSystem(row: Element, sender: Sender | null, hasBody: boolean): boolea
   return TEXT.system.test(rest.trim());
 }
 
-/** Body text with anchors as `label <href>` (OV7); returns every external href in order. */
-export function serializeBody(body: Element, base?: string): { text: string; links: string[] } {
+/** Body text with anchors as `label <href>` (OV7); returns every external href in order, and each @-mention's
+ *  Slack user ID with its rendered label (the mention stays plain text: reps.ts reads the ID, never the label). */
+export function serializeBody(body: Element, base?: string): { text: string; links: string[]; mentions?: { id: string; label: string }[] } {
   const links: string[] = [];
+  const mentions: { id: string; label: string }[] = [];
   let out = "";
   const walk = (n: Node): void => {
     if (n.nodeType === 3) {
@@ -119,6 +122,8 @@ export function serializeBody(body: Element, base?: string): { text: string; lin
     if (tag === "A") {
       const href = externalHref(el.getAttribute("href"), base);
       const label = squash(el.textContent ?? "");
+      const member = el.getAttribute(SEL.mentionIdAttr);
+      if (member && /^[UW][A-Z0-9]{6,}$/.test(member)) mentions.push({ id: member, label });
       if (!href) {
         out += label;
         return;
@@ -137,7 +142,7 @@ export function serializeBody(body: Element, base?: string): { text: string; lin
     .replace(/[ \t ]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { text, links };
+  return mentions.length ? { text, links, mentions } : { text, links };
 }
 
 /** Null for mentions, channel links and other in-app anchors; unwraps Slack's redirect. */

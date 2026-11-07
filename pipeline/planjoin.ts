@@ -4,7 +4,8 @@
 import type { BoardOffer } from "./board.ts";
 import { productMentioned, type SponsorAliases } from "./fit.ts";
 import type { PlanInput, PlanTrack } from "./plan.ts";
-import type { PosterRole } from "./roles.ts";
+import { likelySince, signalLabels, type RepIndex } from "./reps.ts";
+import { sponsorSignals, type A5Signal, type PosterRole } from "./roles.ts";
 import type { Item, Message } from "./schema.ts";
 import type { Sponsors } from "./pool.ts";
 
@@ -124,6 +125,10 @@ export interface PlanRep {
   first: number;
   quote: string;
   source_url: string;
+  /** What the rep matched, strongest first (reps.ts signalLabels). */
+  signals: string[];
+  /** Likely staff only (reps.ts signal 3): shown with its evidence, never sponsor-side. */
+  likely: boolean;
 }
 
 export interface PlanPeople {
@@ -132,24 +137,31 @@ export interface PlanPeople {
   reps: PlanRep[];
 }
 
-/** P5: reps of each likely track's sponsor: sponsor-side posters in that sponsor's channels, by person, posted by now. */
-export function planPeople(messages: Message[], sponsors: JoinSponsor[], channels: Sponsors, role: (m: Message) => PosterRole, person: (id: string) => string, nowSec: number, shown: Shown): PlanPeople[] {
+/** P5: reps of each likely track's sponsor: sponsor-side posters in that sponsor's channels, by person, posted by
+ *  now; then likely staff (reps.ts), labeled. Every rep carries the signals it matched. */
+export function planPeople(messages: Message[], sponsors: JoinSponsor[], channels: Sponsors, role: (m: Message) => PosterRole, person: (id: string) => string, nowSec: number, shown: Shown, ix?: RepIndex): PlanPeople[] {
   return sponsors
     .filter((s) => s.why.some((w) => w.startsWith("likely track: ")))
     .map((s) => {
       const by = new Map<string, Message[]>();
       for (const m of messages) {
         const ch = channels[m.channel_name];
-        if (ch?.sponsor !== s.sponsor || ch.kind === "event" || !m.author_id || m.subtype || m.author_kind === "bot" || Number(m.ts) > nowSec || role(m) !== "sponsor-side") continue;
+        if (ch?.sponsor !== s.sponsor || ch.kind === "event" || !m.author_id || m.subtype || m.author_kind === "bot" || Number(m.ts) > nowSec) continue;
         const who = person(m.author_id);
+        // Likely staff only once both its staff post and its answer are posted, as of now.
+        const since = likelySince(ix?.signals.get(`${who}|${s.sponsor}`));
+        if (role(m) !== "sponsor-side" && !(role(m) === "other" && ix?.likely.get(who)?.has(s.sponsor) && since !== null && since <= nowSec)) continue;
         by.set(who, [...(by.get(who) ?? []), m]);
       }
-      const reps = [...by].flatMap(([who, ms]): PlanRep[] => {
+      const out = [...by].flatMap(([who, ms]): PlanRep[] => {
         ms.sort((a, b) => Number(a.ts) - Number(b.ts));
         const first = ms[0]!, text = shown(first), quote = firstLine(text);
         if (!quoteHolds(quote, text)) return [];
-        return [{ person: who, name: ms.at(-1)!.author_name, accounts: new Set(ms.map((m) => m.author_id)).size, posts: ms.length, first: Number(first.ts), quote, source_url: first.permalink }];
+        const likely = role(first) !== "sponsor-side";
+        const a5 = likely ? [] : [...new Set(ms.flatMap((m) => sponsorSignals(m, channels[m.channel_name])))] as A5Signal[];
+        const signals = signalLabels(a5, ix?.signals.get(`${who}|${s.sponsor}`), nowSec);
+        return [{ person: who, name: ms.at(-1)!.author_name, accounts: new Set(ms.map((m) => m.author_id)).size, posts: ms.length, first: Number(first.ts), quote, source_url: first.permalink, signals, likely }];
       });
-      return { sponsor: s.sponsor, why: s.why, reps: reps.sort((a, b) => a.first - b.first) };
+      return { sponsor: s.sponsor, why: s.why, reps: out.sort((a, b) => Number(a.likely) - Number(b.likely) || a.first - b.first) };
     });
 }

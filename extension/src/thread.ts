@@ -145,6 +145,7 @@ export function threadRunFromRaw(raw: ThreadRaw, ctx: { channelId: string; chann
       if (m.sender.id) out.author_id = m.sender.id;
       out.author_kind = m.sender.bot ? "bot" : "user";
       if (m.sender.external) out.author_external = true;
+      if (m.mentions?.length) out.mentions = m.mentions;
       return out;
     });
   const run: ThreadRun = { thread_ts: raw.thread_ts, reply_count_shown: raw.reply_count_shown, stop_reason: raw.stop_reason, replies };

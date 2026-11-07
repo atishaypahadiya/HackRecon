@@ -9,6 +9,7 @@ export type RawRow =
       sender: Sender | null;
       text: string;
       links: string[];
+      mentions?: Mention[];
       permalink: string;
       /** Set on replies also sent to the channel: the parent's ts. */
       threadTs?: Ts;
@@ -20,6 +21,12 @@ export type RawRow =
   /** Day/unread dividers: Slack always renders an author header after one. */
   | { kind: "divider" }
   | { kind: "channel_start" };
+
+/** An @-mention: the Slack user ID from the DOM and its rendered label. */
+export interface Mention {
+  id: string;
+  label: string;
+}
 
 export interface Replies {
   count: number;
@@ -40,6 +47,7 @@ export interface Captured {
   sender: Sender;
   text: string;
   links: string[];
+  mentions?: Mention[];
   permalink: string;
   replies?: Replies;
 }
@@ -51,6 +59,7 @@ interface Seen {
   header: Sender | null;
   text: string;
   links: string[];
+  mentions?: Mention[];
   permalink: string;
   replies?: Replies;
 }
@@ -96,6 +105,7 @@ export class Accumulator {
         // Re-renders can arrive before images/unfurls settle; keep the fullest text seen.
         text: old && old.text.length > row.text.length ? old.text : row.text,
         links: old && old.links.length > row.links.length ? old.links : row.links,
+        mentions: old?.mentions && old.mentions.length > (row.mentions?.length ?? 0) ? old.mentions : (row.mentions ?? old?.mentions),
         permalink: row.permalink || old?.permalink || "",
         replies: row.replies ?? old?.replies,
       });
@@ -141,6 +151,7 @@ export class Accumulator {
       const m: Captured = { ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink };
       if (r.threadTs) m.threadTs = r.threadTs;
       if (r.replies) m.replies = r.replies;
+      if (r.mentions?.length) m.mentions = r.mentions;
       messages.push(m);
     }
     return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors, deletedParents };

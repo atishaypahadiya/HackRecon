@@ -3,6 +3,7 @@ import type { BoardOffer } from "./board.ts";
 import type { PlanTrack } from "./plan.ts";
 import { firstLine, joinSponsors, planCredits, planPeople, planSessions, quoteHolds, submissionDeadline, type JoinSponsor } from "./planjoin.ts";
 import { personKeys } from "./people.ts";
+import { repIndex } from "./reps.ts";
 import type { Sponsors } from "./pool.ts";
 import { rolesById } from "./roles.ts";
 import type { Item, Message } from "./schema.ts";
@@ -129,8 +130,21 @@ describe("planPeople (P5)", () => {
     const person = personKeys([{ ids: ["UG", "UM"] }]);
     const role = rolesById(messages, sponsors, new Set(), person);
     const p = planPeople(messages, S, sponsors, role, person, 1000, (m) => m.text);
-    expect(p).toEqual([{ sponsor: "Factory", why: ["likely track: [Factory] Droid"], reps: [{ person: "UG", name: "David", accounts: 2, posts: 2, first: 100, quote: "post 100", source_url: "p/100" }] }]);
+    expect(p).toEqual([{ sponsor: "Factory", why: ["likely track: [Factory] Droid"], reps: [{ person: "UG", name: "David", accounts: 2, posts: 2, first: 100, quote: "post 100", source_url: "p/100", signals: ["name or title"], likely: false }] }]);
     const redacted = planPeople(messages, S, sponsors, role, person, 1000, (m) => (m.ts === "100" ? "post by [name]" : m.text));
     expect(redacted[0]!.reps[0]!.quote).toBe("post by [name]");
+  });
+  test("likely staff is listed after the reps, labeled, with its evidence; it isn't sponsor-side", () => {
+    const person = personKeys([{ ids: ["UG", "UM"] }]);
+    const role = rolesById(messages, sponsors, new Set(), person);
+    const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: [{ person: "UH", accounts: ["UH"], sponsor: "Factory", standing: "likely", signals: [{ kind: "likely staff", posts: [{ ts: 300, permalink: "p/300" }], answers: [{ ts: 310, permalink: "p/a" }, { ts: 2000, permalink: "p/b" }] }] }] }, person);
+    const p = planPeople(messages, S, sponsors, role, person, 1000, (m) => m.text, ix)[0]!;
+    expect(p.reps.map((r) => [r.name, r.likely, r.signals])).toEqual([
+      ["David", false, ["name or title"]],
+      ["a hacker", true, ["likely staff: 1 offer, prize or workshop post, 1 answer to hackers"]],
+    ]);
+    // Before its first answer the signal doesn't hold yet: the replay doesn't show it.
+    expect(planPeople(messages, S, sponsors, role, person, 305, (m) => m.text, ix)[0]!.reps.map((r) => r.name)).toEqual(["David"]);
+    expect(role(messages[2]!)).toBe("other");
   });
 });

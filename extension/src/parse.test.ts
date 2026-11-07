@@ -33,6 +33,13 @@ describe("serializeBody", () => {
     expect(r).toEqual({ text: "hi @Ada see @Bob", links: [] });
   });
 
+  test("a mention keeps its Slack user ID from data-member-id; the text is unchanged", () => {
+    const r = serializeBody(
+      body('ask <a class="c-member_slug" data-member-id="U0ZC363EB7D" href="/team/U0ZC363EB7D">@Charlie [Apify]</a> or <a data-member-id="not-an-id" href="/team/x">@x</a> at the booth'),
+    );
+    expect(r).toEqual({ text: "ask @Charlie [Apify] or @x at the booth", links: [], mentions: [{ id: "U0ZC363EB7D", label: "@Charlie [Apify]" }] });
+  });
+
   test("message permalinks count as links", () => {
     const p = "https://calhacks.slack.com/archives/C1/p1791591648310369";
     expect(serializeBody(body(`see <a href="${p}">this</a>`)).links).toEqual([p]);

@@ -5,6 +5,7 @@ import type { LabelRow } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import { loadPersonKey } from "./people.ts";
+import { loadRepIndex } from "./reps.ts";
 import { loadOrganizerIds, rolesById } from "./roles.ts";
 import type { Message } from "./schema.ts";
 
@@ -17,7 +18,9 @@ export function redactedInputs(
   organizerIds: Set<string> = loadOrganizerIds(),
 ): ClassifyInput[] {
   const redact = compileRedactor(buildNameList(new Set(captured.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-  const role = rolesById([...captured, ...extra], sponsors, organizerIds, loadPersonKey());
+  // Confirmed reps (reps.ts) are sponsor-side here too; likely staff never is, so it never changes a hint.
+  const person = loadPersonKey();
+  const role = rolesById([...captured, ...extra], sponsors, organizerIds, person, loadRepIndex(person).confirmed);
   return [...captured, ...extra].map((m) => buildInput(m, { role: role(m), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash }));
 }
 

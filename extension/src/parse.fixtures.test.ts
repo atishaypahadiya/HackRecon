@@ -151,3 +151,19 @@ describe("sample coverage (each case must appear in at least one sample)", () =>
   test("a labeled link serialized as `label <href>`", () =>
     expect(has(({ r }) => r.kind === "message" && r.links.some((l) => r.text.includes(`<${l}>`)))).toBe(true));
 });
+
+describe("@-mentions carry the export's user IDs", () => {
+  test("every mention ID parsed from a sample appears as <@ID> in that post's export text", () => {
+    if (!exp) return;
+    let checked = 0;
+    for (const p of parsed)
+      for (const r of p.rows) {
+        if (r.kind !== "message" || !r.mentions?.length) continue;
+        const e = p.byTs.get(r.ts);
+        if (!e) continue;
+        for (const m of r.mentions) expect(e.text ?? "").toContain(`<@${m.id}>`);
+        checked++;
+      }
+    expect(checked).toBeGreaterThan(0);
+  });
+});
