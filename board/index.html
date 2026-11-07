@@ -282,6 +282,7 @@
   .bq { padding: 10px 0 6px; }
   .bq b { display: block; font-size: 15px; font-weight: 650; }
   .bq p { margin: 2px 0 6px; }
+  .bq p + p { margin-top: 8px; }
   .bq .how { min-width: 0; height: 32px; margin-right: 12px; font: 650 13px/1 Manrope, sans-serif; }
   .item ul.dl { display: block; margin: 0; padding: 0; font: 500 14px/1.5 Manrope, sans-serif; color: var(--text); }
   .item ul.dl li + li { margin-top: 6px; }
@@ -1074,7 +1075,7 @@ function paintResults() {
   const bs = P.gaps?.booths || P.res.booths;
   $("pb-body").innerHTML = !bs.length
     ? state("No questions yet for the tracks in your plan")
-    : `<ul class="bqs">${bs.map((b, k) => `<li class="bq"><b>${esc(b.sponsor)}</b><p>${esc(b.text)}</p><div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div></li>`).join("")}</ul>`;
+    : `<ul class="bqs">${bs.map((b, k) => `<li class="bq"><b>${esc(b.sponsor)}</b>${(b.lines || [b.text]).map((l) => `<p>${esc(l)}</p>`).join("")}<div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div></li>`).join("")}</ul>`;
 }
 
 function openTrack(id, from) {

@@ -180,10 +180,11 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput, gaps: Gap[
 
 /** One block per sponsor (user 2026-11-06), in first-appearance order. Questions with the same opening share it:
  *  "We use Apify to …; does that count as ‘…’, and what does ‘Best Use of Apify’ reward beyond that?". The text is
- *  what Copy copies. */
+ *  what Copy copies; `lines` holds its sentences, one question per line on the board. */
 export interface BoothBlock {
   sponsor: string;
   text: string;
+  lines: string[];
   questions: BoothQuestion[];
 }
 
@@ -197,7 +198,7 @@ export function boothBlocks(questions: BoothQuestion[]): BoothBlock[] {
       const joined = asks.map((a, k) => (k ? a.replace(/^What /, "what ") : a)).map((a, k) => (k < asks.length - 1 ? a.replace(/\?$/, "") : a)).join(", and ");
       return o ? `${o}; ${joined}` : joined;
     });
-    return { sponsor, text: sentences.join(" "), questions: qs };
+    return { sponsor, text: sentences.join(" "), lines: sentences, questions: qs };
   });
 }
 
