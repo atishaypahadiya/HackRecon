@@ -2437,7 +2437,10 @@ function compareConfig(dir: string, ev: EventConfig, sponsors: Sponsors, orgs: {
 function convertApiBundle(apiDir: string, out: string, runId: string): number {
   const users = new Map(readJsonFile<ApiUser[]>(join(apiDir, "users.json"), []).map((u) => [u.id, u]));
   const channels = new Map(readJsonFile<{ id: string; name: string }[]>(join(apiDir, "channels.json"), []).map((c) => [c.id, c.name]));
-  const origin = readJsonFile<{ workspace?: { origin?: string } }>(join(apiDir, "pull.json"), {}).workspace?.origin ?? "";
+  // A pull that stopped early wrote no pull.json: take the workspace origin from another ingested pull's.
+  const originOf = (d: string) => readJsonFile<{ workspace?: { origin?: string } }>(join(d, "pull.json"), {}).workspace?.origin ?? "";
+  const siblings = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).map((d) => join(CAPTURES_DIR, d, "pull")).filter((d) => existsSync(join(d, "pull.json"))) : [];
+  const origin = originOf(apiDir) || siblings.map(originOf).find(Boolean) || "";
   let bad = 0;
   for (const f of readdirSync(apiDir).filter((f) => /^[CG][A-Z0-9]+\.json$/.test(f)).sort()) {
     try {

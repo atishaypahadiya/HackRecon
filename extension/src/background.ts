@@ -102,8 +102,12 @@ interface SlackSession {
 
 const status = (text: string) => chrome.storage.session.set({ pull_status: `${new Date().toLocaleTimeString()}: ${text}` });
 
+/** Every pull's outcome, overwritten each time: times, counts and channel errors, never content or the session, so
+ *  a pull that found nothing new still leaves a record outside the browser (live check, 2026-11-07). */
+const PULL_STATUS_FILE = "hackrecon/pull-status.json";
+
 async function download(path: string, text: string): Promise<string | null> {
-  if (!SYNC_FILE.test(path) || path.includes("..")) return `${path}: refused: not a sync file`;
+  if ((path !== PULL_STATUS_FILE && !SYNC_FILE.test(path)) || path.includes("..")) return `${path}: refused: not a sync file`;
   for (const part of splitParts(path, new TextEncoder().encode(text))) {
     try {
       await chrome.downloads.download({ url: `data:application/json;base64,${base64(part.bytes)}`, filename: part.name, conflictAction: "overwrite", saveAs: false });
@@ -114,7 +118,7 @@ async function download(path: string, text: string): Promise<string | null> {
   return null;
 }
 
-async function runPull(reason: "first" | "timer"): Promise<void> {
+async function runPull(reason: "popup" | "timer"): Promise<void> {
   const { slack, pulling } = (await chrome.storage.session.get(["slack", "pulling"])) as { slack?: SlackSession; pulling?: number };
   if (!slack) return void (await status("no Slack session in memory since the browser started; the next Sync from the popup resumes pulls"));
   if (pulling && Date.now() - pulling < STALE_LOCK_MS) return;
@@ -152,12 +156,15 @@ async function runPull(reason: "first" | "timer"): Promise<void> {
     const posts = log.channels.reduce((n, c) => n + c.history, 0);
     const replies = log.channels.reduce((n, c) => n + c.replies, 0);
     const errors = log.channels.filter((c) => c.error).length;
-    await status(saved ? `pulled ${posts} posts and ${replies} replies from ${log.channels.length} channels (${log.calls} calls${errors ? `, ${errors} channel errors` : ""})` : `nothing new in ${log.channels.length} channels`);
+    const secs = Math.round((Date.parse(log.finished_at) - Date.parse(log.started_at)) / 1000);
+    await status(`${saved ? `pulled ${posts} posts and ${replies} replies from` : "nothing new in"} ${log.channels.length} channels (${log.calls} calls, ${secs} s${errors ? `, ${errors} channel errors` : ""})`);
+    await download(PULL_STATUS_FILE, JSON.stringify({ outcome: "done", reason, full: log.full, started_at: log.started_at, finished_at: log.finished_at, seconds: secs, calls: log.calls, retries: log.retries, channels: log.channels.length, posts, replies, threads_read: log.channels.reduce((n, c) => n + c.threads_read, 0), errors: log.channels.filter((c) => c.error).map((c) => ({ channel: c.name, error: c.error })), bundle: saved ? `hackrecon/sync/${stamp}/` : null }, null, 2));
   } catch (e) {
     const code = e instanceof ApiError ? e.code : (e as Error).message;
     // A dead session is dropped; the next Sync from the popup brings a fresh one.
     if (/invalid_auth|not_authed|token_revoked|account_inactive/.test(code)) await chrome.storage.session.remove("slack");
     await status(`pull stopped: ${code}`);
+    await download(PULL_STATUS_FILE, JSON.stringify({ outcome: "stopped", reason, error: code, at: new Date().toISOString(), calls: api.calls, retries: api.retries, bundle: saved ? `hackrecon/sync/${stamp}/` : null }, null, 2));
   } finally {
     await chrome.storage.session.remove("pulling");
   }
@@ -179,7 +186,7 @@ chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; fil
       await chrome.storage.session.set({ slack: { token: s.token, origin: s.origin, team: s.team, workspace: s.workspace } });
       await chrome.alarms.create(ALARM, { periodInMinutes: PULL_EVERY_MIN, delayInMinutes: PULL_EVERY_MIN });
       reply({});
-      await runPull("first");
+      await runPull("popup");
     })();
     return true;
   }
