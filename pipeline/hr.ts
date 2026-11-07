@@ -44,7 +44,7 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, boardData, v1Ids, type BoardData } from "./board.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, v1Ids, type BoardData } from "./board.ts";
 import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
@@ -743,6 +743,32 @@ async function board(args: string[]): Promise<number> {
         console.log(`ship: gaps ${r.from} at ${r.commit.slice(0, 7)}`);
         return json(r);
       }
+      if (req.method === "POST" && path === "/plan/prefill") {
+        // P1b: drafts from a repo link, each with its source lines. Nothing is saved here: the page shows each draft
+        // and fills the input only with the ones the user picks.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const text = await req.text();
+        if (text.length > 1_000) return json({ error: "request too large" }, 413);
+        let body: { repo?: unknown };
+        try {
+          body = JSON.parse(text);
+        } catch {
+          return json({ error: "not JSON" }, 400);
+        }
+        const url = typeof body.repo === "string" ? body.repo.trim() : "";
+        const repo = checkoutRepo(url);
+        if ("error" in repo) return json({ error: repo.error.startsWith("only public") ? repo.error : "couldn't read that repo: is it public?" }, 400);
+        const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+        const t0 = Date.now();
+        const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache, readProducts());
+        if ("error" in r) {
+          console.error(`plan: prefill failed: ${r.error}`);
+          return json({ error: "couldn't draft from that repo" }, 503);
+        }
+        writeJsonFile(PREFILL_CACHE_PATH, cache);
+        console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
+        return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
+      }
       if (req.method === "POST" && path === "/plan/gaps") {
         if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
         const text = await req.text();
@@ -781,7 +807,7 @@ async function board(args: string[]): Promise<number> {
         return json(planMeta(entities, event));
       }
       if (path === "/")
-        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`), {
+        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`), {
           headers: {
             ...headers,
             "Content-Type": "text/html; charset=utf-8",

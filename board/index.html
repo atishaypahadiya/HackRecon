@@ -238,6 +238,19 @@
   .rm:hover, .add:hover, .edit:hover { color: var(--text); }
   .add, .edit { min-height: 44px; font-size: 14px; font-weight: 650; color: var(--muted); }
   .pf .go-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  /* P1b drafts from a repo: one row per draft, its source lines as quotes, Use / Skip */
+  .drafts { margin-top: 12px; }
+  .drafts .cap { display: block; margin: 0 0 4px; }
+  .dr { padding: 12px 0; border-top: 1px solid var(--line); }
+  .dr .dn { margin: 0; font-size: 15px; font-weight: 650; }
+  .dr .dt { margin: 2px 0 0; overflow-wrap: anywhere; }
+  .dr .dm { font-size: 13px; color: var(--muted); }
+  .dsrc { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+  .dsrc a, .dsrc span { font: 400 12px/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+  .dsrc a { text-underline-offset: 3px; }
+  .dsrc a:hover { color: var(--text); }
+  .dsrc q { display: block; margin-top: 2px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 13px; quotes: none; overflow-wrap: anywhere; }
+  .dacts { display: flex; align-items: center; gap: 8px 16px; margin-top: 10px; }
   .sum { display: flex; align-items: center; gap: 16px; }
   .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sum .stk { color: var(--muted); }
@@ -409,6 +422,7 @@
 <div class="tip" id="tip" aria-hidden="true"></div>
 <div class="sr" aria-live="polite" id="say"></div>
 
+<!-- prefill.js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -906,7 +920,7 @@ function paintInput(editing) {
   box.innerHTML = `<form class="pf" id="pf" novalidate>
     <div><label class="l" for="pi-idea">Your project</label><textarea id="pi-idea" maxlength="2000" placeholder="What are you building, and for whom?">${esc(P.input?.idea || "")}</textarea></div>
     <div><span class="l" id="pi-sl">Stack</span><div id="pi-stack" role="group" aria-labelledby="pi-sl">${stack.map(stackRow).join("")}</div><button type="button" class="add" id="pi-add">Add to stack</button></div>
-    <div><label class="l" for="pi-repo">Repo link <span class="opt">(optional)</span></label><input id="pi-repo" type="url" inputmode="url" value="${esc(P.input?.repo || "")}" placeholder="https://github.com/you/project" autocomplete="off" maxlength="200"><span class="cap hint">Read to check each likely track's stated requirements against your code. Public GitHub only.</span></div>
+    <div><label class="l" for="pi-repo">Repo link <span class="opt">(optional)</span></label><input id="pi-repo" type="url" inputmode="url" value="${esc(P.input?.repo || "")}" placeholder="https://github.com/you/project" autocomplete="off" maxlength="200"><span class="cap hint">Read to check each likely track's stated requirements against your code. Public GitHub only.</span><div class="go-row"><button type="button" class="add" id="pi-draft">Draft from this repo</button><span class="cap" id="pi-dcap" aria-live="polite"></span></div><div id="pi-drafts"></div></div>
     <div class="go-row"><button class="jump" type="submit">Make my plan</button><span class="cap" id="pi-cap">${esc(beforeLine())}</span></div>
   </form>`;
   $("pi-add").onclick = () => { $("pi-stack").insertAdjacentHTML("beforeend", stackRow()); $("pi-stack").lastElementChild.querySelector(".nm").focus(); };
@@ -940,6 +954,34 @@ function paintInput(editing) {
     else if (row.nextElementSibling) row.nextElementSibling.querySelector(".nm").focus();
     else $("pi-add").click();
   });
+  // P1b: drafts from the repo, each filled in only when the user chooses Use (board/prefill.js). Nothing is stored
+  // here; the input is saved when the plan is made, as for anything typed.
+  const formState = () => ({ idea: $("pi-idea").value, stack: [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value, used_for: r.querySelector(".uf").value })) });
+  const useDraft = (it) => {
+    const f = HRPrefill.applyItem(formState(), it);
+    $("pi-idea").value = f.idea;
+    $("pi-stack").innerHTML = f.stack.map(stackRow).join("");
+    $("say").textContent = it.kind === "description" ? "Description filled in." : `${it.name} added to your stack.`;
+  };
+  $("pi-draft").onclick = async () => {
+    const repo = $("pi-repo").value.trim(), btn = $("pi-draft"), cap = $("pi-dcap");
+    if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) { cap.textContent = "Paste a public https://github.com/<owner>/<repo> link first."; $("pi-repo").focus(); return; }
+    btn.disabled = true;
+    cap.textContent = "Reading the repo…";
+    try {
+      const r = await fetch("/plan/prefill", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify({ repo }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Couldn't draft from that repo.");
+      const items = HRPrefill.draftItems(j.draft);
+      cap.textContent = items.length ? plural(items.length, "draft") : "Nothing to draft from that repo.";
+      HRPrefill.mountDrafts($("pi-drafts"), items, { head: `From ${j.repo.replace(/^https:\/\/github\.com\//, "")} @ ${j.commit.slice(0, 7)}`, onUse: useDraft, onDone: () => { cap.textContent = "Every draft decided."; btn.focus(); } });
+      $("pd-h")?.focus();
+    } catch (err) {
+      cap.textContent = err.message.replace(/\.?$/, ".");
+    } finally {
+      btn.disabled = false;
+    }
+  };
   $("pf").onsubmit = (e) => {
     e.preventDefault();
     const idea = $("pi-idea").value.trim();
