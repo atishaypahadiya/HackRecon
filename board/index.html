@@ -1004,8 +1004,9 @@ function paintInput(editing) {
     runPlan();
   };
 }
+// Before the first plan only; while editing, the plan itself is on the page below.
 function beforeLine() {
-  return P.meta?.track_count ? `${plural(P.meta.track_count, "track")} on Devpost; your plan appears once you describe your project` : "";
+  return P.meta?.track_count && !P.input ? `${plural(P.meta.track_count, "track")} on Devpost; your plan appears once you describe your project` : "";
 }
 
 /* Next for you (D2): the next time-bound item, hidden before the event starts and when nothing is upcoming. When
