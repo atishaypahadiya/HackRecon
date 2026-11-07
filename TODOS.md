@@ -18,6 +18,14 @@
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
 
+### Background sync (user 2026-11-07): needs a decision
+
+Asked: only posts since the last sync, no mark-read, on a timer, no visible-window requirement. The extension reads the DOM of the user's own Slack tab and makes no Slack API calls, so: a timer can start a Sync (`chrome.alarms`), but the tab must render (Chrome throttles hidden tabs, item 1 below); opening a channel to read it marks it read. A since-last-sync stop (per channel: the newest top-level ts captured; per thread: the latest reply shown) is buildable offline but can't be verified while capture is frozen. Options were put to the user.
+
+### Zero setup leftovers (2026-11-07)
+
+`hr discover` can't derive: hacking start and end, event-level prizes, sponsor aliases, event channels with no prefix (Cal Hacks' 2-opportunities), schedule end times. Admin and owner flags come from the export; at a live event the extension would need to read them (profile cards show "Workspace Admin"). The extension doesn't record the workspace's display name; the subdomain searched well on Devpost.
+
 ### Capture is frozen for Cal Hacks (user 2026-11-07)
 
 No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders). The no-action-URL rule (`pipeline/urlsafety.ts`) guards the fetcher and the extension's page capture.

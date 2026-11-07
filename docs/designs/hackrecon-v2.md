@@ -26,6 +26,27 @@ Predecessor: `docs/designs/hackrecon-demo-scope.md` (v1, decisions D1–D26). It
   - Replayed on today's bad re-read, it keeps both lost steps; both quotes are still on the page.
 - Canon: the 2026-11-07 `hr sync` re-extraction ($2.76, not announced in advance) dropped two entry steps the page still states (GoDaddy's "Register your domain name", Apify's "Building an actor"); the 2026-11-06 records were restored and today's are kept outside the repo.
 
+## Zero setup (user, 2026-11-07)
+
+> Goal: zero setup for a new event. Build auto-discovery: detect the event from the Slack workspace name, find its Devpost page by search, build sponsors from Devpost prizes matched to sidebar channel names, organizers from Slack admin/owner flags, deadlines and tracks from Devpost. No hand-edited config. Then incremental background sync: only posts since the last sync, no mark-read, on a timer, no visible-window requirement. Then incremental classification of new posts under the cost guard. Test auto-discovery by deleting Cal Hacks' config and regenerating it; report how close it gets to the hand-built sponsors.json and event.json.
+
+- **`hr discover` (`pipeline/autoconfig.ts`, no model)** writes event.json, sponsors.json and organizers.json:
+  - Event: the workspace subdomain from capture permalinks (`cal-hacks-13-0`; the extension doesn't record the workspace's display name), searched on Devpost's hackathon search. The hit's title is the event name. Offline, an announcement post's Devpost link stands in.
+  - Tracks, deadlines, timezone: canon (rules with a deadline; the zone named in the deadline's quote). A new event runs `hr canon` (estimated first) and discover again.
+  - Schedule: Devpost's deadlines, plus deadline items organizers posted in announcement channels. A later post about the submission deadline at another time supersedes earlier ones.
+  - Sponsors: `sponsorsDraft` over the sidebar the last sync saw (`sync.json`), so channels never captured still count.
+  - Organizers: admin and owner flags, the event name tag ("CAL HACKS |"), organizing titles, from `--export`'s users.json until the extension reads them. With no flags, the top-level posters in announcement channels stand in.
+  - A file is written only when missing or still exactly what discover last wrote (hash in `data/discovery.json`). On calhacks-13 it kept all three hand files.
+  - `hr sync` runs it when event.json is missing.
+- **Measured (2026-11-07):** a copy of calhacks-13 with `config/` deleted, online, no export, compared with `--against events/calhacks-13/config`:
+  - event.json: event, timezone, oldest_message, canon_pages, schedule_pages, tool_gated_prizes and both null hacking times match. authority_channels comes out as `["0-announcements"]` where the hand file leaves it unset (the same channel, by name). event_level_prizes comes out empty (hand: `[MLH] Commit Fellowship`; nothing on the page marks it).
+  - Schedule: 2 of 4 hand entries match by time (the 9:00 deadline, superseded, and the 9:30 extension). The judging window matches by start only (no end time). "Arrive with the whole team" is missed: a different 9:30 post pairs with it by time. Discovery adds 6 the hand file doesn't list (Meta's booth, 8:00 arrival from Devpost, judging extended to 12:50, public voting and judging over at 14:00, the 113 drafts reminder).
+  - sponsors.json: 53 of 54 channels have the same sponsor and kind. The miss is `2-opportunities` (no prefix, not an announcement channel). The 14 hand alias lists aren't derived; 10 of 343 items name a sponsor differently because of them.
+  - organizers.json: 29 of 55 (announcement posters). With `--export`: 55 of 55.
+  - The classifier prompt embeds the schedule, so the discovered event.json changes it (hand `20009fde3354ff3d`, discovered `3368b25fdc5e5559`). Plain `hr classify` would re-send all 1007 posts: "estimated at most $4.50", refused by the guard.
+- **`hr classify --new`** sends only posts never classified under any prompt; the rest keep their newest answer, and classify_run.json counts them (`earlier_prompts`). On the discovered config: 0 calls, the same 343 items. The dry run now prints the estimate.
+- **Background sync: open, needs a decision.** Every Sync reads the Slack tab the user has open (no Slack API calls, D4, no self-bots), so "on a timer, no visible window, no mark-read" conflicts with how capture works: Chrome throttles hidden tabs, and opening a channel marks it read. See TODOS.
+
 ## The brief (user, 2026-10-28, verbatim)
 
 > v1 is done (tag it v1). Starting v2: HackRecon becomes the hacker's operating system for a hackathon, with five views: Build (tracks + track stacker), Claim (v1 offers), Now (schedule + live changes), Meet (reps + booths + openers), Ship (submission checklist). Key architecture change: multi-source. Public pages are canon (Devpost: tracks, prizes, judging criteria, submission rules; event site: schedule), Slack is the live layer (changes, credits, reps, fixes). Merge rule: page is canon, Slack updates override with both shown. Also add thread capture to the extension. Per-event config so it runs at the next hackathon. Build order: sources → entities + Opus-judged eval → merge → views (Build, Ship, Now, Meet) → generalize.
