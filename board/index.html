@@ -699,9 +699,11 @@ function drawerContent(kind, now, prev) {
        <h3>Event · ${evs.length}</h3>${evs.map((e) => `<div class="kv"><span>${esc(e.what)}</span><span class="r">${limitTime(e.at, now)}${e.until ? `–${fmt(e.until, { hour: "numeric", minute: "2-digit" })}` : ""}</span><span class="s"><a href="${esc(e.source)}" target="_blank" rel="noopener">announcement ↗</a></span></div>`).join("") || `<p class="note">None announced yet.</p>`}`];
   }
   if (kind === "reps") {
-    const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length })).sort((a, b) => b.c - a.c || b.offers - a.offers || b.posts - a.posts);
+    // rep_accounts: Slack accounts behind each candidate, aligned with candidate_first (one person, two accounts, is one rep).
+    const multi = (r) => (D.rep_accounts?.[r.channel] ?? []).filter((n, i) => n > 1 && r.candidate_first[i] <= now);
+    const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length, m: multi(r) })).sort((a, b) => b.c - a.c || b.offers - a.offers || b.posts - a.posts);
     return ["Reps", "Sponsor-side posters in each sponsor channel. Names are hidden here; confirm a candidate yourself before you message anyone.",
-      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel</span></div>`).join("")];
+      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span></div>`).join("")];
   }
   if (kind === "activity") {
     const rows = days.map((d) => {
@@ -882,7 +884,8 @@ addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { bui
 /* ---------- Plan (v2): the default tab ---------- */
 // Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
 const TOKEN = document.querySelector('meta[name="hr-token"]').content;
-const P = { meta: null, input: null, res: null, gaps: null, busy: false, failed: false, seq: 0, steps: new Set() };
+// res holds the sections as they stream in (P2); sec is each one's state: busy, ok or failed.
+const P = { meta: null, input: null, res: null, gaps: null, sec: {}, seq: 0, abort: null, steps: new Set() };
 const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
 const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
 // ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
@@ -1026,32 +1029,52 @@ function paintNext() {
   el.textContent = `${pfmt(d.at, { weekday: "short", hour: "numeric", minute: "2-digit" })} · ${d.name} · in ${rel}`;
 }
 
+// One request, read line by line: each section paints the moment the server sends it, tracks first (P2, D4).
+// The gap check comes after the tracks it checks, and booths are rebuilt once a gap is found.
 async function runPlan() {
   const seq = ++P.seq;
-  P.busy = true; P.failed = false;
-  paintResults();
-  try {
-    const r = await fetch("/plan", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input) });
-    const j = await r.json();
-    if (seq !== P.seq) return;
-    if (!r.ok || j.error) throw new Error(j.error);
-    P.res = j;
-  } catch { if (seq !== P.seq) return; P.failed = true; P.res = null; }
-  P.busy = false;
+  P.abort?.abort();
+  const ctl = (P.abort = new AbortController());
+  P.res = { tracks: null, booths: null };
   P.gaps = null;
+  P.sec = { tracks: "busy", booths: "busy" };
   paintResults();
-  if (P.res) $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, questions for ${plural(P.res.booths.length, "sponsor")}.`;
-  if (!P.res) return;
-  // Gaps come second: the tracks show first, then each likely track's stated requirements are checked against
-  // what the user gave (description, stack). The answer cites both sides; it never says whether a track is open to them.
+  const on = (e) => {
+    if (e.section === "done") return announcePlan();
+    if (e.error) {
+      P.sec[e.section] = "failed";
+      if (e.section === "gaps") P.gaps = { error: true };
+    } else if (e.section === "gaps") P.gaps = e;
+    else {
+      P.res[e.section] = e[e.section];
+      P.sec[e.section] = "ok";
+    }
+    paintResults();
+  };
   try {
-    const r = await fetch("/plan/gaps", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input) });
-    const j = await r.json();
-    if (seq !== P.seq) return;
-    P.gaps = r.ok && !j.error ? j : { error: true };
-  } catch { if (seq !== P.seq) return; P.gaps = { error: true }; }
-  paintResults();
-  if (P.gaps.gaps?.length) $("say").textContent = `${plural(P.gaps.gaps.length, "gap")} between a stated requirement and your project.`;
+    const r = await fetch("/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input), signal: ctl.signal });
+    if (!r.ok || !r.body) throw new Error(String(r.status));
+    const rd = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await rd.read();
+      if (seq !== P.seq) return;
+      if (done) break;
+      buf += value;
+      for (let k; (k = buf.indexOf("\n")) >= 0; buf = buf.slice(k + 1)) if (k) on(JSON.parse(buf.slice(0, k)));
+    }
+  } catch { if (seq !== P.seq) return; }
+  // A stream that ended early leaves its unsent sections failed, never "Matching…" forever.
+  if (Object.values(P.sec).includes("busy")) {
+    for (const k in P.sec) if (P.sec[k] === "busy") P.sec[k] = "failed";
+    paintResults();
+  }
+}
+// D11: one polite announcement once every section has settled.
+function announcePlan() {
+  if (P.sec.tracks !== "ok") return;
+  const n = P.gaps?.gaps?.length ?? 0;
+  $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, questions for ${plural(P.res.booths?.length ?? 0, "sponsor")}${n ? `, ${plural(n, "gap")} between a stated requirement and your project` : ""}.`;
 }
 const gapsOf = (id) => P.gaps?.gaps?.filter((g) => g.track_id === id) ?? [];
 
@@ -1068,17 +1091,24 @@ function paintResults() {
   const show = !!P.input;
   $("pt").hidden = $("pband").hidden = !show;
   if (!show) return;
-  for (const id of ["pt", "pb"]) $(id).setAttribute("aria-busy", String(P.busy));
+  $("pt").setAttribute("aria-busy", String(P.sec.tracks === "busy"));
+  $("pb").setAttribute("aria-busy", String(P.sec.booths === "busy"));
   const state = (t) => `<p class="pstate">${esc(t)}</p>`;
-  if (P.busy) { $("pt-body").innerHTML = $("pb-body").innerHTML = state("Matching…"); $("pt-ctx").textContent = ""; return; }
-  if (P.failed) { $("pt-body").innerHTML = $("pb-body").innerHTML = state("Couldn't rank tracks just now; trying again on the next change"); return; }
-  const ts = P.res.tracks, likely = ts.filter((t) => t.fit === "likely"), possible = ts.filter((t) => t.fit !== "likely");
-  $("pt-ctx").textContent = ts.length ? `${likely.length} likely · ${possible.length} possible` : "";
-  $("pt-body").innerHTML = !ts.length
-    ? state("No track's stated requirements match this description")
-    : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
+  const failed = state("Couldn't rank tracks just now; trying again on the next change");
+  const ts = P.res.tracks;
+  if (!ts) {
+    $("pt-ctx").textContent = "";
+    $("pt-body").innerHTML = P.sec.tracks === "failed" ? failed : state("Matching…");
+  } else {
+    const likely = ts.filter((t) => t.fit === "likely"), possible = ts.filter((t) => t.fit !== "likely");
+    $("pt-ctx").textContent = ts.length ? `${likely.length} likely · ${possible.length} possible` : "";
+    $("pt-body").innerHTML = !ts.length
+      ? state("No track's stated requirements match this description")
+      : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
+  }
   // One block per sponsor; once gaps are checked, a track with a gap asks from it (the server rebuilds the blocks).
-  const bs = P.gaps?.booths || P.res.booths;
+  const bs = P.res.booths;
+  if (!bs) { $("pb-body").innerHTML = P.sec.booths === "failed" ? failed : state("Matching…"); return; }
   $("pb-body").innerHTML = !bs.length
     ? state("No questions yet for the tracks in your plan")
     : `<ul class="bqs">${bs.map((b, k) => `<li class="bq"><b>${esc(b.sponsor)}</b>${(b.lines || [b.text]).map((l) => `<p>${esc(l)}</p>`).join("")}<div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div></li>`).join("")}</ul>`;
@@ -1121,7 +1151,7 @@ $("p-plan").addEventListener("click", async (e) => {
   const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]");
   if (row) { openTrack(row.dataset.track, row); return; }
   if (cp) {
-    const b = (P.gaps?.booths || P.res.booths)[Number(cp.dataset.bq)];
+    const b = P.res.booths[Number(cp.dataset.bq)];
     const ok = await copyText(b.text);
     $("say").textContent = ok ? "Copied the question." : "Couldn't copy. Select the question's text.";
     if (ok) { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1400); }

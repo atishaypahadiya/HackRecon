@@ -6,6 +6,7 @@ fixtures/slack-dom/
 captures/
 extension/dist/
 config/organizers.json
+config/person_links.json
 data/
 review/
 
@@ -16,4 +17,5 @@ events/*/review/
 events/*/data/
 events/*/fixtures/
 events/*/config/organizers.json
+events/*/config/person_links.json
 events/current

@@ -72,6 +72,10 @@ export interface BoardData {
   offers: BoardOffer[];
   frames: number[];
   reps: BoardRep[];
+  /** Per sponsor channel, how many Slack accounts stand behind each rep candidate, aligned with that rep's
+   *  candidate_first (people.ts: one person with two accounts is one candidate). Kept out of `reps`, whose shape
+   *  D14 fingerprints. */
+  rep_accounts: Record<string, number[]>;
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
@@ -209,6 +213,8 @@ export function boardData(o: {
   sponsors: Sponsors;
   offers: Offer[];
   role: (m: Message) => PosterRole;
+  /** Slack id → its person (people.ts); without it every account is its own person. */
+  person?: (id: string) => string;
   basis: BoardData["basis"];
   /** Permalinks for sheet rows the capture missed. */
   permalinks?: Map<string, string>;
@@ -246,20 +252,30 @@ export function boardData(o: {
       posts: ps.sort((a, b) => a.ts - b.ts),
     };
   });
+  const repAccounts: Record<string, number[]> = {};
   const reps = Object.entries(o.sponsors)
     .filter(([ch, s]) => o.channels.includes(ch) && s.sponsor !== "event")
     .map(([ch, s]) => {
       const inCh = o.messages.filter((m) => m.channel_name === ch && !m.subtype && m.author_kind !== "bot");
+      // Keyed by person: a Slack id, or the ids people.ts links on hashed evidence. A rename never splits or merges a rep.
+      const person = o.person ?? ((id: string) => id);
       const firstBy = new Map<string, number>();
-      // Keyed by Slack user ID: a rep who renames mid-event stays one rep (roles.ts rolesById).
-      for (const m of inCh) if (m.author_id && o.role(m) === "sponsor-side") firstBy.set(m.author_id, Math.min(firstBy.get(m.author_id) ?? Infinity, Number(m.ts)));
+      const accounts = new Map<string, Set<string>>();
+      for (const m of inCh) {
+        if (!m.author_id || o.role(m) !== "sponsor-side") continue;
+        const who = person(m.author_id);
+        firstBy.set(who, Math.min(firstBy.get(who) ?? Infinity, Number(m.ts)));
+        accounts.set(who, (accounts.get(who) ?? new Set()).add(m.author_id));
+      }
+      const ranked = [...firstBy].sort((a, b) => a[1] - b[1]);
+      repAccounts[ch] = ranked.map(([who]) => accounts.get(who)!.size);
       return {
         sponsor: s.sponsor,
         channel: ch,
         posts: inCh.length,
         offers: offers.filter((f) => f.posts.some((p) => p.channel === ch)).length,
         candidates: firstBy.size,
-        candidate_first: [...firstBy.values()].sort((a, b) => a - b),
+        candidate_first: ranked.map(([, t]) => t),
       };
     })
     .sort((a, b) => b.offers - a.offers || b.candidates - a.candidates || b.posts - a.posts);
@@ -272,6 +288,7 @@ export function boardData(o: {
     offers,
     frames: replayFrames(posts, offers, o.timezone),
     reps,
+    rep_accounts: repAccounts,
     event_deadlines: eventDeadlines(o.schedule ?? []),
     basis: o.basis,
   };
