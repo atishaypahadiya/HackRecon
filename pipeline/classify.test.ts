@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { buildInput, checkItems, classifyOne, promptHash, systemPrompt, toItems, type EventConfig, type RawItem } from "./classify.ts";
+import { buildInput, checkItems, classifyOne, classifyPlan, promptHash, systemPrompt, toItems, type Cache, type CacheEntry, type EventConfig, type RawItem } from "./classify.ts";
 import type { Sponsors } from "./pool.ts";
 import type { Message } from "./schema.ts";
 
@@ -173,5 +173,26 @@ describe("classifyOne retries (D10)", () => {
     const r = await classifyOne(f.client, "sys", hash, input(), 0);
     expect(f.calls()).toBe(1);
     expect("error" in r && r.error.reason).toBe("refusal");
+  });
+});
+
+describe("classify --new", () => {
+  const entry = (message_id: string, prompt_hash: string, classified_at: string): CacheEntry => ({ message_id, prompt_hash, model: "m", items: [], classified_at });
+  const cache: Cache = {
+    "old:a": entry("a", "old", "2026-11-01T00:00:00Z"),
+    "older:a": entry("a", "older", "2026-10-01T00:00:00Z"),
+    "new:b": entry("b", "new", "2026-11-02T00:00:00Z"),
+  };
+  const inputs = ["a", "b", "c"].map((id) => ({ key: `new:${id}`, message: { id } }));
+  test("normally everything without an answer under this prompt is sent", () => {
+    const p = classifyPlan(inputs, cache, false);
+    expect(p.todo.map((i) => i.message.id)).toEqual(["a", "c"]);
+    expect(p.answer(inputs[0]!)).toBeUndefined();
+  });
+  test("--new sends only posts never classified; the rest keep their newest answer", () => {
+    const p = classifyPlan(inputs, cache, true);
+    expect(p.todo.map((i) => i.message.id)).toEqual(["c"]);
+    expect(p.answer(inputs[0]!)?.prompt_hash).toBe("old");
+    expect(p.answer(inputs[1]!)?.prompt_hash).toBe("new");
   });
 });
