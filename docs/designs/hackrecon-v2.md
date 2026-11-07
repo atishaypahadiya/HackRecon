@@ -487,6 +487,28 @@ Total: about 10–14 solo days [estimated, no basis beyond v1's pace]. Steps 1 a
       - **What the snapshot supports:** 1 of 2,900 accounts shows an email, and users.json has no company field, so in this workspace only the avatar rule can fire. The avatar is fetched from Slack's image CDN at the URL users.json lists (no Slack API call), hashed and discarded.
       - **Result:** 1 link, U0ZBE4D36F8 = U0Z1400D401 (Fetch.ai), avatars 3 bits apart. The closest pair of different people among the 11 hashed avatars is 104 bits apart.
       - Fetch.ai shows 3 candidates again, and D14 passes with no exceptions. Board.json's new `rep_accounts` (kept out of the fingerprinted `reps`) puts both accounts behind the one rep. The Reps drawer says "one candidate posts from 2 accounts". No role changed on the 1,007 messages.
+    - **Rep signals (user, 2026-11-07).** A5's signals (a name or title naming the sponsor, Slack's external badge) missed Apify's staff. `pipeline/reps.ts` and `hr rep-signals` add three signals, strongest first. Everything is keyed by person, never by name:
+      1. **Confirmed:** a profile email on a domain the sponsor lists in sponsors.json (`domains`), or a subdomain of it.
+      2. **Confirmed:** an authority account (D19: an organizer id backed by admin or owner status, or any post in an authority channel) mentions the person's user ID on a line naming the sponsor. The mention's label is the person's own display name, so it's cut before sponsor names are read. A line naming two or more sponsors is skipped.
+      3. **Likely staff:** all three hold. A classified credit, prize or workshop post at the top of the sponsor's own channel. An answer, in one of its threads, to a question from someone neither organizer nor sponsor-side. No post ever in a hacker-only channel (event.json `hacker_only_channels`, else channels named like team formation or introductions). If those channels weren't read, no one is likely staff.
+      - Confirmed reps are sponsor-side in `rolesById`. Likely staff never is, so it gets no authority over links or offers and no classifier hint. It's shown labeled, with its evidence, after the reps.
+      - **Display:**
+        - Each rep shows the signals it matched on Plan's People and in the Claim board's Reps drawer.
+        - The Reps tile shows "N likely staff" for a sponsor with no candidate.
+        - The likely-staff counts are kept out of the fingerprinted `reps`, in board.json's `rep_signals` and `rep_likely`.
+      - **Replays:** likely staff holds from when both its staff post and its answer are in, and a replay counts only evidence posted by then.
+      - **Sources, recorded in `config/rep_signals.json` (gitignored):**
+        - Replies come from the synced thread captures (610).
+        - Hacker-only posters come from the export, author IDs only. Syncing those channels would send about 870 hacker posts, mostly intros, to the classifier.
+        - Mentions come from the export until the next sync. The parser now keeps each mention's `data-member-id`, checked against the export on the DOM samples.
+        - Emails come from users.json.
+      - **Cal Hacks:**
+        - Signal 1 can't fire: 1 of 2,900 accounts shows an email (the user's own), and no sponsor lists a domain.
+        - Signal 2 finds no one: 52 authority ids, no authority channel flagged yet, and none of their posts names a sponsor beside a mention.
+        - Signal 3 finds 15 people, 9 of them already sponsor-side. Six are new: Pat Hale (Apify: 7 staff posts, 8 answers), Ari Osei (Anthropic), Grant Tanner (Cartesia), Tomas Navarro (CRS Credit API), Ben Haddad (Mana) and Aino (Wajo AI).
+        - None of the six posts outside their sponsor's channel and #0-general, or asks anything elsewhere.
+        - The hacker-only rule also turns away one real rep, Microsoft's recruiter, who posted in a hacker-only channel. The name rule already counts them.
+        - Board.json's `reps`, `rep_accounts` and offers are unchanged, and D14 passes.
 
 ## Not in scope
 

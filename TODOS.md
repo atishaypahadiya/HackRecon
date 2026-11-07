@@ -80,17 +80,29 @@ The DOM exposes the sender's user ID (`data-message-sender`): 1004 of 1006 human
 
 Two accounts of one person are linked by `hr person-links` (user 2026-11-07; design doc §Step 1 notes). Each link needs the same email, the same avatar image, or the same real name + title + company, never a name alone.
 
-### Reps the role signals miss (Apify)
+### ~~Reps the role signals miss (Apify)~~ Done 2026-11-07
 
-**What:** Find sponsor staff who post without a sponsor tag in their name, a title naming the sponsor, or Slack's external badge. At Cal Hacks, nobody in #spons-apify is marked sponsor-side. Its top posters (32, 10 and 6 posts) carry none of the three signals, yet the $200 coupon post's author writes "DM me and I'll set you up".
+`hr rep-signals` (`pipeline/reps.ts`) adds three signals: an email on the sponsor's domain, an organizer mentioning the user ID beside the sponsor's name, and likely staff (a staff post, an answer to a hacker, never in a hacker-only channel). Likely staff is shown with its evidence and never gets a role. Apify's rep is Pat Hale (likely staff). Design doc §Step 1 notes.
 
-**Why:** Plan's People (P5) shows no Apify rep, for a sponsor with two of Hindsight's likely tracks. The Claim board's Reps tile undercounts the same way.
+### Hacker-only channels at a live event
 
-**Context:** A5's signals are name or title text and the external badge (`roles.ts` posterRole). Candidate evidence to weigh, each needing the user's call because it decides who counts as a sponsor's voice (D8 authority): users.json titles; a poster whose top-level posts in a sponsor channel announce that sponsor's offers (an offer's first post); a reviewed `sponsors.json` list of rep IDs per sponsor. No name matching.
+**What:** Read who posts in team formation and introductions without the export. At Cal Hacks, `hr rep-signals` takes those posters from the slackdump export (author IDs only). A live event has no export, so likely staff (reps.ts signal 3) can't be checked, and no one gets it.
 
-**Effort:** S–M
+**Why:** Plan's People found Apify's only rep (Pat Hale) through signal 3 alone.
+
+**Context:** A plain sync of those channels would put about 870 hacker posts, mostly personal intros, into messages.json, and the classifier reads every message there. The capture needs an authors-only mode for these channels: the extension keeps sender IDs and drops text, and sync-ingest stores IDs only.
+
+**Effort:** M
 **Priority:** P2
 **Depends on:** nothing
+
+### Sponsor email domains
+
+**What:** Fill sponsors.json `domains` so reps.ts signal 1 can fire where a workspace shows emails. None are listed. At Cal Hacks it's moot: 1 of 2,900 accounts shows an email.
+
+**Effort:** S
+**Priority:** P4
+**Depends on:** a workspace that shows emails
 
 ### Same-person links without the export
 
