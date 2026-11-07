@@ -78,8 +78,20 @@ async function capturePage(url: string): Promise<string> {
 // UNVERIFIED in Chrome until the first pull: that the service worker's requests carry Slack's session cookie.
 const ALARM = "hackrecon-pull";
 const PULL_EVERY_MIN = 30;
-/** A pull still marked running after this long died with its worker; the next alarm may start another. */
-const STALE_LOCK_MS = 45 * 60_000;
+/** A running pull beats on every Slack call; one silent this long died with its worker, and the next alarm or
+ *  Sync starts another (cursors are kept per channel, so it resumes). */
+const STALE_LOCK_MS = 2 * 60_000;
+/** Chrome stops an extension service worker after 30 s without an event or an extension API call, and fetch
+ *  doesn't count (first live pull, 2026-11-07: killed in the third channel, 14 calls in a row). Every Slack call
+ *  and every KEEPALIVE_MS of a wait makes one. */
+const KEEPALIVE_MS = 20_000;
+const keepAlive = () => chrome.runtime.getPlatformInfo().then(() => {});
+async function wakefulSleep(ms: number): Promise<void> {
+  for (let left = ms; left > 0; left -= KEEPALIVE_MS) {
+    await new Promise((r) => setTimeout(r, Math.min(left, KEEPALIVE_MS)));
+    await keepAlive();
+  }
+}
 
 interface SlackSession {
   token: string;
@@ -107,7 +119,15 @@ async function runPull(reason: "first" | "timer"): Promise<void> {
   if (!slack) return void (await status("no Slack session in memory since the browser started; the next Sync from the popup resumes pulls"));
   if (pulling && Date.now() - pulling < STALE_LOCK_MS) return;
   await chrome.storage.session.set({ pulling: Date.now() });
-  const api = new SlackApi(slack.origin, slack.token, { fetch: (u, i) => fetch(u, i), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), now: Date.now });
+  const since = new Date().toLocaleTimeString();
+  let calls = 0;
+  // The heartbeat is the keep-alive too: an extension API call before every Slack request.
+  const beat = (method: string) => chrome.storage.session.set({ pulling: Date.now(), pull_status: `running since ${since}: call ${++calls} (${method}) at ${new Date().toLocaleTimeString()}` });
+  const api = new SlackApi(slack.origin, slack.token, {
+    fetch: async (u, i) => (await beat(u.slice(u.lastIndexOf("/") + 1)), fetch(u, i)),
+    sleep: wakefulSleep,
+    now: Date.now,
+  });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   let saved = 0;
   const save = async (name: string, value: unknown): Promise<string | null> => {
