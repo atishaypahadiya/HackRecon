@@ -1,7 +1,7 @@
 // Captures the channel open in the message pane by scrolling it, as the web client renders it. Shared by
 // "Capture this channel" (content.ts) and "Sync this event" (sync.ts). No Slack API calls, no profile cards.
 import { SCHEMA_VERSION, messageId, type CaptureFile, type Message, type StopReason } from "../../pipeline/schema.ts";
-import { Accumulator, STEP_WAIT_MS, StopRule } from "./accumulate.ts";
+import { Accumulator, LOADING_WAITS, STEP_WAIT_MS, StopRule } from "./accumulate.ts";
 import { parseRows } from "./parse.ts";
 import { SEL, TEXT } from "./selectors.ts";
 
@@ -72,6 +72,22 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
     steps++;
     await sleep(STEP_WAIT_MS);
   }
+  // Slack's loading placeholders: wait where the capture stopped (the channel's top), then, if any are left, read
+  // the channel once more from the top down to the newest post, then wait again.
+  const settle = async () => {
+    for (let w = 0; acc.loading.length && w < LOADING_WAITS && !stopped(); w++) {
+      status(`HackRecon: ${nameHint ? `#${nameHint}: ` : ""}waiting for Slack to load ${acc.loading.length} posts…`);
+      await sleep(STEP_WAIT_MS);
+      ingest();
+    }
+  };
+  await settle();
+  for (let i = 0; acc.loading.length && i < MAX_STEPS && !stopped() && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 2; i++) {
+    scroller.scrollTop += scroller.clientHeight * STEP_FRACTION;
+    await sleep(STEP_WAIT_MS);
+    ingest();
+  }
+  await settle();
   observer.disconnect();
   ingest();
 
@@ -123,6 +139,6 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
   };
   const secs = Math.round((finished.getTime() - started.getTime()) / 1000);
   const summary =
-    `${messages.length} messages in ${secs}s, stop: ${stop}, system rows skipped: ${systemRowsSkipped}` + (unresolvedAuthors.length ? `, ${unresolvedAuthors.length} without an author` : "") + ".";
+    `${messages.length} messages in ${secs}s, stop: ${stop}, system rows skipped: ${systemRowsSkipped}` + (unresolvedAuthors.length ? `, ${unresolvedAuthors.length} without an author` : "") + (acc.loading.length ? `, ${acc.loading.length} never loaded` : "") + ".";
   return { file, summary, deletedParents };
 }

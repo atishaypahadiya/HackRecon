@@ -493,8 +493,10 @@ function compareThreadFiles(files: string[], exp: ReturnType<typeof loadExport>,
     for (const m of r.missed.filter((m) => m.why === "in_pane").slice(0, 5)) console.log(`    ${m.permalink}  ${m.author}: ${m.text}`);
     for (const x of r.extras) console.log(`    extra ${x.ts} (${x.why}): ${x.text}`);
     for (const c of r.count_mismatches) console.log(`    ${c.thread_ts}: Slack showed ${c.shown} replies, the export has ${c.export}`);
+    if (r.no_text.length) console.log(`  ${r.channel_name}: ${r.no_text.length} found with no text (read while Slack still showed its loading placeholder)`);
   }
-  console.log(`\nlocked ${locked.length} thread recall: ${totals.matched}/${totals.replies} = ${pct(totals.recall)} ${mark(totals.pass)} (gate ${pct(RECALL_MIN)})` + (totals.uncaptured.length ? `; no thread file yet: ${totals.uncaptured.join(", ")}` : ""));
+  const lockedNoText = reports.filter((r) => locked.includes(r.channel_name)).reduce((n, r) => n + r.no_text.length, 0);
+  console.log(`\nlocked ${locked.length} thread recall: ${totals.matched}/${totals.replies} = ${pct(totals.recall)} ${mark(totals.pass)} (gate ${pct(RECALL_MIN)})` + (lockedNoText ? `; ${lockedNoText} of them have no text` : "") + (totals.uncaptured.length ? `; no thread file yet: ${totals.uncaptured.join(", ")}` : ""));
   return { reports, totals };
 }
 
@@ -2266,7 +2268,8 @@ function printDetails(r: ChannelReport): void {
     !r.dropped_on_load.length &&
     !r.author.mismatches.length &&
     !r.author.unverifiable.length &&
-    !r.unresolved_authors
+    !r.unresolved_authors &&
+    !r.no_text.length
   )
     return;
   console.log(`\n## ${r.channel_name} (${r.channel_id})`);
@@ -2290,6 +2293,7 @@ function printDetails(r: ChannelReport): void {
     console.log(`no name in export for ${u.user} (${u.posts} posts): captured ${JSON.stringify(u.captured_names)}${ok ? ", check by hand" : " FAIL: not one consistent name"}`);
   }
   if (r.unresolved_authors) console.log(`grouped posts with no resolved author: ${r.unresolved_authors}`);
+  if (r.no_text.length) console.log(`found with no text (read while Slack still showed its loading placeholder): ${r.no_text.length}`);
 }
 
 function printLockedCoverage(sponsorsPath: string, rs: ChannelReport[]): void {
@@ -2298,7 +2302,8 @@ function printLockedCoverage(sponsorsPath: string, rs: ChannelReport[]): void {
   const locked = Object.entries(sponsors).filter(([, v]) => !v.stretch).map(([k]) => k);
   const passed = new Set(rs.filter((r) => r.pass.recall).map((r) => r.channel_name));
   const todo = locked.filter((c) => !passed.has(c));
-  console.log(`\nlocked ${locked.length}: ${locked.length - todo.length} pass keyed recall` + (todo.length ? `; not yet: ${todo.join(", ")}` : ""));
+  const noText = rs.filter((r) => locked.includes(r.channel_name)).reduce((n, r) => n + r.no_text.length, 0);
+  console.log(`\nlocked ${locked.length}: ${locked.length - todo.length} pass keyed recall` + (todo.length ? `; not yet: ${todo.join(", ")}` : "") + (noText ? `; ${noText} posts found with no text` : ""));
 }
 
 let args: string[];

@@ -80,6 +80,13 @@ describe("the order: event page → My projects → this event's project → its
     ]);
     expect(r.went).toEqual(["https://devpost.com/atishay", "https://devpost.com/software/hindsight-68sruh"]);
   });
+  test("Devpost's \"Add a new project\" tile is not a project (the 2026-11-07 sync loaded /software/add)", () => {
+    const r = walk([
+      page(ROOT, [a("https://devpost.com/atishay", "Portfolio")]),
+      page("https://devpost.com/atishay", [a("https://devpost.com/software/add", ""), a("https://devpost.com/software/new-thing", "Add a new project"), a("https://devpost.com/software/hindsight-68sruh", "Hindsight")]),
+    ]);
+    expect(r.went).toEqual(["https://devpost.com/atishay", "https://devpost.com/software/hindsight-68sruh"]);
+  });
   test("signed out: no My projects link, nothing loaded; the log lists the safe links seen, for fixing a rule", () => {
     const r = walk([page(ROOT, [a("https://secure.devpost.com/users/login", "Log in"), a("https://devpost.com/hackathons?authenticity_token=dG9rZW4xMjM0NTY3", "Hackathons")])]);
     expect(r).toMatchObject({ went: [], why: "no My projects link (not signed in to Devpost?)" });

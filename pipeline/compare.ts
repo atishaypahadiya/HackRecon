@@ -55,6 +55,8 @@ export interface ChannelReport {
      *  Left out of the rate; every post by one user must still get the same captured name. */
     unverifiable: { user: string; posts: number; captured_names: string[] }[];
   };
+  /** Found by ts, but with no text where the export has some: Slack's loading placeholder was read (sync 2026-11-07). */
+  no_text: string[];
   pass: { recall: boolean; author: boolean; time: boolean };
 }
 
@@ -121,6 +123,7 @@ export function compareChannel(
     }
   }
 
+  const no_text = [...real, ...bot, ...broadcasts].filter((e) => (e.text ?? "").trim() && capByTs.has(e.ts) && !capByTs.get(e.ts)!.text.trim()).map((e) => e.ts);
   const matchedReal = real.length - missed.filter((m) => m.class === "real").length;
   const keyedRecall = real.length ? matchedReal / real.length : 1;
   const authorRate = checked ? (checked - mismatches.length) / checked : 1;
@@ -145,6 +148,7 @@ export function compareChannel(
     missed,
     extras,
     author: { checked, matched: checked - mismatches.length, rate: authorRate, mismatches, unverifiable },
+    no_text,
     pass: {
       recall: keyedRecall >= RECALL_MIN,
       author: authorRate >= AUTHOR_MIN && unverifiable.every((u) => u.captured_names.length === 1 && u.captured_names[0] !== ""),
@@ -194,6 +198,8 @@ export interface ThreadReport {
   missed: ThreadMissed[];
   extras: ThreadExtra[];
   author: { checked: number; matched: number; rate: number; mismatches: { ts: string; captured: string; expected: string[] }[] };
+  /** Found under its parent, but with no text where the export has some (Slack's loading placeholder). */
+  no_text: string[];
   pass: { recall: boolean; author: boolean };
 }
 
@@ -243,6 +249,7 @@ export function compareThreads(cap: ThreadCaptureFile, exp: SlackExport, exportC
     if (!expected.some((n) => normName(n) === normName(c.author_name))) mismatches.push({ ts: e.ts, captured: c.author_name, expected });
   }
 
+  const no_text = replies.filter((e) => found(e) && (e.text ?? "").trim() && !captured.get(e.ts)!.text.trim()).map((e) => e.ts);
   const count_mismatches = cap.threads
     .filter((t) => t.reply_count_shown !== null && byTs.get(t.thread_ts)?.reply_count !== undefined && t.reply_count_shown !== byTs.get(t.thread_ts)!.reply_count)
     .map((t) => ({ thread_ts: t.thread_ts, shown: t.reply_count_shown!, export: byTs.get(t.thread_ts)!.reply_count! }));
@@ -267,6 +274,7 @@ export function compareThreads(cap: ThreadCaptureFile, exp: SlackExport, exportC
     missed,
     extras,
     author: { checked, matched: checked - mismatches.length, rate, mismatches },
+    no_text,
     pass: { recall: recall >= RECALL_MIN, author: rate >= AUTHOR_MIN },
   };
 }

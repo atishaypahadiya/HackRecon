@@ -45,6 +45,7 @@ export function parseRow(el: Element, base?: string): RawRow | null {
   const row: RawRow = threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
   if (replies) row.replies = replies;
   if (mentions?.length) row.mentions = mentions;
+  if (row.kind === "message" && el.querySelector(SEL.unknownSender)) row.loading = true;
   return row;
 }
 
