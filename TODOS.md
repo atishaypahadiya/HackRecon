@@ -18,6 +18,18 @@
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
 
+### Sync this event: follow-ups from the first build (user, 2026-11-06)
+
+`extension/src/sync.ts` is the one-time fixture run. Before syncs become something a hacker runs during an event:
+
+1. **No long visible-window requirement for live syncs.** Today the Slack window has to stay visible for the whole run, about an hour [estimated] for 53 channels and 229 threads, because Chrome throttles timers in hidden tabs (intensive throttling after 5 min). Live syncs must finish in minutes or keep working in the background. Incremental capture and D17's 60-thread budget make the run shorter. They don't remove the visibility need.
+2. **Replace downloads as the transport (Approach B).** Every file goes through `chrome.downloads` into `~/Downloads/hackrecon/sync/<stamp>/`. That's ~170 files in Chrome's download list, split into parts under the 2 MB `data:` URL limit, then moved in by `hr sync-ingest`. Approach B's IndexedDB storage (above) or a native-messaging or localhost hand-off to `hr` should replace it.
+3. **Sync marks every channel and thread it opens as read, which destroys the user's unread state.** Find a way to read without marking, or warn on the button before the first sync. Neither is verified. Options to test: whether Slack keeps the unread marker when a channel is opened and left quickly, whether "Mark unread" can restore it per channel, or reading from somewhere that doesn't mark. Any restore must stay within the no-self-bot rule: no Slack API calls, only clicks the user could make. Until then the warning is the minimum: the button says it will mark the event's channels read.
+
+**Effort:** M (1 and 3 need live Slack to verify), L for 2 with Approach B
+**Priority:** P1 before any live-event sync; 3 before anyone else runs Sync
+**Depends on:** the first Sync run's results
+
 ### Thread capture for credit-heavy channels → now v2 step 1
 
 **What:** Capture thread replies in the locked 25. Open each thread pane and record its replies, using the same `ts` key, the parent-message stop and the 5 × 1.5 s fallback.
