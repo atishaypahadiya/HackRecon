@@ -45,7 +45,8 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, v1Ids, type BoardData } from "./board.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
+import { joinSponsors, planCredits, planPeople, planSessions, submissionDeadline } from "./planjoin.ts";
 import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
@@ -136,12 +137,12 @@ import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODE
 import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
-import { planStream, type PlanEvent } from "./planstream.ts";
+import { planStream, type PlanEvent, type PlanSteps } from "./planstream.ts";
 import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
 import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
-import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type StackItem } from "./plan.ts";
+import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type PlanTrack, type StackItem } from "./plan.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -197,10 +198,11 @@ const USAGE = `usage:
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
-  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh]
+  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh] [--at ISO]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
       Runs the board's Plan stream in-process and appends its timing to ${PLAN_TIMINGS_PATH}. --fresh skips the fit and
-      gap caches (and saves nothing) to time an input as if it were new: that makes model calls.
+      gap caches (and saves nothing) to time an input as if it were new: that makes model calls. --at replays Credits,
+      Sessions and People at an instant (default: now).
   bun run hr prefill --repo https://github.com/<owner>/<repo>
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
@@ -910,7 +912,7 @@ async function board(args: string[]): Promise<number> {
         return new Response(stream, { headers: { ...headers, "Content-Type": "application/x-ndjson; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
       }
       if (req.method === "POST" && path === "/ship/gaps") {
-        // Ship's Recheck gaps (P6 renders it): the entered tracks against the repo's latest commit.
+        // Ship's Recheck gaps (P9 renders it): the entered tracks against the repo's latest commit.
         if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
         const text = await req.text();
         if (text.length > 16_000) return json({ error: "request too large" }, 413);
@@ -1415,10 +1417,7 @@ interface FitCached {
 
 type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
 
-/** Runs Plan's stream (planstream.ts) with the real ranker, repo and gap check, hands each event to `on`, then saves
- *  what the model added to the caches and appends one timing line (PLAN_TIMINGS_PATH). `fresh` skips both caches
- *  and saves nothing: it times an input as if it were new. */
-async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean; nowMs?: number }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const client = anthropicClient();
@@ -1429,6 +1428,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
     repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
     gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache),
     booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
+    joins: planJoins(input, ctx, opts.nowMs ?? Date.now()),
     log: (l) => console.error(l),
   })) {
     if ("error" in e) console.error(`plan: ${e.section}: ${e.error}`);
@@ -1457,7 +1457,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
 }
 
 async function planCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" } } });
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" }, at: { type: "string" } } });
   // A fixture's stack is the CLI string or a list of {name, used_for} (a used-for may hold commas).
   const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; targeted?: string[]; repo?: string } | null>(values.from, null) : null;
   if (values.from && !dog) {
@@ -1474,7 +1474,12 @@ async function planCli(args: string[]): Promise<number> {
   if (repoUrl) input.repo = repoUrl;
   // The board's stream (P2), run in-process: the same steps, caches and timing line.
   const ctx: PlanContext = { entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
-  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh }, () => {});
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
+    return 2;
+  }
+  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh, nowMs }, () => {});
   const tr = events.find((e) => e.section === "tracks");
   const ge = events.find((e) => e.section === "gaps");
   if (!tr || "error" in tr || tr.section !== "tracks") {
@@ -1509,12 +1514,38 @@ async function planCli(args: string[]): Promise<number> {
     }
     if (t.fit === "likely" && t.evidence === "stated" && !g.gaps.some((x) => x.track_id === t.track_id)) out(`    Gaps: none found. That says nothing about whether the requirements are met.`);
   }
+  // P3–P5, as of --at (or now).
+  const at = (iso: string | number) => new Date(typeof iso === "number" ? iso * 1000 : iso).toLocaleString("en-US", { timeZone: ctx.event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const sec = <K extends "credits" | "sessions" | "people">(k: K) => events.find((e) => e.section === k) as Extract<PlanEvent, { section: K }> | undefined;
+  out(`\nAs of ${at(nowMs / 1000)}${values.at ? " (--at)" : ""}`);
+  const cr = sec("credits");
+  if (cr && !("error" in cr)) {
+    out(`\nCredits (${cr.credits.length}${cr.dropped ? `; ${cr.dropped} dropped: quote not found in its posts` : ""}), joined on: ${cr.sponsors.map((x) => `${x.sponsor} (${x.why.join("; ")})`).join(", ") || "no sponsor"}`);
+    if (!cr.credits.length) out("  No offer posted so far matches your stack");
+    for (const c of cr.credits) {
+      out(`  ${c.sponsor}: ${c.value}   ${c.limit ? `closes ${at(c.limit)}` : c.limit_unclear ? "limit unclear" : "no stated limit"}${c.claim ? ` · ${c.claim}` : ""}${c.promo_code ? ` · code ${c.promo_code}` : ""}`);
+      out(`    "${c.quote}"  ${c.source_url}`);
+    }
+  } else out(`\nCredits: failed`);
+  const se = sec("sessions");
+  if (se && !("error" in se)) {
+    out(`\nSessions (${se.sessions.length}), before ${se.deadline ? `${se.deadline.name}, ${at(se.deadline.at)}` : "no known submission deadline"}`);
+    if (!se.sessions.length) out("  No upcoming session from these sponsors before the submission deadline");
+    for (const x of se.sessions) out(`  ${at(x.start)} · ${x.sponsor}: "${x.quote}"  ${x.source_url}`);
+  } else out(`\nSessions: failed`);
   const blocks = boothBlocks(boothQuestions(r.items, input, g.gaps));
-  if (blocks.length) out("\nBooths: questions for reps, one block per sponsor");
-  for (const b of blocks) {
-    out(`  ${b.sponsor}: ${b.text}`);
-    for (const q of b.questions) out(`    ${q.grounds}  ${q.source_url}`);
+  const pe = sec("people");
+  const people = pe && !("error" in pe) ? pe.people : [];
+  out("\nBooths and reps: one block per sponsor, the reps (People) under its questions");
+  for (const sponsor of [...new Set([...blocks.map((b) => b.sponsor), ...people.map((p) => p.sponsor)])]) {
+    const b = blocks.find((x) => x.sponsor === sponsor);
+    out(`  ${sponsor}${b ? `: ${b.text}` : ""}`);
+    for (const q of b?.questions ?? []) out(`    ${q.grounds}  ${q.source_url}`);
+    const p = people.find((x) => x.sponsor === sponsor);
+    if (p && !p.reps.length) out("    Reps: no rep of a targeted track has posted yet");
+    for (const rep of p?.reps ?? []) out(`    Rep: ${rep.name}${rep.accounts > 1 ? ` (${rep.accounts} accounts)` : ""}, ${rep.posts} post${rep.posts === 1 ? "" : "s"}, first ${at(rep.first)}: "${rep.quote}"  ${rep.source_url}`);
   }
+  if (pe && "error" in pe) out("  People: failed");
   if (dog?.targeted?.length) {
     const hit = dog.targeted.filter((s) => r.items.some((t) => `${t.sponsor} ${t.name}`.toLowerCase().includes(s.toLowerCase().split(" ")[0]!)));
     out(`\nthe user targeted ${dog.targeted.join(", ")}; ${hit.length} of ${dog.targeted.length} appear above${hit.length < dog.targeted.length ? ` (missing: ${dog.targeted.filter((s) => !hit.includes(s)).join(", ")})` : ""}. Targeted, not won: no track prizes, so this isn't a win label.`);
@@ -1578,7 +1609,7 @@ async function shipCli(args: string[]): Promise<number> {
     out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
     for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
   }
-  out("\nFor the tracks you entered (the rest of Ship's checklist comes with P6)");
+  out("\nFor the tracks you entered (the rest of Ship's checklist comes with P9)");
   for (const t of tracks) {
     const d = trackDetail(entities, t.track_id);
     out(`  ${t.name}${!d.requirements.length && !t.steps.length ? "   (no requirements or entry steps stated)" : ""}`);
@@ -1900,7 +1931,8 @@ async function personLinks(args: string[]): Promise<number> {
     const raw = (users.get(id) as Raw | undefined) ?? { id };
     const p = raw.profile ?? {};
     const e = profileEvidence(raw);
-    if (p.is_custom_image && p.image_192) {
+    // Default avatars are never fetched: they can't link anyone (people.ts linkEvidence).
+    if (e.custom_image && p.image_192) {
       const h = await avatarHashes(p.image_192);
       if ("error" in h) console.error(`person-links: ${id}: avatar not hashed (${h.error})`);
       else (e.avatar = h), (avatars[id] = h);
@@ -2154,3 +2186,37 @@ try {
   process.exit(2);
 }
 process.exit(await main(args));
+
+// Kept out of the grouping code's span (group.test.ts checks it never reads classifier output): Sessions read the
+// classifier's workshop items.
+/** P3–P5's joins (planjoin.ts) on this event's workspace data, read once per request. `nowMs` is the clock (the
+ *  server's, or `hr plan --at`). */
+function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullable<PlanSteps["joins"]> {
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  const byId = new Map(messages.map((m) => [m.id, m]));
+  const person = loadPersonKey();
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), person);
+  const products = readProducts();
+  const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
+  const nowSec = nowMs / 1000;
+  return {
+    credits: (tracks) => {
+      const board = readJsonFile<BoardData | null>(BOARD_DATA_PATH, null);
+      // The board's excerpts are redacted plain text, so each is checked against the same rendering of its posts.
+      const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
+      const shown = new Map(messages.map((m) => [m.permalink, redact(plainText(m.text)).text]));
+      const sp = set(tracks);
+      return { sponsors: sp, ...planCredits(board?.offers ?? [], sp, shown, nowSec) };
+    },
+    sessions: (tracks) => {
+      const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event).deadlines);
+      return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline) };
+    },
+    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec),
+  };
+}
+
+/** Runs Plan's stream (planstream.ts) with the real ranker, repo and gap check, hands each event to `on`, then saves
+ *  what the model added to the caches and appends one timing line (PLAN_TIMINGS_PATH). `fresh` skips both caches
+ *  and saves nothing: it times an input as if it were new. */

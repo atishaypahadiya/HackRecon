@@ -221,10 +221,17 @@
   .plan { align-items: start; }
   .band { grid-column: 1 / -1; background: var(--surface); border-radius: var(--r-tile); padding: var(--pad); min-width: 0; }
   .plan .tracks { grid-column: 1 / -1; }
-  .plan .tracks:has(~ .credits) { grid-column: 1 / span 8; } /* the spec's 8 | 4 once Credits is built */
-  .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
-  .trio .th { margin-bottom: 4px; }
-  .trio > :only-child { grid-column: 1 / -1; }
+  .plan .tracks:has(~ .credits) { grid-column: 1 / span 8; }
+  .plan .credits { grid-column: 9 / span 4; }
+  /* P3–P5: Sessions | Booths and reps, 1 : 2. People (reps) sit under their sponsor's questions. */
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; }
+  .pair .th { margin-bottom: 4px; }
+  .prow.flat { padding: 10px 0; }
+  .prow.flat .pn { font-size: 15px; }
+  .reps-l { list-style: none; margin: 8px 0 0; padding: 0; }
+  .reps-l li { padding: 8px 0 0; }
+  .reps-l .rn { font-weight: 650; }
+  .reps-l .pr { color: var(--muted); font-size: 14px; }
   .bq p { max-width: 75ch; }
   .pf { display: grid; gap: 16px; }
   .pf .l { display: block; font-size: 13px; font-weight: 650; color: var(--muted); margin: 0 0 6px; }
@@ -295,7 +302,7 @@
   .pstate { margin: 4px 0; color: var(--muted); }
 
   @media (max-width: 1099px) {
-    .trio { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .plan .tracks:has(~ .credits), .plan .credits { grid-column: 1 / -1; }
     .hero { grid-column: 1 / -1; grid-row: 1; }
     .value { grid-column: 1 / span 6; grid-row: 2; }
     .closes { grid-column: 7 / span 6; grid-row: 2; }
@@ -312,6 +319,8 @@
     .hero, .value, .closes, .act, .stream, .reps { grid-column: 1; }
     .plan { padding-bottom: 48px; }
     .plan .tracks:has(~ .credits) { grid-column: 1; }
+    .plan .credits { grid-column: 1; order: 1; } /* phone order: input, Tracks, the band, Credits (D2) */
+    .pair { grid-template-columns: minmax(0, 1fr); }
     .si { grid-template-columns: minmax(0, 1fr) 44px; }
     .si .uf { grid-column: 1; grid-row: 2; }
     .si { row-gap: 6px; }
@@ -356,7 +365,15 @@
     <div class="th"><h2 id="h-pt">Tracks to target</h2><span class="ctx m" id="pt-ctx"></span></div>
     <div id="pt-body"></div>
   </section>
-  <div class="band trio" id="pband" hidden>
+  <section class="tile credits" id="pc" aria-labelledby="h-pc" hidden>
+    <div class="th"><h2 id="h-pc">Credits</h2><span class="ctx m" id="pc-ctx"></span></div>
+    <div id="pc-body"></div>
+  </section>
+  <div class="band pair" id="pband" hidden>
+    <section aria-labelledby="h-ps" id="ps">
+      <div class="th"><h2 id="h-ps">Sessions</h2></div>
+      <div id="ps-body"></div>
+    </section>
     <section aria-labelledby="h-pb" id="pb">
       <div class="th"><h2 id="h-pb">Booths and reps</h2></div>
       <div id="pb-body"></div>
@@ -1035,9 +1052,9 @@ async function runPlan() {
   const seq = ++P.seq;
   P.abort?.abort();
   const ctl = (P.abort = new AbortController());
-  P.res = { tracks: null, booths: null };
+  P.res = { tracks: null, booths: null, credits: null, sessions: null, people: null };
   P.gaps = null;
-  P.sec = { tracks: "busy", booths: "busy" };
+  P.sec = { tracks: "busy", booths: "busy", credits: "busy", sessions: "busy", people: "busy" };
   paintResults();
   const on = (e) => {
     if (e.section === "done") return announcePlan();
@@ -1045,7 +1062,11 @@ async function runPlan() {
       P.sec[e.section] = "failed";
       if (e.section === "gaps") P.gaps = { error: true };
     } else if (e.section === "gaps") P.gaps = e;
-    else {
+    else if (e.section === "credits" || e.section === "sessions" || e.section === "people") {
+      // P3–P5 keep the whole event: credits' joined sponsors, sessions' deadline.
+      P.res[e.section] = e;
+      P.sec[e.section] = "ok";
+    } else {
       P.res[e.section] = e[e.section];
       P.sec[e.section] = "ok";
     }
@@ -1074,12 +1095,13 @@ async function runPlan() {
 function announcePlan() {
   if (P.sec.tracks !== "ok") return;
   const n = P.gaps?.gaps?.length ?? 0;
-  $("say").textContent = `Plan ready: ${plural(P.res.tracks.length, "track")}, questions for ${plural(P.res.booths?.length ?? 0, "sponsor")}${n ? `, ${plural(n, "gap")} between a stated requirement and your project` : ""}.`;
+  const parts = [plural(P.res.tracks.length, "track"), P.res.credits && plural(P.res.credits.credits.length, "credit"), P.res.sessions && plural(P.res.sessions.sessions.length, "session"), `questions for ${plural(P.res.booths?.length ?? 0, "sponsor")}`, n && plural(n, "gap")].filter(Boolean);
+  $("say").textContent = `Plan ready: ${parts.join(", ")}.`;
 }
 const gapsOf = (id) => P.gaps?.gaps?.filter((g) => g.track_id === id) ?? [];
 
 const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
-const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : host(u))} ↗</a>` : "");
+const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
 function trackRow(t) {
   const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
@@ -1089,10 +1111,12 @@ function trackRow(t) {
 }
 function paintResults() {
   const show = !!P.input;
-  $("pt").hidden = $("pband").hidden = !show;
+  $("pt").hidden = $("pc").hidden = $("pband").hidden = !show;
   if (!show) return;
   $("pt").setAttribute("aria-busy", String(P.sec.tracks === "busy"));
-  $("pb").setAttribute("aria-busy", String(P.sec.booths === "busy"));
+  $("pc").setAttribute("aria-busy", String(P.sec.credits === "busy"));
+  $("ps").setAttribute("aria-busy", String(P.sec.sessions === "busy"));
+  $("pb").setAttribute("aria-busy", String(P.sec.booths === "busy" || P.sec.people === "busy"));
   const state = (t) => `<p class="pstate">${esc(t)}</p>`;
   const failed = state("Couldn't rank tracks just now; trying again on the next change");
   const ts = P.res.tracks;
@@ -1106,12 +1130,56 @@ function paintResults() {
       ? state("No track's stated requirements match this description")
       : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
   }
+  // P3 Credits: Claim's offers from the joined sponsors, open now, soonest limit first. A row opens its drawer.
+  const cr = P.res.credits;
+  $("pc-ctx").textContent = cr?.credits.length ? `${cr.credits.length} open` : "";
+  $("pc-body").innerHTML = !cr
+    ? (P.sec.credits === "failed" ? failed : state("Matching…"))
+    : !cr.credits.length
+      ? state("No offer posted so far matches your stack")
+      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${[esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+  // P4 Sessions: upcoming, before the submission deadline, by time. The row's name is the post's first line, verbatim.
+  const se = P.res.sessions;
+  $("ps-body").innerHTML = !se
+    ? (P.sec.sessions === "failed" ? failed : state("Matching…"))
+    : !se.sessions.length
+      ? state(se.deadline ? "No upcoming session from these sponsors before the submission deadline" : "No upcoming session from these sponsors; no submission deadline is known yet")
+      : `<ul class="prows">${se.sessions.map((x) => `<li class="prow flat"><span class="pn">${esc(x.quote)}</span><span class="pr">${esc(x.why[0])}</span><div class="pmeta m">${esc(pfmt(x.start, { weekday: "short", hour: "numeric", minute: "2-digit" }))} · ${esc(x.sponsor)} · ${srcLink(x.source_url)}</div></li>`).join("")}</ul>`;
   // One block per sponsor; once gaps are checked, a track with a gap asks from it (the server rebuilds the blocks).
   const bs = P.res.booths;
   if (!bs) { $("pb-body").innerHTML = P.sec.booths === "failed" ? failed : state("Matching…"); return; }
-  $("pb-body").innerHTML = !bs.length
+  // P5 People: each likely track's sponsor's reps, under that sponsor's questions (a rep and what to ask them).
+  const pe = P.res.people?.people ?? [];
+  const sponsorsShown = [...new Set([...bs.map((b) => b.sponsor), ...pe.map((x) => x.sponsor)])];
+  const repsOf = (sp) => {
+    const x = pe.find((y) => y.sponsor === sp);
+    if (!x) return "";
+    if (!x.reps.length) return `<p class="pstate">No rep of a targeted track has posted yet</p>`;
+    return `<ul class="reps-l">${x.reps.map((r) => `<li><span class="rn">${esc(r.name)}</span><span class="pr">${esc(r.quote)}</span><div class="pmeta m">${[r.accounts > 1 ? plural(r.accounts, "account") : "", plural(r.posts, "post"), `first ${pfmt(r.first * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, srcLink(r.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+  };
+  $("pb-body").innerHTML = !sponsorsShown.length
     ? state("No questions yet for the tracks in your plan")
-    : `<ul class="bqs">${bs.map((b, k) => `<li class="bq"><b>${esc(b.sponsor)}</b>${(b.lines || [b.text]).map((l) => `<p>${esc(l)}</p>`).join("")}<div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div></li>`).join("")}</ul>`;
+    : `<ul class="bqs">${sponsorsShown.map((sp) => {
+        const k = bs.findIndex((b) => b.sponsor === sp), b = bs[k];
+        const qs = b ? `${(b.lines || [b.text]).map((l) => `<p>${esc(l)}</p>`).join("")}<div class="pmeta m"><button type="button" class="how" data-bq="${k}">Copy</button>${[...new Set(b.questions.map((q) => q.source_url))].map(srcLink).join(" ")}</div>` : "";
+        return `<li class="bq"><b>${esc(sp)}</b>${qs}${repsOf(sp)}</li>`;
+      }).join("")}</ul>`;
+}
+
+function openCredit(id, from) {
+  const c = P.res?.credits?.credits.find((x) => x.offer_id === id);
+  if (!c) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null;
+  $("dr-title").innerHTML = `${esc(c.value)}<span class="cap">${esc(c.sponsor)}</span>`;
+  $("dr-body").innerHTML = [
+    `<h3>Why it's here</h3><div class="item">${c.why.map((w) => `<p>${esc(w[0].toUpperCase() + w.slice(1))}</p>`).join("")}</div>`,
+    `<h3>The post</h3><div class="item"><q>${esc(c.quote)}</q></div>`,
+    `<h3>Claim</h3><div class="item"><p>${esc(c.claim || "No post says how")}${c.promo_code ? ` · code <span class="m">${esc(c.promo_code)}</span>` : ""}</p><p class="note">${esc(c.limit ? `Closes ${pfmt(c.limit * 1000, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "A limit is mentioned but not clear" : "No stated limit")}</p></div>`,
+    `<div class="item acts">${safeUrl(c.claim_url) ? `<a href="${esc(c.claim_url)}" target="_blank" rel="noopener">Claim link ↗</a> ` : ""}${safeUrl(c.source_url) ? `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">Open the post in Slack ↗</a>` : ""}</div>`,
+  ].join("");
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+  $("dr-body").scrollTop = 0;
 }
 
 function openTrack(id, from) {
@@ -1148,8 +1216,9 @@ document.addEventListener("change", (e) => {
   for (const o of document.querySelectorAll(`[data-step="${CSS.escape(box.dataset.step)}"]`)) o.checked = box.checked;
 });
 $("p-plan").addEventListener("click", async (e) => {
-  const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]");
+  const row = e.target.closest("[data-track]"), cp = e.target.closest("[data-bq]"), cr = e.target.closest("[data-credit]");
   if (row) { openTrack(row.dataset.track, row); return; }
+  if (cr) { openCredit(cr.dataset.credit, cr); return; }
   if (cp) {
     const b = P.res.booths[Number(cp.dataset.bq)];
     const ok = await copyText(b.text);
