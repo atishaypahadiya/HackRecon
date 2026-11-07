@@ -43,17 +43,23 @@ export interface DraftState {
 
 export const MAX_HOPS = 8;
 const DEVPOST_HOST = /^(?:www\.)?devpost\.com$/;
-/** Words in a path or query that name something other than reading: never loaded. */
+/** Words in a path or query that name something other than reading: never loaded, whatever the stage allows. */
 const DENY = /(delete|destroy|withdraw|remove|unsubmit|leave|cancel|log_?out|sign_?out|invite|reject|accept|publish|transfer|_method|unlike|follow|subscribe)/i;
 const PROJECTS_TEXT = /^\s*(?:my\s+)?(?:projects|portfolio)\s*$/i;
+/** Each stage loads only these paths (allowlist; DENY still applies). The portfolio is Devpost's redirect or a
+ *  profile page (one path segment). */
+const portfolioPath = /^\/(?:portfolio\/redirect|[A-Za-z0-9_.-]+)\/?$/;
+/** The only query key kept on a hop (the portfolio redirect's ?page=projects); every other parameter is dropped. */
+const KEEP_QUERY = /^page$/;
 
 export function eventSlug(eventRoot: string): string | null {
   const m = /^https:\/\/([a-z0-9-]+)\.devpost\.com\/?$/.exec(eventRoot);
   return m && !/^(www|help|info|secure|api)$/.test(m[1]!) ? m[1]! : null;
 }
 
-/** A link the worker may load: https on devpost.com (or the event's own host), a GET, no destructive word. */
-export function safeHop(l: DraftLink, slug: string): URL | null {
+/** A link the worker may load: https on devpost.com, a GET, no destructive word in its path or query. The query is
+ *  cut down to `page` (a word), so no token or tracking value is ever loaded or logged. `slug` is kept for callers. */
+export function safeHop(l: DraftLink, _slug: string): URL | null {
   if (l.method && l.method.toLowerCase() !== "get") return null;
   let u: URL;
   try {
@@ -62,8 +68,10 @@ export function safeHop(l: DraftLink, slug: string): URL | null {
     return null;
   }
   if (u.protocol !== "https:" || u.username || u.password) return null;
-  if (!DEVPOST_HOST.test(u.hostname) && u.hostname !== `${slug}.devpost.com`) return null;
+  if (!DEVPOST_HOST.test(u.hostname)) return null;
   if (DENY.test(u.pathname) || DENY.test(u.search)) return null;
+  const keep = [...u.searchParams].filter(([k, v]) => KEEP_QUERY.test(k) && /^[a-z_]{1,20}$/.test(v));
+  u.search = keep.length ? `?${new URLSearchParams(keep)}` : "";
   u.hash = "";
   return u;
 }
@@ -91,6 +99,7 @@ export function draftStep(s: DraftState, page: DraftPage): { state: DraftState; 
   };
   const stop = (why: string, short = true) => {
     note(why);
+    // Addresses as safeHop cut them (no query beyond page=), so the log carries no token.
     if (short) st.log[st.log.length - 1]!.links = hops.map((x) => ({ href: x.u.href, text: x.l.text.slice(0, 60) })).slice(0, 60);
     return { state: st, go: null, why };
   };
@@ -102,13 +111,13 @@ export function draftStep(s: DraftState, page: DraftPage): { state: DraftState; 
   }
   if (st.hops >= MAX_HOPS) return stop(`stopped after ${MAX_HOPS} pages`);
 
-  const sub = hops.find((x) => DEVPOST_HOST.test(x.u.hostname) && submissionPath(s.slug).test(x.u.pathname) && fresh(x.u));
+  const sub = hops.find((x) => submissionPath(s.slug).test(x.u.pathname) && !x.u.search && fresh(x.u));
   if (s.stage === "event") {
-    const p = hops.find((x) => DEVPOST_HOST.test(x.u.hostname) && PROJECTS_TEXT.test(x.l.text) && fresh(x.u));
+    const p = hops.find((x) => PROJECTS_TEXT.test(x.l.text) && portfolioPath.test(x.u.pathname) && fresh(x.u));
     return p ? go(p.u.href, "portfolio", `"${p.l.text.trim()}" link`) : stop("no My projects link (not signed in to Devpost?)");
   }
   if (s.stage === "portfolio") {
-    st.projects = [...new Set(hops.filter((x) => DEVPOST_HOST.test(x.u.hostname) && projectPath.test(x.u.pathname) && fresh(x.u)).map((x) => x.u.href))];
+    st.projects = [...new Set(hops.filter((x) => projectPath.test(x.u.pathname) && !x.u.search && fresh(x.u)).map((x) => x.u.href))];
     const next = st.projects.shift();
     return next ? go(next, "project", "a project in My projects") : stop("no projects in My projects");
   }
@@ -120,7 +129,7 @@ export function draftStep(s: DraftState, page: DraftPage): { state: DraftState; 
   }
   // In the submission: its other steps (same submission path), until one shows the prize checkboxes.
   const base = /^(\/submit-to\/\d+-[\w-]+\/manage\/submissions\/\d+[\w-]*)/.exec(new URL(page.url).pathname)?.[1];
-  const step = hops.find((x) => DEVPOST_HOST.test(x.u.hostname) && submissionPath(s.slug).test(x.u.pathname) && fresh(x.u) && (!base || x.u.pathname.startsWith(base)));
+  const step = hops.find((x) => submissionPath(s.slug).test(x.u.pathname) && !x.u.search && fresh(x.u) && (!base || x.u.pathname.startsWith(base)));
   return step ? go(step.u.href, "submission", `submission step "${step.l.text.trim().slice(0, 40)}"`) : stop(st.best ? "no more submission steps" : "no submission page names a track");
 }
 

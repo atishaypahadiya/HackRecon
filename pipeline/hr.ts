@@ -1427,7 +1427,13 @@ async function sync(args: string[]): Promise<number> {
         writeFileSync(join(DEVPOST_FIXTURES_DIR, f), html);
         console.log(`devpost sample    ${f}: saved to ${DEVPOST_FIXTURES_DIR}/${stripped ? ` (stripped ${stripped} more on ingest)` : ""}`);
       } else {
-        const v = JSON.parse(readFileSync(path, "utf8")) as { result?: string; sample?: { url: string } | null; pages?: unknown[] };
+        // The log holds addresses only (queries cut to page=), scrubbed again here and refused if a scan still finds a token.
+        const raw = scrubTokens(readFileSync(path, "utf8")).html;
+        if (total(findTokens(raw))) {
+          console.error(`devpost ${f}: session values survived scrubbing; not saved`);
+          continue;
+        }
+        const v = JSON.parse(raw) as { result?: string; sample?: { url: string } | null; pages?: unknown[] };
         writeFileSync(join(DEVPOST_FIXTURES_DIR, f), JSON.stringify(v, null, 2));
         console.log(`devpost visit     ${f}: ${v.pages?.length ?? 0} pages, ${v.result}${v.sample ? `; sample from ${v.sample.url}` : "; no sample"}`);
       }

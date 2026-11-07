@@ -3,6 +3,7 @@
 // ~/Downloads/hackrecon/pages/<file>.page.json for `hr sync`, and the tab is closed. One load per page per sync.
 // UNVERIFIED in Chrome until step 5's Slack session: the settle timing and the Cloudflare wait are untested.
 import { draftStep, scrubDevpostHtml, startDraft, type DraftPage } from "../../pipeline/devpostdraft.ts";
+import { findTokens, scrubTokens, total } from "../../pipeline/domscrub.ts";
 import { pageFileName } from "../../pipeline/schema.ts";
 import { DEVPOST_EVENT_URL } from "./autopages.ts";
 import { SYNC_FILE } from "./ui.ts";
@@ -93,7 +94,7 @@ async function visitDraft(eventRoot: string): Promise<string> {
   // One background tab per page (never focused), so a load is never confused with the page before it.
   let tabId = (await chrome.tabs.create({ url: eventRoot, active: false })).id!;
   let best: { url: string; score: number; html: string } | null = null;
-  let result = "";
+  let result = "", refused = 0;
   try {
     for (;;) {
       if (!(await settle(tabId))) {
@@ -113,7 +114,10 @@ async function visitDraft(eventRoot: string): Promise<string> {
         const score = page.prize_boxes * 1000 + page.track_mentions;
         if (score > 0 && (!best || score > best.score)) {
           const [h] = await chrome.scripting.executeScript({ target: { tabId }, func: () => window.__hackreconDevpost!.sample() });
-          best = { url: page.url, score, html: scrubDevpostHtml(h?.result as string).html };
+          const html = scrubDevpostHtml(h?.result as string).html;
+          // Anything the scan still finds after scrubbing: the page isn't kept at all.
+          if (total(findTokens(html))) refused++;
+          else best = { url: page.url, score, html };
         }
       }
       const step = draftStep(state, page);
@@ -132,8 +136,9 @@ async function visitDraft(eventRoot: string): Promise<string> {
   }
   const slug = state.slug;
   if (best) await download(`hackrecon/devpost/${slug}.submission.html`, best.html, "text/html");
-  await download(`hackrecon/devpost/${slug}.visit.json`, JSON.stringify({ event_root: eventRoot, finished_at: new Date().toISOString(), result, sample: best ? { url: best.url, score: best.score } : null, pages: state.log }, null, 2), "application/json");
-  return `devpost draft: ${result}${best ? "; sample saved" : "; no sample"}`;
+  const log = JSON.stringify({ event_root: eventRoot, finished_at: new Date().toISOString(), result, refused_samples: refused, sample: best ? { url: best.url, score: best.score } : null, pages: state.log }, null, 2);
+  await download(`hackrecon/devpost/${slug}.visit.json`, scrubTokens(log).html, "application/json");
+  return `devpost draft: ${result}${best ? "; sample saved" : "; no sample"}${refused ? `; ${refused} page${refused === 1 ? "" : "s"} refused (session values left after scrubbing)` : ""}`;
 }
 
 chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string; draft?: boolean }, sender, reply) => {
