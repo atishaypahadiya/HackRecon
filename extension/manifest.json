@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HackRecon capture",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Syncs an event's Slack channels and threads through read-only API methods in the background, or as rendered in the tab. Never posts, reacts, messages or marks anything read.",
   "permissions": [
     "activeTab",
@@ -17,6 +17,13 @@
   "host_permissions": [
     "https://*.devpost.com/*",
     "https://*.slack.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://app.slack.com/client/*"],
+      "js": ["dist/slack-session.js"],
+      "run_at": "document_idle"
+    }
   ],
   "background": {
     "service_worker": "dist/background.js"

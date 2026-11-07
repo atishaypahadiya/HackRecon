@@ -7,6 +7,7 @@ import { pageFileName } from "../../pipeline/schema.ts";
 import { refuseLoad } from "../../pipeline/urlsafety.ts";
 import { pull, type PullState } from "./apipull.ts";
 import { DEVPOST_EVENT_URL } from "./autopages.ts";
+import { fromSlackTab, isKnown, pullDue, remember, type KnownWorkspace, type SlackSession } from "./handoff.ts";
 import { ApiError, SlackApi, WORKSPACE_ORIGIN } from "./slackapi.ts";
 import type { SyncConfig } from "./thread.ts";
 import { base64, splitParts, SYNC_FILE } from "./ui.ts";
@@ -93,13 +94,6 @@ async function wakefulSleep(ms: number): Promise<void> {
   }
 }
 
-interface SlackSession {
-  token: string;
-  origin: string;
-  team: string;
-  workspace: string;
-}
-
 const status = (text: string) => chrome.storage.session.set({ pull_status: `${new Date().toLocaleTimeString()}: ${text}` });
 
 /** Every pull's outcome, overwritten each time: times, counts and channel errors, never content or the session, so
@@ -118,11 +112,16 @@ async function download(path: string, text: string): Promise<string | null> {
   return null;
 }
 
-async function runPull(reason: "popup" | "timer"): Promise<void> {
+async function runPull(reason: "popup" | "timer" | "handoff"): Promise<void> {
   const { slack, pulling } = (await chrome.storage.session.get(["slack", "pulling"])) as { slack?: SlackSession; pulling?: number };
-  if (!slack) return void (await status("no Slack session in memory since the browser started; the next Sync from the popup resumes pulls"));
+  if (!slack) {
+    await status("no Slack session in memory: open the event's Slack tab and pulls resume");
+    return void (await download(PULL_STATUS_FILE, JSON.stringify({ outcome: "no-session", reason, at: new Date().toISOString() }, null, 2)));
+  }
   if (pulling && Date.now() - pulling < STALE_LOCK_MS) return;
   await chrome.storage.session.set({ pulling: Date.now() });
+  // Not secret: when the last pull began, so a hand-off after a restart knows whether one is due.
+  await chrome.storage.local.set({ last_pull_at: Date.now() });
   const since = new Date().toLocaleTimeString();
   let calls = 0;
   // The heartbeat is the keep-alive too: an extension API call before every Slack request.
@@ -174,7 +173,53 @@ chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) void runPull("timer");
 });
 
-chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string; slack?: SlackSession }, sender, reply) => {
+/** The timer, kept on its 30-minute rhythm from the last pull (Chrome may drop alarms on an update or a restart). */
+async function ensureAlarm(dueMs: number): Promise<void> {
+  if (await chrome.alarms.get(ALARM)) return;
+  await chrome.alarms.create(ALARM, { periodInMinutes: PULL_EVERY_MIN, delayInMinutes: Math.max(0.5, dueMs / 60_000) });
+}
+
+/** Automatic hand-off (user 2026-11-07): a Slack tab of a workspace the user already synced passes its session on
+ *  load, so pulls resume after an extension reload or a browser restart without a click. Memory only. */
+async function takeSession(s: SlackSession): Promise<void> {
+  const { slack } = (await chrome.storage.session.get("slack")) as { slack?: SlackSession };
+  if (slack?.token !== s.token || slack.origin !== s.origin) await chrome.storage.session.set({ slack: { token: s.token, origin: s.origin, team: s.team, workspace: s.workspace } });
+  const { last_pull_at } = (await chrome.storage.local.get("last_pull_at")) as { last_pull_at?: number };
+  const due = pullDue(last_pull_at, Date.now(), PULL_EVERY_MIN * 60_000);
+  if (due > 0) return ensureAlarm(due);
+  await chrome.alarms.clear(ALARM);
+  await ensureAlarm(PULL_EVERY_MIN * 60_000);
+  await runPull("handoff");
+}
+
+const knownWorkspaces = async () => (((await chrome.storage.local.get("known_workspaces")).known_workspaces as KnownWorkspace[] | undefined) ?? []);
+
+/** Content scripts run only on page load: after an install, update or reload, hand-off is injected into Slack tabs
+ *  already open, and on a browser restart the reopened tabs load it themselves. */
+async function injectHandoff(): Promise<void> {
+  for (const tab of await chrome.tabs.query({ url: "https://app.slack.com/client/*" }))
+    if (tab.id !== undefined) await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/slack-session.js"] }).catch(() => {});
+}
+chrome.runtime.onInstalled.addListener(() => void injectHandoff());
+chrome.runtime.onStartup.addListener(() => void injectHandoff());
+
+chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string; slack?: SlackSession; team?: string; origin?: string }, sender, reply) => {
+  if (msg.type === "slack-known" || msg.type === "slack-session") {
+    // Only our content script in a Slack client tab, and only for the team that tab shows.
+    const s = msg.type === "slack-session" ? msg.slack : { team: msg.team ?? "", origin: msg.origin ?? "", token: "", workspace: "" };
+    const tabTeam = (sender.tab?.url ?? "").split("/")[4] ?? "";
+    if (!fromSlackTab(sender, chrome.runtime.id) || !s || s.team !== tabTeam || !WORKSPACE_ORIGIN.test(s.origin)) {
+      reply({ error: "refused" });
+      return;
+    }
+    (async () => {
+      const known = isKnown(await knownWorkspaces(), s.team, s.origin);
+      if (msg.type === "slack-known" || !known || !s.token) return reply({ known });
+      reply({});
+      await takeSession(s);
+    })();
+    return true;
+  }
   if (msg.type === "api-start") {
     // Only the popup (an extension page, not a content script or a web page) may hand over a session.
     const s = msg.slack;
@@ -184,6 +229,8 @@ chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; fil
     }
     (async () => {
       await chrome.storage.session.set({ slack: { token: s.token, origin: s.origin, team: s.team, workspace: s.workspace } });
+      // The user's own Sync makes the workspace known: its tabs may hand over their session from now on.
+      await chrome.storage.local.set({ known_workspaces: remember(await knownWorkspaces(), s) });
       await chrome.alarms.create(ALARM, { periodInMinutes: PULL_EVERY_MIN, delayInMinutes: PULL_EVERY_MIN });
       reply({});
       await runPull("popup");
