@@ -250,7 +250,10 @@
   .dsrc a { text-underline-offset: 3px; }
   .dsrc a:hover { color: var(--text); }
   .dsrc q { display: block; margin-top: 2px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 13px; quotes: none; overflow-wrap: anywhere; }
-  .dacts { display: flex; align-items: center; gap: 8px 16px; margin-top: 10px; }
+  .dr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
+  .dr > :not(.skip) { grid-column: 1; }
+  .dr .skip { grid-column: 2; grid-row: 1 / span 3; align-self: start; margin-top: -10px; }
+  .dgo { padding-top: 12px; border-top: 1px solid var(--line); }
   .sum { display: flex; align-items: center; gap: 16px; }
   .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sum .stk { color: var(--muted); }
@@ -957,11 +960,12 @@ function paintInput(editing) {
   // P1b: drafts from the repo, each filled in only when the user chooses Use (board/prefill.js). Nothing is stored
   // here; the input is saved when the plan is made, as for anything typed.
   const formState = () => ({ idea: $("pi-idea").value, stack: [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value, used_for: r.querySelector(".uf").value })) });
+  let used = 0;
   const useDraft = (it) => {
     const f = HRPrefill.applyItem(formState(), it);
     $("pi-idea").value = f.idea;
     $("pi-stack").innerHTML = f.stack.map(stackRow).join("");
-    $("say").textContent = it.kind === "description" ? "Description filled in." : `${it.name} added to your stack.`;
+    used++;
   };
   $("pi-draft").onclick = async () => {
     const repo = $("pi-repo").value.trim(), btn = $("pi-draft"), cap = $("pi-dcap");
@@ -974,7 +978,8 @@ function paintInput(editing) {
       if (!r.ok) throw new Error(j.error || "Couldn't draft from that repo.");
       const items = HRPrefill.draftItems(j.draft);
       cap.textContent = items.length ? plural(items.length, "draft") : "Nothing to draft from that repo.";
-      HRPrefill.mountDrafts($("pi-drafts"), items, { head: `From ${j.repo.replace(/^https:\/\/github\.com\//, "")} @ ${j.commit.slice(0, 7)}`, onUse: useDraft, onDone: () => { cap.textContent = "Every draft decided."; btn.focus(); } });
+      used = 0;
+      HRPrefill.mountDrafts($("pi-drafts"), items, { head: `From ${j.repo.replace(/^https:\/\/github\.com\//, "")} @ ${j.commit.slice(0, 7)}`, onUse: useDraft, onDone: () => { cap.textContent = used ? `${plural(used, "draft")} filled in. Check them, then make your plan.` : "All drafts skipped."; $("pi-idea").focus(); } });
       $("pd-h")?.focus();
     } catch (err) {
       cap.textContent = err.message.replace(/\.?$/, ".");

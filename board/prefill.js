@@ -1,6 +1,6 @@
-// P1b on the board (user 2026-11-06): drafts from a repo link, each shown with the lines it came from, filled into
-// the Plan input only when the user picks "Use" on it. Nothing here writes to storage or to the plan: Use fills the
-// form, and the plan is saved only when the user submits it. `hr board` inlines this file into the page (the CSP
+// P1b on the board (user 2026-11-06): drafts from a repo link, each shown with the lines it came from. The user
+// skips the ones that are wrong, then "Use all" fills the rest into the Plan input. Nothing here writes to storage
+// or to the plan: Use all fills the form, and the plan is saved only when the user submits it ("Make my plan"). `hr board` inlines this file into the page (the CSP
 // allows inline scripts only); bun test loads it directly.
 (function (g) {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -43,17 +43,28 @@
         return `<li>${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(s.source)}</a>` : `<span>${esc(s.source)}</span>`}<q>${esc(s.quote)}</q></li>`;
       })
       .join("");
-    return `<div class="dr" data-k="${esc(it.key)}"><p class="dn">${title}</p>${body}<ul class="dsrc">${src}</ul><div class="dacts"><button type="button" class="claim use" aria-label="Use ${it.kind === "description" ? "the description" : esc(it.name)}">Use</button><button type="button" class="add skip" aria-label="Skip ${it.kind === "description" ? "the description" : esc(it.name)}">Skip</button></div></div>`;
+    return `<div class="dr" data-k="${esc(it.key)}"><p class="dn">${title}</p>${body}<ul class="dsrc">${src}</ul><button type="button" class="add skip" aria-label="Skip ${it.kind === "description" ? "the description" : esc(it.name)}">Skip</button></div>`;
   }
 
-  /** Renders the items into root and calls onUse / onSkip with one item per click. When the last is decided, the
-   *  list is removed and onDone runs. */
+  /** Renders the items into root. Skip drops one row (onSkip); "Use all" hands every row still listed to onUse in
+   *  order, once, then removes the list and runs onDone. Skipping the last row also ends it. */
   function mountDrafts(root, items, { head = "", onUse, onSkip = () => {}, onDone = () => {} }) {
     let left = [...items];
-    root.innerHTML = left.length ? `<div class="drafts"><p class="l" id="pd-h" tabindex="-1">${esc(head)}</p><p class="cap">Each draft goes into your input only when you choose Use, and your plan is saved only when you make it.</p><div class="dl">${left.map(itemHtml).join("")}</div></div>` : "";
+    const label = () => (left.length === 1 ? "Use this draft" : `Use all ${left.length}`);
+    root.innerHTML = left.length ? `<div class="drafts"><p class="l" id="pd-h" tabindex="-1">${esc(head)}</p><p class="cap">Skip any that are wrong, then use the rest. Your plan is saved only when you make it.</p><div class="dl">${left.map(itemHtml).join("")}</div><div class="dgo"><button type="button" class="jump useall">${label()}</button></div></div>` : "";
     if (!left.length) return onDone();
+    const end = () => {
+      root.innerHTML = "";
+      onDone();
+    };
+    root.querySelector(".useall").addEventListener("click", () => {
+      const all = left;
+      left = [];
+      for (const it of all) onUse(it);
+      end();
+    });
     root.querySelector(".dl").addEventListener("click", (e) => {
-      const btn = e.target.closest("button.use, button.skip");
+      const btn = e.target.closest("button.skip");
       if (!btn) return;
       const row = btn.closest(".dr");
       const it = left.find((x) => x.key === row.getAttribute("data-k"));
@@ -61,12 +72,10 @@
       left = left.filter((x) => x !== it);
       const next = row.nextElementSibling || row.previousElementSibling;
       row.remove();
-      if (btn.classList.contains("use")) onUse(it);
-      else onSkip(it);
-      if (!left.length) {
-        root.innerHTML = "";
-        onDone();
-      } else next?.querySelector("button.use")?.focus();
+      onSkip(it);
+      if (!left.length) return end();
+      root.querySelector(".useall").textContent = label();
+      (next?.querySelector("button.skip") ?? root.querySelector(".useall")).focus();
     });
   }
 
