@@ -2322,11 +2322,14 @@ async function discover(args: string[]): Promise<number> {
         return { id: x.id, is_admin: x.is_admin, is_owner: x.is_owner, deleted: x.deleted, is_bot: x.is_bot, title: x.profile?.title, names: [x.profile?.display_name, x.profile?.real_name, x.real_name].filter(Boolean).join(" ") };
       })
     : [];
-  // With no admin flags, the top-level posters in announcement channels stand in (Cal Hacks: 29, all of them among
-  // the 55 organizers the export's flags give).
-  const posters = flagged.length || !users.length ? organizersFromRestricted(messages, announcement).map((p) => p.id) : [];
-  const orgs = organizersFrom(users, organizerTag(title), posters, flagged.length ? "restricted-posting channel" : "announcement channel poster");
-  console.log(`organizers: ${orgs.length} (${expDir ? `admin/owner flags and titles from ${expDir}/users.json` : "no users list with admin flags: announcement channel posters stand in"}; ${posters.length} posters)`);
+  // Authority only from signals a hacker can't set (D19): admin/owner flags and restricted-posting channels. Posters
+  // in channels picked by name, name tags and titles are proposals, listed for the user and never written.
+  const posters = organizersFromRestricted(messages, announcement).map((p) => p.id);
+  const { organizers: orgs, proposals } = organizersFrom(users, organizerTag(title), flagged.length ? posters : [], flagged.length ? [] : posters);
+  console.log(
+    `organizers: ${orgs.length} (${expDir ? `admin/owner flags from ${expDir}/users.json` : "no users list with admin flags yet"}; ` +
+      `${flagged.length ? posters.length : 0} restricted-posting posters); ${proposals.length} proposed, not written (name tag, title, or posting in a channel named like announcements)`,
+  );
 
   const items = readJsonFile<Item[]>(ITEMS_PATH, []);
   const slackSchedule = slackDeadlines(items, messages, announcement, new Set(orgs.map((o) => o.id)));
@@ -2353,7 +2356,7 @@ async function discover(args: string[]): Promise<number> {
   for (const u of ev.config.unconfirmed) console.log(`  check: ${u}`);
 
   const against = values.against ? compareConfig(fromCaller(values.against), ev.config, sp.sponsors, orgs) : null;
-  writeJsonFile(DISCOVERY_PATH, { discovered_at: new Date().toISOString(), workspace: sub, query, devpost: { root, why }, written, event: ev, sponsors: sp, organizers: orgs, against });
+  writeJsonFile(DISCOVERY_PATH, { discovered_at: new Date().toISOString(), workspace: sub, query, devpost: { root, why }, written, event: ev, sponsors: sp, organizers: orgs, organizer_proposals: proposals, against });
   console.log(`wrote ${DISCOVERY_PATH}`);
   return 0;
 }

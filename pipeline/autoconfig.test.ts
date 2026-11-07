@@ -29,11 +29,11 @@ describe("event from the workspace", () => {
 });
 
 describe("organizers", () => {
-  test("admin, owner, the name tag and an organizing title; deleted accounts and bots never", () => {
+  test("only signals a hacker can't set are written; a name tag, a title or posting in a named channel is only proposed", () => {
     const got = organizersFrom(
       [
         { id: "A", is_admin: true, names: "Dana" },
-        { id: "B", is_owner: true, is_admin: true, names: "Lee" },
+        { id: "B", is_owner: true, is_admin: true, names: "CAL HACKS | Lee" },
         { id: "C", names: "CAL HACKS | Sam" },
         { id: "D", names: "Kim", title: "Logistics Director" },
         { id: "E", names: "Hacker" },
@@ -42,13 +42,17 @@ describe("organizers", () => {
       ],
       organizerTag("Cal Hacks 13.0"),
       ["H"],
+      ["I", "A"],
     );
-    expect(got).toEqual([
+    expect(got.organizers).toEqual([
       { id: "A", why: ["admin"] },
       { id: "B", why: ["admin", "owner"] },
+      { id: "H", why: ["restricted-posting channel"] },
+    ]);
+    expect(got.proposals).toEqual([
       { id: "C", why: ["event name tag"] },
       { id: "D", why: ["title"] },
-      { id: "H", why: ["restricted-posting channel"] },
+      { id: "I", why: ["posted in a channel named like announcements"] },
     ]);
   });
 });
