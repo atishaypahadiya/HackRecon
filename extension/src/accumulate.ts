@@ -14,10 +14,17 @@ export type RawRow =
       threadTs?: Ts;
       /** On system rows that aren't Slack system messages but other non-posts (pipeline/rows.ts). */
       nonPost?: NonPost;
+      /** The reply bar under a parent post: "N replies" and the newest reply's ts. */
+      replies?: Replies;
     }
   /** Day/unread dividers: Slack always renders an author header after one. */
   | { kind: "divider" }
   | { kind: "channel_start" };
+
+export interface Replies {
+  count: number;
+  last?: Ts;
+}
 
 export interface Sender {
   name: string;
@@ -34,6 +41,7 @@ export interface Captured {
   text: string;
   links: string[];
   permalink: string;
+  replies?: Replies;
 }
 
 interface Seen {
@@ -44,6 +52,7 @@ interface Seen {
   text: string;
   links: string[];
   permalink: string;
+  replies?: Replies;
 }
 
 /**
@@ -88,6 +97,7 @@ export class Accumulator {
         text: old && old.text.length > row.text.length ? old.text : row.text,
         links: old && old.links.length > row.links.length ? old.links : row.links,
         permalink: row.permalink || old?.permalink || "",
+        replies: row.replies ?? old?.replies,
       });
       if (above !== null && !row.sender) this.prev.set(row.ts, above);
       above = row.ts;
@@ -126,6 +136,7 @@ export class Accumulator {
       if (!sender) unresolvedAuthors.push(ts);
       const m: Captured = { ts, sender: sender ?? { name: "" }, text: r.text, links: r.links, permalink: r.permalink };
       if (r.threadTs) m.threadTs = r.threadTs;
+      if (r.replies) m.replies = r.replies;
       messages.push(m);
     }
     return { messages, systemRowsSkipped, nonPostsSkipped, unresolvedAuthors };

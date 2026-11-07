@@ -22,10 +22,11 @@ import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pi
 
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
-const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html")).sort() : [];
+// Channel views only: thread-pane samples saved by "Sync this event" (`--thread-`) are checked in thread.fixtures.test.ts.
+const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html") && !f.includes("--thread-")).sort() : [];
 
 test("calhacks-13 fixtures/slack-dom has samples", () => {
-  if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "Saving DOM samples"`);
+  if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "DOM samples"`);
 });
 
 type Parsed = { file: string; doc: Document; rows: RawRow[]; channelId: string; byTs: Map<string, ExportMessage> };

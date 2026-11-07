@@ -1,9 +1,22 @@
 export {};
 
+const syncButton = document.getElementById("sync") as HTMLButtonElement;
+const syncStatus = document.getElementById("sync-status")!;
 const button = document.getElementById("capture") as HTMLButtonElement;
 const status = document.getElementById("status")!;
 const pageButton = document.getElementById("capture-page") as HTMLButtonElement;
 const pageStatus = document.getElementById("page-status")!;
+
+syncButton.addEventListener("click", async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url?.startsWith("https://app.slack.com/client/")) {
+    syncStatus.textContent = "Open the event's Slack at app.slack.com first.";
+    return;
+  }
+  syncButton.disabled = true;
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/sync.js"] });
+  syncStatus.textContent = "Syncing in the tab. Its overlay shows progress; files land in Downloads/hackrecon/sync/.";
+});
 
 button.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
