@@ -12,9 +12,9 @@ export type PosterRole = "organizer" | "sponsor-side" | "other";
 const ORG_TAG = /\bcal\s*hacks\b/i;
 const ORG_TITLE = /director|exec|organi[sz]er|logistics/i;
 
+/** organizers.json is Slack user IDs only (user 2026-11-06): names change mid-event and aren't needed to match. */
 export interface Organizer {
   id: string;
-  name: string;
   why: string[];
 }
 
@@ -42,7 +42,7 @@ export function buildOrganizers(exp: SlackExport): Organizer[] {
       ORG_TAG.test(names) && "cal hacks tag",
       ORG_TITLE.test(u.profile?.title ?? "") && "title",
     ].filter((w): w is string => !!w);
-    return why.length ? [{ id: u.id, name: u.profile?.display_name || u.real_name || u.name || u.id, why }] : [];
+    return why.length ? [{ id: u.id, why }] : [];
   });
 }
 
@@ -64,4 +64,36 @@ export function posterRole(m: Message, channel: SponsorEntry | undefined, organi
   if (candidates.some((s) => [s.sponsor, ...s.aliases].some((n) => who.includes(norm(n))))) return "sponsor-side";
   if (!event && m.author_external) return "sponsor-side";
   return "other";
+}
+
+/**
+ * Roles keyed by Slack user ID only (user 2026-11-06: display names change mid-event; a cohost rep's
+ * "LenaRose (Annapurna Labs)" became "LenaRose" between the Oct 27 capture and the Nov 6 sync).
+ * posterRole reads one post's signals (name tag, inline title, external badge). Here a signal seen on any of a
+ * user's posts holds for all of them: organizer everywhere; sponsor-side for that sponsor's channels, and in event
+ * channels. A post with no author_id gets no role ("other"): names alone never key a person.
+ */
+export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>): (m: Message) => PosterRole {
+  const all = Object.values(sponsors);
+  const organizer = new Set(organizerIds);
+  const sponsorSide = new Set<string>();
+  const anySponsor = new Set<string>();
+  for (const m of messages) {
+    if (!m.author_id || m.author_kind === "bot") continue;
+    const ch = sponsors[m.channel_name];
+    const r = posterRole(m, ch, organizerIds, all);
+    if (r === "organizer") organizer.add(m.author_id);
+    if (r === "sponsor-side") {
+      sponsorSide.add(`${m.author_id}|${ch?.sponsor ?? "event"}`);
+      anySponsor.add(m.author_id);
+    }
+  }
+  return (m) => {
+    if (!m.author_id) return "other";
+    if (organizer.has(m.author_id)) return "organizer";
+    const ch = sponsors[m.channel_name];
+    const event = !ch || ch.sponsor === "event";
+    if (event ? anySponsor.has(m.author_id) : sponsorSide.has(`${m.author_id}|${ch.sponsor}`)) return "sponsor-side";
+    return "other";
+  };
 }

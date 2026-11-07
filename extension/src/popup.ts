@@ -14,6 +14,9 @@ syncButton.addEventListener("click", async () => {
     return;
   }
   syncButton.disabled = true;
+  // The event's channels, written at build time from its config (extension/build-config.ts).
+  const config = await fetch(chrome.runtime.getURL("dist/sync-config.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (c: unknown) => void ((window as unknown as { __hackreconSyncConfig: unknown }).__hackreconSyncConfig = c), args: [config] });
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/sync.js"] });
   syncStatus.textContent = "Syncing in the tab. Its overlay shows progress; files land in Downloads/hackrecon/sync/.";
 });

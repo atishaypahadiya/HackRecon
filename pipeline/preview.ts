@@ -171,8 +171,8 @@ export function repCandidates(messages: Message[], sponsors: Sponsors, role: (m:
   const keys = new Set<string>();
   for (const m of messages) {
     const s = sponsors[m.channel_name];
-    if (!s || s.sponsor === "event" || role(m) !== "sponsor-side") continue;
-    keys.add(`${s.sponsor}|${m.author_name}`);
+    if (!s || s.sponsor === "event" || !m.author_id || role(m) !== "sponsor-side") continue;
+    keys.add(`${s.sponsor}|${m.author_id}`);
   }
   return { candidates: keys.size, sponsors: new Set([...keys].map((k) => k.split("|")[0])).size };
 }
