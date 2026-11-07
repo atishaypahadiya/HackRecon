@@ -17,6 +17,9 @@ export const SEL = {
   timestamp: 'a.c-timestamp, time > a[href*="/archives/"]',
   /** Author header (absent on grouped posts). */
   sender: '[data-qa="message_sender_name"]',
+  /** A header whose author name Slack hadn't loaded yet: a placeholder where the name goes, and a blank avatar.
+   *  Verified in the 2026-11-06 sync's thread samples (cohost-hyphenate, cohost-anthropic). Not a grouped post. */
+  unknownSender: '[data-qa="message_content"] > .c-missing_text',
   /** Attribute on the sender element that may hold the user ID. */
   senderIdAttr: "data-message-sender",
   /** Inline title next to the author, only if Slack renders one (D6). */
@@ -65,10 +68,11 @@ export const SEL = {
   /** The primary view's message pane; the thread pane is anything outside it. */
   messagePane: '[data-qa="message_pane"]',
 
-  // Thread pane. UNVERIFIED until the first sync saves pane samples (fixtures/slack-dom/*--thread-*.html): these
-  // candidates are tried first, then the pane is found without them (thread.ts: the subtree outside the message
-  // pane that renders the parent's message container).
+  // Thread pane. Verified 2026-11-06 by the first sync (243/243 panes found by data-qa="threads_flexpane"; 14 pane
+  // samples in fixtures/slack-dom/*--thread-*.html, checked by thread.fixtures.test.ts). The other candidates and
+  // the markup-free fallbacks in thread.ts stay in case Slack renames it.
   threadPane: '[data-qa="threads_flexpane"], .p-threads_flexpane, [data-qa="thread_view"], [data-qa="secondary_view"]',
+  /** UNVERIFIED which candidate matched: the first sync logged no close failures, but didn't record the match. */
   threadClose: '[data-qa="close_flexpane"], [data-qa="flexpane_close_button"], button[aria-label="Close"], button[aria-label="Close thread"]',
 } as const;
 

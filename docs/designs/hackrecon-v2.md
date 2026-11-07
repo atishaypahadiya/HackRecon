@@ -468,7 +468,13 @@ Total: about 10–14 solo days [estimated, no basis beyond v1's pace]. Steps 1 a
     - **Raw rows:** pane rows are kept as raw scrubbed HTML per scroll step (`.threads.raw.json`), so `hr rebuild-threads` reparses them after a selector fix without another sync.
     - **Ingest:** `hr sync-ingest` brings the bundle into `captures/sync-<stamp>/` (new captures never overwrite the Oct 27 ones).
     - **Verified so far:** headless Chromium drove the built `dist/sync.js` through a stand-in Slack built from the export (virtualized panes, a pane that opens at its end, a "Show N more replies" control): 7 channels, 48/48 threads opened, 132/132 replies. The offline rebuild matched the in-page parse. The first stand-in runs caught two bugs, both fixed: long panes opening at their end hid the parent, and replies revealed by "more" were skipped.
-    - **UNVERIFIED until the user's run:** Slack's own pane markup, its scroller, sidebar clicks and close button.
+    - **First real sync (user, 2026-11-06 18:29–18:49 PT, 20 min 37 s from sync.json):**
+      - **Coverage:** 53/53 channels opened. 243 threads, every pane found by `data-qa="threads_flexpane"`, all stopped `parent_seen`. No "more replies" control appeared. 0 save errors, 0 tokens in the 14 pane samples.
+      - **Channel keyed recall:** 972/972 on the 24 locked channels it covers (2-opportunities has no prefix, so it isn't synced) and 167/167 on the stretch 29, which covers step −1's top-level capture.
+      - **Thread recall against the export:** 486/494 = 98.4% on the locked 25, passing D5's 0.9 gate. 91/91 on the stretch 29. All 8 locked misses are replies under 2 deleted parents (spons-crs-credit-api, cohost-hyphenate). The channel capture skipped "This message was deleted." rows, so it never saw their reply bars. Fixed for the next sync (`deletedParents`); UNVERIFIED that Slack draws a reply bar on that row.
+      - **Authors:** 6 thread replies had headers whose name Slack hadn't loaded yet (`c-missing_text`). The first parse gave them the author above. They are now blank and flagged, never someone else's name (`SEL.unknownSender`); `hr rebuild-threads` reparsed the saved rows.
+      - **Channel author mismatches** (11/984) are two people renamed after the export. The Oct 27 capture shows "LenaRose (Annapurna Labs)", and Slack now renders "LenaRose". "user4512" is now "user7781". The lost "(Annapurna Labs)" suffix was a rep signal: reps can't rely on display-name suffixes.
+      - **UNVERIFIED still:** which close-button candidate matched.
 
 ## Not in scope
 

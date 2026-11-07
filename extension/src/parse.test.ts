@@ -129,3 +129,31 @@ describe("parseRows: non-posts and broadcasts from the day-1 capture", () => {
     expect(acc.finalize().messages.map((m) => m.ts)).toEqual(["1792819005.075629"]);
   });
 });
+
+describe("headers whose author name Slack hadn't loaded (2026-11-06 sync)", () => {
+  test("an unknown header is not a grouped post: blank author, not the one above", async () => {
+    const { parseHTML } = await import("linkedom");
+    const { Accumulator } = await import("./accumulate.ts");
+    const row = (ts: string, head: string) =>
+      `<div class="c-virtual_list__item" data-item-key="${ts}"><div data-qa="message_container" data-msg-ts="${ts}"><div data-qa="message_content">${head}<a class="c-timestamp" data-ts="${ts}" href="https://w.slack.com/archives/C1/p${ts.replace(".", "")}?thread_ts=1792951566.402279&amp;cid=C1">t</a><div data-qa="message-text">hi ${ts}</div></div></div></div>`;
+    const html = `<div data-qa="message_pane">${row("1792954145.002549", '<span data-qa="message_sender"><button data-qa="message_sender_name">Alex Lane</button></span>')}${row("1792954221.441149", '<span class="c-missing_text c-missing_text--unknown"></span>')}${row("1792954250.000100", "")}</div>`;
+    const doc = parseHTML(`<html><body>${html}</body></html>`).document as unknown as Document;
+    const acc = new Accumulator();
+    acc.ingest(parseRows(doc, "https://app.slack.com/"));
+    const out = acc.finalize();
+    expect(out.messages.map((m) => m.sender.name)).toEqual(["Alex Lane", "", ""]);
+    expect(out.unresolvedAuthors).toEqual(["1792954221.441149", "1792954250.000100"]);
+  });
+
+  test("a deleted parent with replies is kept as a thread to open, not a post", async () => {
+    const { parseHTML } = await import("linkedom");
+    const { Accumulator } = await import("./accumulate.ts");
+    const html = `<div data-qa="message_pane"><div class="c-virtual_list__item" data-item-key="1792831361.174779"><div data-qa="message_container" data-msg-ts="1792831361.174779"><div data-qa="message_content"><div>This message was deleted.</div><div data-qa="reply_bar"><button data-qa="reply_bar_count">4 replies</button><span data-qa="reply_bar_hover_last_reply" data-ts="1792840000.000100">Last reply</span></div></div></div></div></div>`;
+    const doc = parseHTML(`<html><body>${html}</body></html>`).document as unknown as Document;
+    const acc = new Accumulator();
+    acc.ingest(parseRows(doc, "https://app.slack.com/"));
+    const out = acc.finalize();
+    expect(out.messages).toEqual([]);
+    expect(out.deletedParents).toEqual([{ ts: "1792831361.174779", count: 4, last: "1792840000.000100" }]);
+  });
+});

@@ -38,11 +38,11 @@ export function parseRow(el: Element, base?: string): RawRow | null {
   const bodyEl = el.querySelector(SEL.body);
   const { text, links } = bodyEl ? serializeBody(bodyEl, base) : { text: "", links: [] };
   const nonPost = nonPostReason({ ts, permalink, text, hasBody: !!bodyEl });
-  if (nonPost) return { kind: "system", ts, sender, text, links, permalink, nonPost };
+  const replies = parseReplyBar(el);
+  if (nonPost) return replies ? { kind: "system", ts, sender, text, links, permalink, nonPost, replies } : { kind: "system", ts, sender, text, links, permalink, nonPost };
   const kind = isSystem(el, sender, !!bodyEl) ? "system" : "message";
   const threadTs = broadcastParent(permalink, ts);
   const row: RawRow = threadTs ? { kind, ts, sender, text, links, permalink, threadTs } : { kind, ts, sender, text, links, permalink };
-  const replies = parseReplyBar(el);
   if (replies) row.replies = replies;
   return row;
 }
@@ -67,6 +67,8 @@ export function replyButton(row: Element): Element | null {
 function parseSender(row: Element): Sender | null {
   const el = row.querySelector(SEL.sender);
   const name = squash(el?.textContent ?? "");
+  // A header with its name not loaded yet: an author we can't name, never the one above (that's for grouped posts).
+  if ((!el || !name) && row.querySelector(SEL.unknownSender)) return { name: "" };
   if (!el || !name) return null;
   const s: Sender = { name };
   const id = el.getAttribute(SEL.senderIdAttr) ?? el.closest(`[${SEL.senderIdAttr}]`)?.getAttribute(SEL.senderIdAttr);
