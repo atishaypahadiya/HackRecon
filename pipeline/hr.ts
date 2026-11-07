@@ -8,9 +8,12 @@ import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, threadCaptureFiles, type LoadedCapture } from "./captures.ts";
+import { CostGuard, CostRefused, guardClient, plannedCall } from "./costguard.ts";
 import {
   classifyOne,
+  MAX_TOKENS,
   MODEL,
+  OUTPUT_SCHEMA,
   promptHash,
   readEvent,
   readJsonFile,
@@ -51,11 +54,13 @@ import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
 import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_LIVE_JS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
 import { joinSponsors, planCredits, planPeople, planSessions, submissionDeadline } from "./planjoin.ts";
-import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
+import { GROUP_EFFORT, GROUP_MAX_TOKENS, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
   applyJudge,
   JUDGE_EFFORT,
+  JUDGE_MAX_TOKENS,
   JUDGE_MODEL,
+  JUDGE_SCHEMA,
   judgeHash,
   judgeOne,
   judgeSystemPrompt,
@@ -130,11 +135,13 @@ import {
   checkCanon,
   assignIds,
   checkJudge,
+  keepDropped,
   keyed,
   rematch,
   REMATCH_THRESHOLD,
   type JudgeVerdict,
   type Keyed,
+  type KeptField,
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
@@ -143,7 +150,7 @@ import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, 
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
 import { planStream, type PlanEvent, type PlanSteps } from "./planstream.ts";
-import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
+import { PREFILL_MAX_TOKENS, PREFILL_SCHEMA, PREFILL_SYSTEM, prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
 import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
@@ -159,6 +166,9 @@ import { snapshotPage } from "../extension/src/page.ts";
 const EXPORT_CUTOFF = "2026-10-27T03:17:00-07:00";
 
 const USAGE = `usage:
+  Spend guard (costguard.ts): every command that can call a model prints its estimated cost first and refuses a run
+  estimated over $1 unless given --yes (estimate: input at 2 characters a token, uncached, plus each call's full
+  output budget; a retry after a failed output check is another call, checked as it runs).
   bun run hr compare [capture.json | dir ...] [--export DIR] [--json OUT] [--cutoff ISO]
       Checks each captured channel against the slackdump export: keyed recall by ts
       (pass >= ${RECALL_MIN * 100}%), author match (pass >= ${AUTHOR_MIN * 100}%), time (<= ${TIME_MAX_S}s, recorded only).
@@ -173,7 +183,7 @@ const USAGE = `usage:
       hr classify) every non-hit the classifier flags as credit or dated. Which is which is kept in
       ${POOL_META_PATH} so the sheet doesn't reveal classifier answers. Re-running keeps every label
       column. --check only validates the labels entered so far. Labeling rules: docs/labeling.md
-  bun run hr prelabel [--dry-run] [--include-hand] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+  bun run hr prelabel [--dry-run] [--yes] [--include-hand] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       The Opus judge (D21): ${JUDGE_MODEL} (effort ${JUDGE_EFFORT}) fills the label columns of every row in
       ${LABELS_PATH} from the same redacted input Haiku gets, under the rules in ${RULES_PATH} (Columns
       section, verbatim), with labeler = ${OPUS_LABELER}. Blind to Haiku: never reads items.json, the classify
@@ -186,29 +196,30 @@ const USAGE = `usage:
       precision/recall, amount and deadline match, both miss checks, with counts and both prompt hashes.
       With Opus labels every number is agreement with Opus, not accuracy, and the report says so.
       Unlabeled rows are skipped and counted; nothing about them is printed. Exit 0 only on a complete pass.
-  bun run hr group [--dry-run] [--force]
+  bun run hr group [--dry-run] [--force] [--yes]
       The Opus grouping pass: claude-opus-5-5 reads every post the judge labeled is_credit = y (same redacted
       input as classify and prelabel, blind to the classifier) and writes the distinct offers with their source
       posts to ${GROUP_PATH}. One streamed request; skipped while the input is unchanged unless --force.
-  bun run hr board [--build-only] [--port N]
+  bun run hr board [--build-only] [--port N] [--yes]
       Builds ${BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
-      127.0.0.1. Needs a current ${GROUP_PATH}.
+      127.0.0.1. Needs a current ${GROUP_PATH}. Plan, Recheck gaps and repo drafts call models; each request is
+      estimated in the server log and refused over $1 unless the board was started with --yes.
   bun run hr pages [--from-html FILE --url URL --access public|authenticated]
       Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
       flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
       --from-html builds a test fixture snapshot from saved HTML into ${PAGE_FIXTURES_DIR} (never canon).
-  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force]
+  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force] [--yes]
       Extracts tracks, prizes, judging criteria and rules from each canon page's latest snapshot (one
       ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
-  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
-  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh] [--at ISO]
+  bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline] [--yes]
+  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh] [--at ISO] [--yes]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
       Runs the board's Plan stream in-process and appends its timing to ${PLAN_TIMINGS_PATH}. --fresh skips the fit and
       gap caches (and saves nothing) to time an input as if it were new: that makes model calls. --at replays Credits,
       Sessions and People at an instant (default: now).
-  bun run hr prefill --repo https://github.com/<owner>/<repo>
+  bun run hr prefill --repo https://github.com/<owner>/<repo> [--yes]
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
   bun run hr sync-ingest [~/Downloads/hackrecon/sync/<stamp>]
@@ -221,10 +232,10 @@ const USAGE = `usage:
   bun run hr scrub-dom [files…]
       Strips Slack session tokens (xoxc-, xoxd-, bearer, JWT, signed file URLs) from saved DOM samples in
       ${SLACK_DOM_FIXTURES_DIR}/, in place. Prints counts only. Run it after saving any sample.
-  bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4]
+  bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4] [--yes]
       P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
       drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
-  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL] [--at ISO]
+  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL] [--at ISO] [--yes]
       --enter defaults to the fixture's "entered" list. Prints Ship as of --at (default: now): the deadline with
       any post that moved it, Recheck gaps when a repo is linked (the entered tracks' stated requirements and
       entry steps against its latest commit; reused while the commit is unchanged), then the checklist.
@@ -233,11 +244,12 @@ const USAGE = `usage:
       The idea-fit eval (D23): ranks ${FIT_EVAL_SET_PATH}'s winning projects against canon's sponsor tracks with
       ${FIT_MODEL}, run A (description only) and run B (+ Built With), and scores recall@3 on won tracks.
       Rankings are cached by input in ${FIT_CACHE_PATH}; the report goes to ${FIT_EVAL_PATH}.
-  bun run hr sync [--no-canon] [--offline]
+  bun run hr sync [--canon [--yes]] [--offline]
       After a Slack capture: finds the event's Devpost and schedule pages in announcement posts (restricted-posting
       channels, else authority_channels, else channels named *announce*; Devpost search by event name as fallback),
       fetches every public page (one request per URL per sync, User-Agent "${USER_AGENT}", robots.txt respected)
-      into ${PAGES_DIR}, runs canon on changed pages, and drafts sponsors.json and organizers. Config you wrote wins
+      into ${PAGES_DIR}, and drafts sponsors.json and organizers. It never calls a model: changed canon pages are
+      listed, and re-read only with --canon (hr canon --judge, under the spend guard). Config you wrote wins
       over a draft; drafts and the run report go to ${DISCOVERED_PATH}. --offline skips the network.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
@@ -258,7 +270,7 @@ const USAGE = `usage:
       name alone. Writes ${PERSON_LINKS_PATH} (ids and hashed evidence).
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
-  bun run hr classify [--labeled-only] [--dry-run] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+  bun run hr classify [--labeled-only] [--dry-run] [--yes] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       Classifies captured messages with ${MODEL} (redacted text only). --labeled-only: just the messages
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
@@ -638,6 +650,7 @@ async function prelabel(args: string[]): Promise<number> {
     options: {
       "dry-run": { type: "boolean", default: false },
       "include-hand": { type: "boolean", default: false },
+      yes: { type: "boolean", default: false },
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
@@ -679,13 +692,10 @@ async function prelabel(args: string[]): Promise<number> {
     return 0;
   }
 
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("prelabel", values.yes!);
+  if (!guard.preflight(todo.map((i) => plannedCall(JUDGE_MODEL, system, i.user, JUDGE_SCHEMA, JUDGE_MAX_TOKENS)))) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   console.log(`Stop \`hr label\` and close ${LABELS_PATH} in any spreadsheet app until this finishes; it rewrites the sheet at the end.`);
   const errors: JudgeRun["errors"] = [];
   const usages: Usage[] = [];
@@ -790,7 +800,7 @@ function groupInput(sponsors: Sponsors) {
 async function group(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
+    options: { "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const g = groupInput(readSponsors(values.sponsors!));
   if (!g.ids.length) {
@@ -807,13 +817,10 @@ async function group(args: string[]): Promise<number> {
     console.log(`${GROUP_PATH} is current (${prev.offers.length} offers); --force to rerun`);
     return 0;
   }
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("group", values.yes!);
+  if (!guard.preflight([plannedCall(GROUP_MODEL, g.system, g.request, GROUP_SCHEMA, GROUP_MAX_TOKENS)])) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   const r = await groupOffers(client, g.system, g.request, g.ids, g.links, g.texts);
   const cost = Number(costUsd(r.usage, GROUP_MODEL).toFixed(4));
   if ("error" in r) {
@@ -842,7 +849,7 @@ async function group(args: string[]): Promise<number> {
 async function board(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, sponsors: { type: "string", default: SPONSORS_PATH } },
+    options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const sponsors = readSponsors(values.sponsors!);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
@@ -909,7 +916,7 @@ async function board(args: string[]): Promise<number> {
         const stream = new ReadableStream<Uint8Array>({
           async start(ctrl) {
             // Read to the end even if the page went away (it typed again): finished model calls are still cached.
-            await runPlanStream(input, ctx, { via: "board", nowMs }, (e) => {
+            await runPlanStream(input, ctx, { via: "board", nowMs, guard: new CostGuard("board plan", values.yes!) }, (e) => {
               if (!open) return;
               // Errors stay in the server log; the page shows its own sentence.
               const out =
@@ -955,7 +962,7 @@ async function board(args: string[]): Promise<number> {
         if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
         const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
         const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
-        const r = await recheckGaps(anthropicClient(), { ...input, repo: input.repo }, tracks, entities, gcache, store);
+        const r = await recheckGaps(anthropicClient(new CostGuard("board ship", values.yes!)), { ...input, repo: input.repo }, tracks, entities, gcache, store);
         if ("error" in r) {
           console.error(`ship: couldn't recheck gaps: ${r.error}`);
           return json({ error: "couldn't recheck gaps" }, 503);
@@ -982,7 +989,7 @@ async function board(args: string[]): Promise<number> {
         if ("error" in repo) return json({ error: repo.error.startsWith("only public") ? repo.error : "couldn't read that repo: is it public?" }, 400);
         const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
         const t0 = Date.now();
-        const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache, readProducts());
+        const r = await prefillDraft(anthropicClient(new CostGuard("board prefill", values.yes!)), repo, repoTexts(repo), cache, readProducts());
         if ("error" in r) {
           console.error(`plan: prefill failed: ${r.error}`);
           return json({ error: "couldn't draft from that repo" }, 503);
@@ -1075,6 +1082,8 @@ interface CanonPage {
   coverage: CoverageReport;
   /** D7: ids from the previous extraction with no entity left (or two candidates), shown "no longer on the page". */
   no_longer_on_page: { id: string; reason: "no match" | "ambiguous"; best: number }[];
+  /** Entry steps and requirements this read lacked, carried over from the previous read (canon.ts keepDropped). */
+  kept_from_previous?: KeptField[];
   match_keys: Keyed[];
   usage: Usage;
   cost_usd: number;
@@ -1104,13 +1113,24 @@ function canonInput(p: LoadedPage, event: EventConfig) {
   return { snap, redacted, system, request, prompt_hash: canonHash(system), input_hash: canonInputHash(system, request) };
 }
 
-function anthropicClient(): Anthropic | null {
+/** The only way hr makes a client: every call passes through the run's spend guard (costguard.ts). */
+function anthropicClient(guard: CostGuard): Anthropic | null {
   try {
-    return new Anthropic({ maxRetries: 2 });
+    return guardClient(new Anthropic({ maxRetries: 2 }), guard);
   } catch (e) {
     console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
     return null;
   }
+}
+
+/** A re-read never silently drops fields (user 2026-11-07): entry steps and requirements the previous read had are
+ *  kept (keepDropped), and every kept one and every id no longer on the page is printed. */
+function keepPrevious(prev: CanonPage | undefined, next: Entity[], gone: CanonPage["no_longer_on_page"], snap: PageSnapshot): { entities: Entity[]; kept: KeptField[] } {
+  const r = keepDropped(prev?.entities ?? [], next, snap);
+  for (const k of r.kept)
+    console.log(`kept from the previous read (this read lacks it): ${k.kind} ${k.id}: "${k.value}"${k.quote_on_page ? "" : "; its quote is no longer in this snapshot, so check the page"}`);
+  for (const g of gone) console.log(`no longer on the page (${g.reason}): ${g.id}`);
+  return r;
 }
 
 /** D7: an entity whose id changed but whose page text still matches keeps its previous id, so done and
@@ -1140,7 +1160,7 @@ interface StoredExtraction {
 async function canon(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false } },
+    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false } },
   });
   const event = readEvent();
   const dir = values.fixtures ? PAGE_FIXTURES_DIR : PAGES_DIR;
@@ -1163,6 +1183,18 @@ async function canon(args: string[]): Promise<number> {
   const out: CanonPage[] = [];
   let client: Anthropic | null = null;
   let failed = errors.length > 0 || missing.length > 0;
+  // The spend guard: the same rule as the loop below decides which pages call the model.
+  const guard = new CostGuard("canon", values.yes!);
+  if (!values["dry-run"]) {
+    const calls = todo.flatMap((p) => {
+      const c = canonInput(p, event);
+      const page = prev.get(pageKey(p.snapshot.url));
+      const stored = store[`${c.prompt_hash}|${c.input_hash}`];
+      return (stored && !values.force) || (page && page.input_hash === c.input_hash && !values.force) ? [] : [plannedCall(CANON_MODEL, c.system, c.request, CANON_SCHEMA, CANON_MAX_TOKENS)];
+    });
+    if (!guard.preflight(calls)) return 2;
+    if (values.judge) console.log("canon: the judge's calls are estimated as they run, and stop at the same limit");
+  }
   for (const p of todo) {
     const c = canonInput(p, event);
     const key = pageKey(p.snapshot.url);
@@ -1175,7 +1207,9 @@ async function canon(args: string[]): Promise<number> {
     const stored = store[`${c.prompt_hash}|${c.input_hash}`];
     // The store wins over this file's own copy: one input has one extraction, whichever file asks.
     if (stored && !values.force) {
-      const { entities, gone } = carryIds(page, assignIds(stored.entities, c.snap), c.snap);
+      const read = carryIds(page, assignIds(stored.entities, c.snap), c.snap);
+      const { entities, kept } = keepPrevious(page, read.entities, read.gone, c.snap);
+      const gone = read.gone;
       page = {
         url: p.snapshot.url,
         file: p.file,
@@ -1189,6 +1223,7 @@ async function canon(args: string[]): Promise<number> {
         entities,
         coverage: coverage(c.snap, entities),
         no_longer_on_page: gone,
+        ...(kept.length ? { kept_from_previous: kept } : {}),
         match_keys: keyed(entities, c.snap),
         usage: stored.usage,
         cost_usd: 0,
@@ -1196,7 +1231,7 @@ async function canon(args: string[]): Promise<number> {
       };
       console.log(`stored extraction (${entities.length} entities, same prompt and input as ${stored.from} at ${stored.written_at.slice(0, 19)}); --force to re-extract`);
     } else if (!page || page.input_hash !== c.input_hash || values.force) {
-      client ??= anthropicClient();
+      client ??= anthropicClient(guard);
       if (!client) return 2;
       const r = await callChecked(client, {
         model: CANON_MODEL,
@@ -1214,7 +1249,9 @@ async function canon(args: string[]): Promise<number> {
         if (page) out.push(page);
         continue;
       }
-      const { entities, gone } = carryIds(page, r.value.entities, c.snap);
+      const read = carryIds(page, r.value.entities, c.snap);
+      const { entities, kept } = keepPrevious(page, read.entities, read.gone, c.snap);
+      const gone = read.gone;
       page = {
         url: p.snapshot.url,
         file: p.file,
@@ -1228,6 +1265,7 @@ async function canon(args: string[]): Promise<number> {
         entities,
         coverage: coverage(c.snap, entities),
         no_longer_on_page: gone,
+        ...(kept.length ? { kept_from_previous: kept } : {}),
         match_keys: keyed(entities, c.snap),
         usage: r.usage,
         cost_usd: Number(costUsd(r.usage, CANON_MODEL).toFixed(4)),
@@ -1275,7 +1313,7 @@ async function canon(args: string[]): Promise<number> {
       const input_hash = canonInputHash(system, request);
       let j = judged.get(pageKey(page.url));
       if (!j || j.input_hash !== input_hash || values.force) {
-        client ??= anthropicClient();
+        client ??= anthropicClient(guard);
         if (!client) return 2;
         const r = await callChecked(client, {
           model: CANON_MODEL,
@@ -1307,7 +1345,8 @@ async function canon(args: string[]): Promise<number> {
 }
 
 async function sync(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { "no-canon": { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
+  // --canon: re-read changed pages with the model (hr canon --judge); never without it (user 2026-11-07).
+  const { values } = parseArgs({ args, options: { canon: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
   const event = readEvent();
   const messages = readMessages();
   const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
@@ -1448,8 +1487,12 @@ async function sync(args: string[]): Promise<number> {
   const have = new Set(loadPages(PAGES_DIR).pages.map((p) => pageKey(p.snapshot.url)));
   const lost = results.filter((r) => r.role === "canon" && r.status !== "fetched" && !have.has(pageKey(r.url)));
   for (const r of lost) console.error(`no snapshot at all for canon page ${r.url}`);
-  if (values["no-canon"] || values.offline || !results.some((r) => r.changed)) return lost.length ? 1 : 0;
-  return canon(["--judge"]);
+  const changed = results.filter((r) => r.changed && r.role === "canon");
+  if (!values.canon || values.offline || !changed.length) {
+    if (changed.length) console.log(`canon pages changed (${changed.map((r) => r.url).join(", ")}); no model was called. To re-read them: bun run hr sync --canon, or bun run hr canon --judge`);
+    return lost.length ? 1 : 0;
+  }
+  return canon(["--judge", ...(values.yes ? ["--yes"] : [])]);
 }
 
 interface FitCached {
@@ -1460,10 +1503,10 @@ interface FitCached {
 
 type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
 
-async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean; nowMs?: number }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
-  const client = anthropicClient();
+  const client = anthropicClient(opts.guard);
   const events: PlanEvent[] = [];
   for await (const e of planStream({
     tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases),
@@ -1500,7 +1543,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
 }
 
 async function planCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" }, at: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" }, at: { type: "string" }, yes: { type: "boolean", default: false } } });
   // A fixture's stack is the CLI string or a list of {name, used_for} (a used-for may hold commas).
   const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; targeted?: string[]; repo?: string } | null>(values.from, null) : null;
   if (values.from && !dog) {
@@ -1522,7 +1565,7 @@ async function planCli(args: string[]): Promise<number> {
     console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
     return 2;
   }
-  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh, nowMs }, () => {});
+  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh, nowMs, guard: new CostGuard("plan", values.yes!) }, () => {});
   const tr = events.find((e) => e.section === "tracks");
   const ge = events.find((e) => e.section === "gaps");
   if (!tr || "error" in tr || tr.section !== "tracks") {
@@ -1634,7 +1677,7 @@ function shipListAt(entities: Entity[], event: EventConfig, entered: string[], n
 }
 
 async function shipCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" }, at: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" }, at: { type: "string" }, yes: { type: "boolean", default: false } } });
   const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string; entered?: string[] } | null>(values.from, null) : null;
   if (!dog) {
     console.error(values.from ? `${values.from} not found` : "--from is required");
@@ -1676,7 +1719,7 @@ async function shipCli(args: string[]): Promise<number> {
     const input = { idea: dog.idea, stack: typeof dog.stack === "string" ? parseStack(dog.stack) : dog.stack.length ? dog.stack : null, repo };
     const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
     const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
-    const r = await recheckGaps(anthropicClient(), input, tracks, entities, gcache, store);
+    const r = await recheckGaps(anthropicClient(new CostGuard("ship", values.yes!)), input, tracks, entities, gcache, store);
     if ("error" in r) {
       console.error(`couldn't recheck gaps: ${r.error}`);
       return 1;
@@ -1724,7 +1767,7 @@ function printDraft(d: PrefillDraft, out: (line: string) => void) {
 }
 
 async function prefillCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { repo: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { repo: { type: "string" }, yes: { type: "boolean", default: false } } });
   if (!values.repo) {
     console.error("--repo https://github.com/<owner>/<repo> is required");
     return 2;
@@ -1736,7 +1779,7 @@ async function prefillCli(args: string[]): Promise<number> {
   }
   const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
   const t0 = Date.now();
-  const r = await prefillDraft(anthropicClient(), repo, repoTexts(repo), cache, readProducts());
+  const r = await prefillDraft(anthropicClient(new CostGuard("prefill", values.yes!)), repo, repoTexts(repo), cache, readProducts());
   if ("error" in r) {
     console.error(`couldn't draft: ${r.error}`);
     return 1;
@@ -1749,7 +1792,7 @@ async function prefillCli(args: string[]): Promise<number> {
 }
 
 async function prefillEval(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "4" } } });
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "4" }, yes: { type: "boolean", default: false } } });
   const set = readJsonFile<{ items: EvalItem[] } | null>(FIT_EVAL_SET_PATH, null);
   const repos = readJsonFile<Record<string, string>>(PREFILL_REPOS_PATH, {});
   const baseline = readJsonFile<{ canon: string; pair_hits: PairHit[] } | null>(FIT_BASELINE_PATH, null);
@@ -1796,7 +1839,11 @@ async function prefillEval(args: string[]): Promise<number> {
     console.log("dry run: no API call");
     return 0;
   }
-  const client = anthropicClient();
+  const guard = new CostGuard("prefill-eval", values.yes!);
+  const draftCalls = prepared.filter((p) => !pcache[prefillHashOf(p)]).map((p) => plannedCall(FIT_MODEL, PREFILL_SYSTEM, prefillRequest(prefillFacts(p.repo, p.texts)), PREFILL_SCHEMA, PREFILL_MAX_TOKENS));
+  if (!guard.preflight(draftCalls)) return 2;
+  console.log("prefill-eval: fit rankings for new drafts are estimated as they run, and stop at the same limit");
+  const client = anthropicClient(guard);
   if (!client) return 2;
   let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
   let calls = 0;
@@ -1878,7 +1925,7 @@ async function prefillEval(args: string[]): Promise<number> {
 async function fitEval(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" }, "set-baseline": { type: "boolean", default: false } },
+    options: { fixtures: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, limit: { type: "string" }, concurrency: { type: "string", default: "6" }, "set-baseline": { type: "boolean", default: false }, yes: { type: "boolean", default: false } },
   });
   const event = readEvent();
   const canonPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
@@ -1913,7 +1960,9 @@ async function fitEval(args: string[]): Promise<number> {
   }
   let client: Anthropic | null = null;
   if (todo.length) {
-    client = anthropicClient();
+    const guard = new CostGuard("fit-eval", values.yes!);
+    if (!guard.preflight(todo.map((j) => plannedCall(FIT_MODEL, system, j.request, FIT_SCHEMA, FIT_MAX_TOKENS)))) return 2;
+    client = anthropicClient(guard);
     if (!client) return 2;
   }
   let usage: Usage = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
@@ -2095,6 +2144,7 @@ async function classify(args: string[]): Promise<number> {
     options: {
       "labeled-only": { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      yes: { type: "boolean", default: false },
       limit: { type: "string" },
       concurrency: { type: "string", default: "4" },
       show: { type: "string" },
@@ -2144,13 +2194,10 @@ async function classify(args: string[]): Promise<number> {
     return 0;
   }
 
-  let client: Anthropic;
-  try {
-    client = new Anthropic({ maxRetries: 2 });
-  } catch (e) {
-    console.error(`No Anthropic credentials: add ANTHROPIC_API_KEY=... to .env (Bun loads it; .env is gitignored). ${(e as Error).message}`);
-    return 2;
-  }
+  const guard = new CostGuard("classify", values.yes!);
+  if (!guard.preflight(todo.map((i) => plannedCall(MODEL, system, i.user, OUTPUT_SCHEMA, MAX_TOKENS)))) return 2;
+  const client = anthropicClient(guard);
+  if (!client) return 2;
   const errors: ClassifyError[] = [];
   const usages: Usage[] = [];
   let done = 0;
@@ -2280,7 +2327,14 @@ try {
   console.error((e as Error).message);
   process.exit(2);
 }
-process.exit(await main(args));
+process.exit(
+  await main(args).catch((e) => {
+    // The spend guard (costguard.ts): a refused call ends the command; what it already wrote stays.
+    if (!(e instanceof CostRefused)) throw e;
+    console.error(e.message);
+    return 2;
+  }),
+);
 
 // Kept out of the grouping code's span (group.test.ts checks it never reads classifier output): Sessions read the
 // classifier's workshop items.

@@ -441,3 +441,53 @@ export function rematch(prev: Keyed[], next: Keyed[], threshold: number): Rematc
   }
   return { renamed, gone };
 }
+
+/** An entry step or requirement the previous read of a page had and the new read lacks (user 2026-11-07). */
+export interface KeptField {
+  kind: "entry_step" | "requirement";
+  /** The entry step's id, or the requirement's track id. */
+  id: string;
+  value: string;
+  /** Whether its quote is still in the new snapshot's text (false: the page may really have dropped it). */
+  quote_on_page: boolean;
+}
+
+/** A re-read never silently drops an entry step or a requirement (user 2026-11-07, after the 2026-11-07 re-read lost
+ *  GoDaddy's "Register your domain name" and Apify's "Building an actor"): each one the previous read had and the
+ *  new read lacks is carried over from the previous read unchanged, and listed. An entry step is present when the
+ *  new read has its id, or a step on the same track with the same text; a requirement when the same track lists
+ *  the same text. A requirement whose whole track is gone isn't kept here: the track is in no_longer_on_page. */
+export function keepDropped(prev: Entity[], next: Entity[], snap: PageSnapshot): { entities: Entity[]; kept: KeptField[] } {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const pageText = norm(snap.blocks.map((b) => b.text).join(" "));
+  const onPage = (quote: string | undefined) => !!quote && pageText.includes(norm(quote));
+  const stepText = (e: Entity) => norm(String(e.fields.text?.value ?? e.name.value ?? ""));
+  const stepKey = (e: Entity) => `${e.fields.track_id?.value ?? ""}|${stepText(e)}`;
+  const reqs = (e: Entity) => Object.entries(e.fields).filter(([k]) => /^requirements\[\d+\]$/.test(k));
+  const kept: KeptField[] = [];
+  const out = [...next];
+
+  const ids = new Set(next.map((e) => e.id));
+  const steps = new Set(next.filter((e) => e.kind === "entry_step").map(stepKey));
+  for (const e of prev.filter((x) => x.kind === "entry_step" && !ids.has(x.id) && !steps.has(stepKey(x)))) {
+    out.push(e);
+    kept.push({ kind: "entry_step", id: e.id, value: String(e.fields.text?.value ?? e.name.value ?? ""), quote_on_page: onPage(e.fields.text?.source.quote ?? e.name.source.quote) });
+  }
+
+  const tracks = new Map(prev.filter((x) => x.kind === "track").map((t) => [t.id, t]));
+  for (const [i, t] of out.entries()) {
+    const old = t.kind === "track" ? tracks.get(t.id) : undefined;
+    if (!old) continue;
+    const have = new Set(reqs(t).map(([, f]) => norm(String(f.value))));
+    const lost = reqs(old).filter(([, f]) => !have.has(norm(String(f.value))));
+    if (!lost.length) continue;
+    const fields = { ...t.fields };
+    let n = Math.max(-1, ...reqs(t).map(([k]) => Number(/\d+/.exec(k)![0]))) + 1;
+    for (const [, f] of lost) {
+      fields[`requirements[${n++}]`] = f;
+      kept.push({ kind: "requirement", id: t.id, value: String(f.value), quote_on_page: onPage(f.source.quote) });
+    }
+    out[i] = { ...t, fields };
+  }
+  return { entities: out, kept };
+}
