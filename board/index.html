@@ -296,6 +296,29 @@
   .bq .how { min-width: 0; height: 32px; margin-right: 12px; font: 650 13px/1 Manrope, sans-serif; }
   .bq .how { position: relative; }
   .bq .how::before { content: ""; position: absolute; inset: -6px 0; } /* 44px tall hit area, same 32px pill */
+  /* Ship (v2 D13): the countdown, Recheck gaps when a repo is linked, then one tile with three groups. */
+  .ship .slist { grid-column: 1 / -1; }
+  .sdl { display: block; width: 100%; min-height: 44px; text-align: left; font-size: 20px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35; }
+  .sdl:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+  .sgrp + .sgrp { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .sgrp .th { margin: 0 0 4px; }
+  .sgrp h3 { margin: 0; font-size: 17px; font-weight: 650; color: var(--text); }
+  .sgrp > .fold { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 44px; text-align: left; font-size: 17px; font-weight: 650; }
+  .sits { list-style: none; margin: 0; padding: 0; }
+  .sits li { padding: 2px 0 10px; }
+  .sits .ck { font-size: 15px; align-items: flex-start; padding-top: 12px; min-height: 32px; }
+  .sits .ck input { margin-top: 2px; }
+  .sits q, .sgap q { display: block; margin: 0 0 0 28px; padding-left: 12px; border-left: 2px solid var(--dim); color: var(--muted); font-size: 14px; quotes: none; max-width: 75ch; overflow-wrap: anywhere; }
+  .sits .pmeta { margin: 4px 0 0 28px; }
+  .stn { margin: 12px 0 0; font-size: 15px; font-weight: 650; }
+  .enter { border: 0; margin: 0 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 0 20px; }
+  .enter .ck input:checked + span { opacity: 1; } /* entering a track isn't finishing it */
+  .enter legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .sgap { padding: 12px 0; border-top: 1px solid var(--line); }
+  .sgap:first-child { border-top: 0; }
+  .sgap p { margin: 0 0 6px; max-width: 75ch; }
+  .sgap .note { margin: 8px 0 4px; }
+  .sgap q { margin-left: 0; }
   .item ul.dl { display: block; margin: 0; padding: 0; font: 500 14px/1.5 Manrope, sans-serif; color: var(--text); }
   .item ul.dl li + li { margin-top: 6px; }
   .item .ck + q { margin: 0 0 8px 28px; }
@@ -352,6 +375,7 @@
   <nav class="tabs" role="tablist" aria-label="Views">
     <button role="tab" id="t-plan" aria-controls="p-plan" aria-selected="true" tabindex="0">Plan</button>
     <button role="tab" id="t-claim" aria-controls="p-claim" aria-selected="false" tabindex="-1">Claim</button>
+    <button role="tab" id="t-ship" aria-controls="p-ship" aria-selected="false" tabindex="-1">Ship</button>
   </nav>
 </header>
 
@@ -379,6 +403,21 @@
       <div id="pb-body"></div>
     </section>
   </div>
+</main>
+
+<main class="plan ship" id="p-ship" role="tabpanel" aria-labelledby="t-ship" hidden>
+  <section class="band" aria-labelledby="h-sd">
+    <h2 class="sr" id="h-sd">Submission deadline</h2>
+    <div id="sd-body"></div>
+  </section>
+  <section class="band" id="sg" aria-labelledby="h-sg" hidden>
+    <h2 class="sr" id="h-sg">Recheck gaps</h2>
+    <div id="sg-body"></div>
+  </section>
+  <section class="tile slist" aria-labelledby="h-sl">
+    <h2 class="sr" id="h-sl">Checklist</h2>
+    <div id="sl-body"></div>
+  </section>
 </main>
 
 <main id="p-claim" role="tabpanel" aria-labelledby="t-claim" hidden>
@@ -935,7 +974,9 @@ function setTab(name, focus) {
   }
   $("p-plan").hidden = name !== "plan";
   $("p-claim").hidden = name !== "claim";
-  document.body.classList.toggle("on-plan", name === "plan");
+  $("p-ship").hidden = name !== "ship";
+  document.body.classList.toggle("on-plan", name !== "claim");
+  if (name === "ship") loadShip();
   // The dot matrix measures itself, so it's built once Claim is visible.
   if (name === "claim" && D) { cols = 0; buildMatrix(); render(i); }
 }
@@ -1108,6 +1149,7 @@ async function runPlan() {
 }
 // D11: one polite announcement once every section has settled.
 function announcePlan() {
+  if (tab === "ship") paintShip(); // Ship's chooser lists Plan's tracks
   if (P.sec.tracks !== "ok") return;
   const n = P.gaps?.gaps?.length ?? 0;
   const parts = [plural(P.res.tracks.length, "track"), P.res.credits && plural(P.res.credits.credits.length, "credit"), P.res.sessions && plural(P.res.sessions.sessions.length, "session"), `questions for ${plural(P.res.booths?.length ?? 0, "sponsor")}`, n && plural(n, "gap")].filter(Boolean);
@@ -1242,9 +1284,129 @@ $("p-plan").addEventListener("click", async (e) => {
   }
 });
 
+/* ---------- Ship (v2 P9, design doc D13) ---------- */
+// GET /ship/list builds the checklist from canon, event.json and the capture as of now (or ?now); every line is
+// verbatim. Ticks share P.steps with Plan, so an entry step ticked in either place is ticked in both. The tracks
+// you're entering are chosen here, from Plan's tracks, and kept in this browser like the ticks.
+const S = { list: null, entered: [], gaps: null, busy: false, open: new Set(), seq: 0 };
+const enterKey = () => `hackrecon:entered:${P.meta.event}`;
+const HOUR = 3600000;
+async function loadShip() {
+  if (!P.meta) return;
+  const seq = ++S.seq, q = new URLSearchParams({ entered: S.entered.join(",") }), now = new URLSearchParams(location.search).get("now");
+  if (now) q.set("now", now);
+  try {
+    const r = await fetch(`/ship/list?${q}`, { cache: "no-store" });
+    if (!r.ok) throw new Error();
+    const list = await r.json();
+    if (seq === S.seq) { S.list = list; paintShip(); }
+  } catch { if (seq === S.seq) $("sd-body").innerHTML = `<p class="pstate">Couldn't load the checklist.</p>`; }
+}
+const shipFmt = (iso) => pfmt(iso, { weekday: "short", hour: "numeric", minute: "2-digit" });
+const lastHour = () => { const d = S.list?.deadline; const left = d ? Date.parse(d.at) - nowMs() : -1; return left > 0 && left < HOUR; };
+function countdown(ms) {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "under a minute";
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+  return d ? `${d} d${h ? ` ${h} h` : ""}` : h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
+}
+function shipItem(x) {
+  const src = x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? (safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">added in #${esc(x.channel)} ↗</a>` : `added in #${esc(x.channel)}`) : srcLink(x.source_url);
+  const when = x.at ? `${shipFmt(x.at)}${x.until ? `–${pfmt(x.until, { hour: "numeric", minute: "2-digit" })}` : ""} · ` : "";
+  return `<li><label class="ck"><input type="checkbox" data-step="${esc(x.id)}"${P.steps.has(x.id) ? " checked" : ""}><span>${esc(x.label)}</span></label>${x.quote ? `<q>${esc(x.quote)}</q>` : ""}<div class="pmeta m">${when}${src}</div></li>`;
+}
+const doneOf = (xs) => (xs.length ? `${xs.filter((x) => P.steps.has(x.id)).length} of ${xs.length} done` : "none stated");
+// A group: its heading with "N of M done"; in the last hour, folded to that one line until opened.
+function shipGroup(key, title, items, body) {
+  if (lastHour() && key !== "required" && !S.open.has(key))
+    return `<div class="sgrp"><button type="button" class="fold" data-fold="${key}" aria-expanded="false"><span>${esc(title)}</span><span class="m">${doneOf(items)}</span></button></div>`;
+  return `<div class="sgrp"><div class="th"><h3 id="sh-${key}" tabindex="-1">${esc(title)}</h3><span class="ctx m">${doneOf(items)}</span></div>${body}</div>`;
+}
+function paintShip() {
+  const L = S.list;
+  if (!L) return;
+  const now = nowMs(), d = L.deadline;
+  $("sd-body").innerHTML = d
+    ? `<button type="button" class="sdl" id="sd-open">${Date.parse(d.at) > now ? `Submissions close ${esc(shipFmt(d.at))} · in ${countdown(Date.parse(d.at) - now)}` : `Submissions closed ${esc(shipFmt(d.at))}`}</button><div class="pmeta m">${d.was ? `Devpost said ${esc(shipFmt(d.was.at))} · ` : ""}${d.from === "slack" ? `moved in #${esc(d.channel)}` : "on Devpost"}</div>`
+    : `<p class="pstate">No submission deadline on the pages or in the posts read.</p>`;
+  const lh = lastHour();
+  // Recheck gaps: only with a repo linked; in the last hour it folds with the other groups.
+  $("sg").hidden = !P.input?.repo || (lh && !S.open.has("gaps"));
+  paintGaps();
+  const required = lh ? L.required.filter((x) => !P.steps.has(x.id)) : L.required;
+  // Plan's tracks, plus any entered track a newer plan no longer lists, so it can still be unticked.
+  const tracks = [...(P.res?.tracks || []), ...L.tracks.filter((t) => !(P.res?.tracks || []).some((x) => x.track_id === t.track_id))];
+  const chooser = tracks.length
+    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${tracks.map((t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}</span></label>`).join("")}</fieldset>`
+    : `<p class="note">Your plan's tracks show here once you make your plan; tick the ones you're entering.</p>`;
+  const trackItems = L.tracks.flatMap((t) => t.items);
+  const trackBody = chooser + (L.tracks.length
+    ? L.tracks.map((t) => `<p class="stn">${esc(t.name)}</p>${t.items.length ? `<ul class="sits">${t.items.map(shipItem).join("")}</ul>` : `<p class="note">No requirements or entry steps stated for this track.</p>`}`).join("")
+    : tracks.length ? `<p class="note">Tick the tracks you're entering; their entry steps and requirements show here.</p>` : "");
+  $("sl-body").innerHTML = [
+    shipGroup("required", "Required to submit", L.required, required.length ? `<ul class="sits">${required.map(shipItem).join("")}</ul>` : `<p class="note">Everything required is ticked.</p>`),
+    shipGroup("tracks", "For the tracks you entered", trackItems, trackBody),
+    shipGroup("judging", "Judging", L.judging, L.judging.length ? `<ul class="sits">${L.judging.map(shipItem).join("")}</ul>` : `<p class="note">No judging logistics posted yet.</p>`),
+    lh && P.input?.repo && !S.open.has("gaps") ? `<div class="sgrp"><button type="button" class="fold" data-fold="gaps" aria-expanded="false"><span>Recheck gaps</span><span class="m">${S.gaps && !S.gaps.error ? plural(S.gaps.gaps.length, "open gap") : "not run"}</span></button></div>` : "",
+  ].join("");
+}
+function paintGaps() {
+  const g = S.gaps, body = $("sg-body");
+  if (!P.input?.repo) return;
+  const btn = `<button type="button" class="jump" id="sg-run"${S.busy || !S.entered.length ? " disabled" : ""}>${S.busy ? "Rechecking…" : "Recheck gaps"}</button>`;
+  const why = !S.entered.length ? `<span class="cap">Tick the tracks you're entering below; the check reads their stated requirements against your repo's latest commit.</span>`
+    : g?.error ? `<span class="cap">${esc(g.error)}</span>`
+    : g ? `<span class="m">${esc(g.repo.replace(/^https:\/\/github\.com\//, ""))} @ ${esc(g.commit.slice(0, 7))}, latest as of ${esc(shipFmt(g.latest_at))}; checked ${esc(pfmt(g.checked_at, { hour: "numeric", minute: "2-digit" }))}</span>` : "";
+  const res = !g || g.error ? ""
+    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p><p class="note">The page's ${x.requirement.kind === "entry_step" ? "entry step" : "requirement"} · ${srcLink(x.requirement.source_url)}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
+    : `<p class="note">${g.checked ? "No open gaps found. That doesn't say the requirements are met." : "Nothing to check: none of these tracks states a requirement or entry step on the pages read."}${g.from === "reused" ? " The commit hasn't changed since the last check." : ""}</p>`;
+  body.innerHTML = `<div class="go-row">${btn}${why}</div>${res}`;
+}
+async function recheck() {
+  if (S.busy || !S.entered.length || !P.input?.repo) return;
+  S.busy = true; paintGaps();
+  try {
+    const r = await fetch("/ship/gaps", { method: "POST", headers: { "Content-Type": "application/json", "x-hr-token": TOKEN }, body: JSON.stringify({ ...P.input, entering: S.entered }) });
+    const j = await r.json();
+    S.gaps = r.ok ? j : { error: j.error || "Couldn't recheck gaps." };
+  } catch { S.gaps = { error: "Couldn't recheck gaps." }; }
+  S.busy = false;
+  paintShip();
+  $("say").textContent = S.gaps.error ? S.gaps.error : `Rechecked: ${plural(S.gaps.gaps.length, "open gap")}.`;
+}
+$("p-ship").addEventListener("click", (e) => {
+  if (e.target.closest("#sg-run")) return recheck();
+  const f = e.target.closest("[data-fold]");
+  if (f) { S.open.add(f.dataset.fold); paintShip(); (f.dataset.fold === "gaps" ? $("sg-run") : $(`sh-${f.dataset.fold}`))?.focus(); return; }
+  if (e.target.closest("#sd-open")) openDeadline(e.target.closest("#sd-open"));
+});
+$("p-ship").addEventListener("change", (e) => {
+  const en = e.target.closest("[data-enter]");
+  if (en) {
+    S.entered = en.checked ? [...S.entered, en.dataset.enter] : S.entered.filter((x) => x !== en.dataset.enter);
+    store.set(enterKey(), JSON.stringify(S.entered));
+    S.gaps = null;
+    loadShip();
+    return;
+  }
+  // A tick (the shared handler saved it): recount, and in the last hour a ticked Required item leaves the list.
+  if (e.target.closest("[data-step]")) setTimeout(paintShip, lastHour() ? 200 : 0);
+});
+function openDeadline(from) {
+  const d = S.list?.deadline;
+  if (!d) return;
+  if (!$("drawer").open) drawerFrom = from;
+  drawer = null;
+  $("dr-title").innerHTML = `Submission deadline<span class="cap">${esc(shipFmt(d.at))}</span>`;
+  $("dr-body").innerHTML = `<div class="item"><p>${d.from === "slack" ? `Moved in #${esc(d.channel)}` : "On Devpost"}</p><q>${esc(d.quote)}</q><div class="acts">${srcLink(d.source_url)}</div></div>${d.was ? `<div class="item"><p>Devpost said ${esc(shipFmt(d.was.at))}</p><q>${esc(d.was.quote)}</q><div class="acts">${srcLink(d.was.source_url)}</div></div>` : ""}`;
+  if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
+}
+setInterval(() => { if (tab === "ship") paintShip(); }, 30000);
+
 fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((m) => {
   P.meta = m;
   try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
+  try { const e = JSON.parse(store.get(enterKey()) || "[]"); S.entered = Array.isArray(e) ? e.filter((x) => typeof x === "string") : []; } catch { S.entered = []; }
   try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
   paintInput(!P.input);
   paintNext();
