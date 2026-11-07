@@ -23,8 +23,8 @@ import {
   type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
-import { loadExport, readChannel, rowClass } from "./export.ts";
-import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionReps, repEvidence, type MentionPost, type RepSignalsFile } from "./reps.ts";
+import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
+import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
@@ -2273,7 +2273,7 @@ async function repSignals(args: string[]): Promise<number> {
   let mentionPosts: MentionPost[];
   let mentionsSrc: string;
   if (capturedMentions.length || !exp) {
-    mentionPosts = capturedMentions.map((m) => ({ author_id: m.author_id ?? "", channel_name: m.channel_name, text: m.text, mentions: m.mentions!, permalink: m.permalink }));
+    mentionPosts = capturedMentions.map((m) => ({ author_id: m.author_id ?? "", channel_name: m.channel_name, text: m.text, mentions: m.mentions!, permalink: m.permalink, reply: !!m.thread_ts }));
     mentionsSrc = capturedMentions.length ? `capture (${capturedMentions.length} posts with mention IDs)` : "not checked: no capture carries mention IDs yet and no export";
   } else {
     const host = new URL(messages.find((m) => m.permalink)?.permalink ?? "https://slack.com").host;
@@ -2287,11 +2287,12 @@ async function repSignals(args: string[]): Promise<number> {
           text: m.text ?? "",
           mentions: [...(m.text ?? "").matchAll(/<@([UW][A-Z0-9]+)>/g)].map((x) => ({ id: x[1]!, label: x[0] })),
           permalink: `https://${host}/archives/${idOf.get(c)}/p${m.ts.replace(".", "")}`,
+          reply: !isTopLevel(m),
         })),
     );
     mentionsSrc = `export (${dir}): the capture carries no mention IDs yet (parser keeps them from the next sync)`;
   }
-  const authority = (p: MentionPost) => authorityIds.has(p.author_id) || authorityChannels.has(p.channel_name);
+  const authority = mentionAuthority(authorityIds, authorityChannels);
   const mention = mentionReps(mentionPosts, sponsors, authority, (id) => organizerIds.has(id));
   notes.push(`organizer mention: ${authorityIds.size} admin/owner-backed organizer ids, ${authorityChannels.size} authority channel${authorityChannels.size === 1 ? "" : "s"}; ${mentionPosts.filter(authority).length} authority posts with a mention read; ${mention.ambiguous} line${mention.ambiguous === 1 ? "" : "s"} naming two or more sponsors skipped`);
 
