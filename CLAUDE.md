@@ -17,6 +17,14 @@
   cd .claude/skills/gstack && ./setup
   ```
 
+## Git workflow
+
+- Start each piece of work on a new branch from an up-to-date `main` (`git switch main && git pull --ff-only && git switch -c <type>/<name>`).
+- Push only to the current feature branch. Never push to `main` directly; work reaches `main` only through a PR.
+- Open the PR once the work is verified (tests, typecheck and extension build pass, plus any live check the work calls for). CI must be green before a merge.
+- Commit and push doc and plan changes (docs/designs/*, TODOS.md) without asking. Commit and push product code without asking when `bun test` passes; if it fails, show the failures and ask first.
+- Delete a branch locally and on origin once its PR is merged.
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. Route only to skills in the session's available-skills list; answer directly for quick questions or small scoped edits.
