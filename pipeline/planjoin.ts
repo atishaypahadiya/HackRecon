@@ -56,7 +56,7 @@ export interface PlanCredit {
 }
 
 /** P3: Claim's offers from these sponsors, posted by now and still open, soonest limit first. `shown` gives a post's
- *  text as the board renders it (redacted plain text), keyed by permalink; the excerpt must appear in one of them. */
+ *  text as the board renders it (plain text), keyed by permalink; the excerpt must appear in one of them. */
 export function planCredits(offers: BoardOffer[], sponsors: JoinSponsor[], shown: Map<string, string>, nowSec: number): { credits: PlanCredit[]; dropped: number } {
   const why = new Map(sponsors.map((s) => [s.sponsor, s.why]));
   let dropped = 0;
@@ -92,8 +92,8 @@ export interface PlanSession {
   source_url: string;
 }
 
-/** A post's text as the board shows it: redacted plain text (the Claim board's rendering). Every quote on Plan is
- *  taken from, and checked against, this, so no section shows a name the board redacts. */
+/** A post's text as the board shows it: plain text, as posted (the Claim board's rendering). Every quote on Plan is
+ *  taken from, and checked against, this. */
 export type Shown = (m: Message) => string;
 
 /** P4: workshops, talks and office hours (classifier kind `workshop`) from these sponsors, starting after now and

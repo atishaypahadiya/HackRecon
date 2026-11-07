@@ -193,11 +193,9 @@ export interface SyncConfig {
   authors_only?: string[];
   /** Each sponsor and its names (sponsors.json), for signal 2b's match in hacker-only channels (selfid.ts). */
   sponsors?: { id: string; names: string[] }[];
-  /** The event's track names (canon), for finding the prize checkboxes on the user's own submission (devpostdraft.ts). */
-  devpost_tracks?: string[];
 }
 
-export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; aliases?: string[] }>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }, tracks: string[] = []): SyncConfig {
+export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; aliases?: string[] }>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }): SyncConfig {
   const names = new Map<string, Set<string>>();
   for (const s of Object.values(sponsors)) if (s.sponsor && s.sponsor !== "event") names.set(s.sponsor, new Set([...(names.get(s.sponsor) ?? []), s.sponsor, ...(s.aliases ?? [])]));
   return {
@@ -205,7 +203,6 @@ export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; alia
     channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])],
     authors_only: event.hacker_only_channels ?? [],
     sponsors: [...names].map(([id, n]) => ({ id, names: [...n] })),
-    devpost_tracks: tracks,
   };
 }
 
@@ -215,25 +212,26 @@ export interface SyncSelection {
   missing: string[];
   /** Not in the config; picked by SYNC_CHANNEL. Add them to sponsors.json if they belong to the event. */
   discovered: string[];
-  /** Hacker-only channels (pipeline/hackerchannels.ts), read authors-only: sender IDs and counts, never text. A
-   *  channel here is never a full target, even if a config lists it. */
+  /** Authors-only channels. Always empty since the user's 2026-11-07 decision: hacker-only channels
+   *  (pipeline/hackerchannels.ts) are captured normally, with text. Kept so older sync logs still read. */
   authors: SidebarChannel[];
 }
 
 /** Config channels first, in config order (user 2026-11-06: selection comes from the event config); then
- *  channels the prefixes find that the config doesn't list yet, in sidebar order. */
-export function syncTargets(found: SidebarChannel[], config: string[] = [], authorsOnly: string[] = []): SyncSelection {
+ *  channels the prefixes find that the config doesn't list yet, in sidebar order; then the hacker-only channels
+ *  (event.json's list, else by name), captured normally with text (user 2026-11-07). */
+export function syncTargets(found: SidebarChannel[], config: string[] = [], hackerChannels: string[] = []): SyncSelection {
   const byName = new Map(found.map((c) => [c.name, c]));
-  const hacker = new Set(hackerOnlyChannels(found.map((c) => c.name), authorsOnly));
+  const hacker = new Set(hackerOnlyChannels(found.map((c) => c.name), hackerChannels));
   const targets = config.map((n) => byName.get(n)).filter((c): c is SidebarChannel => !!c);
   const inConfig = new Set(config);
   const extra = found.filter((c) => !inConfig.has(c.name) && SYNC_CHANNEL.test(c.name));
   const seen = new Set<string>();
   return {
-    targets: [...targets, ...extra].filter((c) => !hacker.has(c.name) && !seen.has(c.id) && seen.add(c.id)),
+    targets: [...targets, ...extra, ...found.filter((c) => hacker.has(c.name))].filter((c) => !seen.has(c.id) && seen.add(c.id)),
     missing: config.filter((n) => !byName.has(n)),
-    discovered: extra.filter((c) => !hacker.has(c.name)).map((c) => c.name),
-    authors: found.filter((c) => hacker.has(c.name)),
+    discovered: extra.map((c) => c.name),
+    authors: [],
   };
 }
 

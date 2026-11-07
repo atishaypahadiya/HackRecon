@@ -76,19 +76,20 @@ describe.skipIf(!exp)("sidebar", () => {
     expect(pick.targets.slice(0, 2).map((c) => c.name)).toEqual(["0-announcements", "spons-moss"]);
     expect(pick.discovered).toContain("spons-apify");
     expect(pick.discovered).not.toContain("spons-moss");
-    expect(pick.targets.map((c) => c.name).filter((n) => !/^(spons|partner|cohost)-|announce/.test(n) && !["0-announcements"].includes(n))).toEqual([]);
+    expect(pick.targets.map((c) => c.name).filter((n) => !/^(spons|partner|cohost)-|announce|(^|[-_])(team[-_]?formation|introductions?)$/.test(n) && !["0-announcements"].includes(n))).toEqual([]);
     expect(syncTargets(sidebarChannels(doc!), ["no-such-channel"]).missing).toEqual(["no-such-channel"]);
   });
 
-  test("hacker-only channels are picked authors-only, never as full targets, even when a config lists them", () => {
+  test("hacker-only channels are captured normally, with text (user 2026-11-07); none is authors-only", () => {
     const found = sidebarChannels(doc!);
-    const pick = syncTargets(found, ["0-announcements", "1-team-formation"]);
-    expect(pick.authors.map((c) => c.name).sort()).toEqual(found.map((c) => c.name).filter((n) => /(^|[-_])(team[-_]?formation|introductions?)$/i.test(n)).sort());
-    expect(pick.authors.map((c) => c.name)).toContain("1-team-formation");
-    expect(pick.targets.map((c) => c.name)).not.toContain("1-team-formation");
+    const pick = syncTargets(found, ["0-announcements"]);
+    const hacker = found.map((c) => c.name).filter((n) => /(^|[-_])(team[-_]?formation|introductions?)$/i.test(n));
+    for (const n of hacker) expect(pick.targets.map((c) => c.name)).toContain(n);
+    expect(pick.authors).toEqual([]);
     // event.json's list replaces the name pattern.
     const own = syncTargets(found, [], ["1-introductions"]);
-    expect(own.authors.map((c) => c.name)).toEqual(["1-introductions"]);
+    expect(own.targets.map((c) => c.name)).toContain("1-introductions");
+    expect(own.targets.map((c) => c.name)).not.toContain("1-team-formation");
   });
 });
 

@@ -26,9 +26,8 @@ import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, T
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
 import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
-import { scrubDevpostHtml } from "./devpostdraft.ts";
 import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
-import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
+import { emailReps, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
@@ -76,7 +75,6 @@ import {
   CANON_JUDGE_PATH,
   CANON_PATH,
   CANON_HISTORY_PATH,
-  DEVPOST_FIXTURES_DIR,
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
@@ -359,9 +357,6 @@ function syncIngest(args: string[]): number {
   mkdirSync(out, { recursive: true });
   mkdirSync(SLACK_DOM_FIXTURES_DIR, { recursive: true });
   const read = (sub: string, parts: string[]) => Buffer.concat(parts.map((p) => readFileSync(join(dir, sub, p))));
-  // Hacker-only channels are authors-only (user 2026-11-07): any file holding their text is refused, whatever the
-  // bundle says. Names come from event.json, else hackerchannels.ts's pattern.
-  const hackerOnly = (name: string) => (readEvent().hacker_only_channels?.length ? readEvent().hacker_only_channels!.includes(name) : HACKER_ONLY.test(name));
   let bad = 0;
   for (const sub of ["captures", "slack-dom"]) {
     if (!existsSync(join(dir, sub))) continue;
@@ -373,11 +368,6 @@ function syncIngest(args: string[]): number {
       }
       const text = read(sub, f.parts).toString("utf8");
       if (sub === "slack-dom") {
-        if (hackerOnly(f.name.split("--")[0]!)) {
-          console.error(`slack-dom/${f.name}: a hacker-only channel's page; refused (authors-only)`);
-          bad++;
-          continue;
-        }
         const { html, found } = scrubTokens(text);
         writeFileSync(join(SLACK_DOM_FIXTURES_DIR, f.name), html);
         if (total(found)) console.log(`slack-dom/${f.name}: stripped ${total(found)} token${total(found) === 1 ? "" : "s"} the extension missed`);
@@ -386,7 +376,7 @@ function syncIngest(args: string[]): number {
       try {
         const v = JSON.parse(text);
         if (/\.authors\.json$/.test(f.name)) parseAuthorsCaptureFile(v, f.name, new Set(Object.values(readSponsors(SPONSORS_PATH)).map((s) => s.sponsor)));
-        else if (typeof v?.channel_name === "string" && hackerOnly(v.channel_name)) throw new Error(`#${v.channel_name} is hacker-only: only its .authors.json is kept`);
+        // Hacker-only channels are captured normally, with text (user 2026-11-07); older bundles may still hold .authors.json.
         else if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
         writeFileSync(join(out, f.name), text);
       } catch (e) {
@@ -1411,38 +1401,6 @@ async function sync(args: string[]): Promise<number> {
     }
   }
 
-  // The user's own submission, read by the extension's worker (devpostdraft.ts): scrubbed again here, and refused if
-  // a token scan still finds anything.
-  const draftInbox = join(homedir(), "Downloads", "hackrecon", "devpost");
-  if (existsSync(draftInbox)) {
-    mkdirSync(DEVPOST_FIXTURES_DIR, { recursive: true });
-    mkdirSync(join(draftInbox, "ingested"), { recursive: true });
-    for (const f of readdirSync(draftInbox).filter((f) => /^[a-z0-9-]+\.(submission\.html|visit\.json)$/.test(f))) {
-      const path = join(draftInbox, f);
-      if (f.endsWith(".html")) {
-        const { html, stripped } = scrubDevpostHtml(readFileSync(path, "utf8"));
-        const left = total(findTokens(html));
-        if (left) {
-          console.error(`devpost ${f}: ${left} session value${left === 1 ? "" : "s"} survived scrubbing; not saved`);
-          continue;
-        }
-        writeFileSync(join(DEVPOST_FIXTURES_DIR, f), html);
-        console.log(`devpost sample    ${f}: saved to ${DEVPOST_FIXTURES_DIR}/${stripped ? ` (stripped ${stripped} more on ingest)` : ""}`);
-      } else {
-        // The log holds addresses only (queries cut to page=), scrubbed again here and refused if a scan still finds a token.
-        const raw = scrubTokens(readFileSync(path, "utf8")).html;
-        if (total(findTokens(raw))) {
-          console.error(`devpost ${f}: session values survived scrubbing; not saved`);
-          continue;
-        }
-        const v = JSON.parse(raw) as { result?: string; sample?: { url: string } | null; pages?: unknown[] };
-        writeFileSync(join(DEVPOST_FIXTURES_DIR, f), JSON.stringify(v, null, 2));
-        console.log(`devpost visit     ${f}: ${v.pages?.length ?? 0} pages, ${v.result}${v.sample ? `; sample from ${v.sample.url}` : "; no sample"}`);
-      }
-      renameSync(path, join(draftInbox, "ingested", `${Date.now()}-${f}`));
-    }
-  }
-
   // Drafts. Config the user wrote wins: a draft only fills a missing file, else it's compared and reported.
   const canonEntities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
   const draft = sponsorsDraft(canonEntities, channels, announcement);
@@ -1662,10 +1620,9 @@ function shipListAt(entities: Entity[], event: EventConfig, entered: string[], n
   const messages = readMessages();
   const person = loadPersonKey();
   const role = rolesById(messages, sponsors, loadOrganizerIds(), person, loadRepIndex(person).confirmed);
-  const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
   // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
   const t = canonTimeline();
-  return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => redact(plainText(m.text)).text, entered, nowSec: nowMs / 1000 });
+  return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
 }
 
 async function shipCli(args: string[]): Promise<number> {
@@ -2331,10 +2288,9 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
   const products = readProducts();
   const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
   const nowSec = nowMs / 1000;
-  // Every Plan quote comes from the board's rendering of a post (redacted plain text), never the raw capture.
-  const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
+  // Every Plan quote comes from the board's rendering of a post (plain text, as posted), never the raw markup.
   const rendered = new Map<string, string>();
-  const shown = (m: Message) => rendered.get(m.id) ?? (rendered.set(m.id, redact(plainText(m.text)).text), rendered.get(m.id)!);
+  const shown = (m: Message) => rendered.get(m.id) ?? (rendered.set(m.id, plainText(m.text)), rendered.get(m.id)!);
   return {
     credits: (tracks) => {
       const board = readJsonFile<BoardData | null>(BOARD_DATA_PATH, null);

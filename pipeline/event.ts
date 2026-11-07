@@ -33,8 +33,6 @@ export const PAGES_DIR = "captures/pages";
 /** Page snapshots built from saved HTML by tests and dev tools: never canon on a board. */
 export const PAGE_FIXTURES_DIR = "fixtures/pages";
 export const SLACK_DOM_FIXTURES_DIR = "fixtures/slack-dom";
-/** The user's own Devpost submission, one scrubbed sample per event and the visit's log (devpostdraft.ts). */
-export const DEVPOST_FIXTURES_DIR = "fixtures/devpost";
 export const CACHE_PATH = "data/classify_cache.json";
 export const ERRORS_PATH = "data/classify_errors.json";
 export const ITEMS_PATH = "data/items.json";

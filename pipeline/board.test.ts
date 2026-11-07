@@ -69,10 +69,10 @@ describe("boardData", () => {
     messages: [msg("1792800000.0"), msg("1792800100.0", { author_kind: "bot" }), msg("1792800200.0", { subtype: "thread_broadcast" })],
     sponsors, offers: [offer], role: () => "sponsor-side", basis: { grouping: "g", model: "m", written_at: "w" },
   });
-  test("P counts real top-level posts only; unpriced stays null; demo mode redacts names in the excerpt", () => {
+  test("P counts real top-level posts only; unpriced stays null; the excerpt quotes the post as written (no name redaction, user 2026-11-07)", () => {
     expect(d.posts).toHaveLength(1);
     expect(d.offers[0]).toMatchObject({ usd: null, limit: null, limit_unclear: true, first: 1792800000 });
-    expect(d.offers[0]!.excerpt).not.toContain("Grant");
+    expect(d.offers[0]!.excerpt).toContain("Grant Tanner here: code ABC");
     expect(d.reps).toEqual([{ sponsor: "Acme", channel: "spons-a", posts: 1, offers: 1, candidates: 1, candidate_first: [1792800000] }]);
     expect(d.event_deadlines).toEqual([]);
   });
