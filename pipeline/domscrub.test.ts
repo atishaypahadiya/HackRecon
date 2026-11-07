@@ -22,6 +22,7 @@ const RAILS = [
   `<a href="/software/x/like?authenticity_token=dG9rZW5JblVSTDEyMzQ1Njc4OQ&amp;y=1">like</a>`,
   `document.cookie = "_devpost_session=c2Vzc2lvbkNvb2tpZTEyMzQ1Njc4OTA; path=/"`,
   `{"csrfToken":"anNvbkNTUkZ0b2tlbjEyMzQ1Njc4OTA="}`,
+  `<div data-react-props="{&quot;user&quot;:1,&quot;csrfToken&quot;:&quot;ZW50aXR5Q1NSRnRva2VuMTIzNDU2&quot;}"></div>`,
 ].join("\n");
 
 describe("scrubTokens", () => {
@@ -33,9 +34,14 @@ describe("scrubTokens", () => {
   });
   test("Devpost: the csrf meta, authenticity_token fields and params, session cookies and JSON tokens", () => {
     const { html, found } = scrubTokens(RAILS);
-    expect(total(found)).toBe(7);
+    // At least one per line (the entity-quoted one is also seen by the decoded scan); zero after scrubbing is what counts.
+    expect(total(found)).toBeGreaterThanOrEqual(8);
     expect(total(findTokens(html))).toBe(0);
-    for (const v of ["Zm9vYmFy", "cXV1eENT", "YXV0aGVu", "c2Vzc2lvblZh", "dG9rZW5J", "c2Vzc2lvbkNv", "anNvbkNT"]) expect(html).not.toContain(v);
+    for (const v of ["Zm9vYmFy", "cXV1eENT", "YXV0aGVu", "c2Vzc2lvblZh", "dG9rZW5J", "c2Vzc2lvbkNv", "anNvbkNT", "ZW50aXR5"]) expect(html).not.toContain(v);
+  });
+  test("a token the rules can't reach through other entity quoting is still found, so a scan fails rather than passes", () => {
+    expect(total(findTokens(`<div data-x="{&#34;session_id&#34;: &#34;c2Vzc2lvbklEMTIzNDU2Nzg5&#34;}">`))).toBeGreaterThan(0);
+    expect(total(findTokens(`<a href="/x?y=1&amp;authenticity_token=dG9rZW4xMjM0NTY3">`))).toBeGreaterThan(0);
   });
   test("leaves Slack markup the parser reads alone", () => {
     const html = `<div data-qa="message_container" data-msg-ts="1761300001.000100"><a href="https://calhacks.slack.com/archives/C0/p1761300001000100?thread_ts=1761300000.000100&cid=C0">3 replies</a></div>`;

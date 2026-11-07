@@ -15,12 +15,15 @@ describe("which links the worker may load", () => {
   test("only https Devpost (or the event's host), GET, nothing destructive", () => {
     const ok = (l: DraftLink) => safeHop(l, "cal-hacks-13-0")?.href ?? null;
     expect(ok(a("https://devpost.com/software/hindsight-68sruh#top"))).toBe("https://devpost.com/software/hindsight-68sruh");
-    expect(ok(a("https://cal-hacks-13-0.devpost.com/submissions"))).not.toBeNull();
+    // Queries are cut to page=<word>: no token or tracking value is ever loaded or logged.
+    expect(ok(a("https://devpost.com/portfolio/redirect?page=projects&ref_feature=nav&authenticity_token=dG9rZW4xMjM0"))).toBe("https://devpost.com/portfolio/redirect?page=projects");
+    expect(ok(a("https://devpost.com/software/x?authenticity_token=dG9rZW4xMjM0"))).toBe("https://devpost.com/software/x");
     for (const bad of [
       a("http://devpost.com/software/x"),
       a("https://evil.example/devpost.com/"),
       a("https://secure.devpost.com/users/edit"),
       a("https://other-hack.devpost.com/"),
+      a("https://cal-hacks-13-0.devpost.com/submissions"),
       a(`${SUB}/withdraw`),
       a("https://devpost.com/users/sign_out"),
       a(`${SUB}/team`, "Leave team", "delete"),
@@ -70,10 +73,18 @@ describe("the order: event page → My projects → this event's project → its
     expect(r.s.log.map((l) => l.stage)).toEqual(["event", "portfolio", "project", "project", "submission", "submission", "submission"]);
     expect(r.s.log.at(-1)!.links).toBeUndefined();
   });
+  test("each stage loads only its own paths: a My projects link to anywhere else, or a project link that isn't /software/<slug>, is passed over", () => {
+    const r = walk([
+      page(ROOT, [a("https://devpost.com/settings/notifications", "My projects"), a("https://devpost.com/atishay", "My projects")]),
+      page("https://devpost.com/atishay", [a("https://devpost.com/software/x/likes", "Likes"), a("https://devpost.com/software/hindsight-68sruh", "Hindsight")]),
+    ]);
+    expect(r.went).toEqual(["https://devpost.com/atishay", "https://devpost.com/software/hindsight-68sruh"]);
+  });
   test("signed out: no My projects link, nothing loaded; the log lists the safe links seen, for fixing a rule", () => {
-    const r = walk([page(ROOT, [a("https://secure.devpost.com/users/login", "Log in"), a("https://devpost.com/hackathons", "Hackathons")])]);
+    const r = walk([page(ROOT, [a("https://secure.devpost.com/users/login", "Log in"), a("https://devpost.com/hackathons?authenticity_token=dG9rZW4xMjM0NTY3", "Hackathons")])]);
     expect(r).toMatchObject({ went: [], why: "no My projects link (not signed in to Devpost?)" });
     expect(r.s.log[0]!.links).toEqual([{ href: "https://devpost.com/hackathons", text: "Hackathons" }]);
+    expect(total(findTokens(JSON.stringify(r.s.log)))).toBe(0);
   });
   test("no checkboxes anywhere: the page naming the most tracks is kept as the sample", () => {
     const r = walk([
