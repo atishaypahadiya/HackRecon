@@ -3,6 +3,7 @@
 // ~/Downloads/hackrecon/pages/<file>.page.json for `hr sync`, and the tab is closed. One load per page per sync.
 // UNVERIFIED in Chrome until step 5's Slack session: the settle timing and the Cloudflare wait are untested.
 import { pageFileName } from "../../pipeline/schema.ts";
+import { refuseLoad } from "../../pipeline/urlsafety.ts";
 import { DEVPOST_EVENT_URL } from "./autopages.ts";
 import { SYNC_FILE } from "./ui.ts";
 
@@ -32,6 +33,8 @@ const textState = (tabId: number) =>
 async function capturePage(url: string): Promise<string> {
   // Same rule as the content script, checked again here: only an event's own Devpost pages, over https.
   if (!DEVPOST_EVENT_URL.test(url)) return `${url}: not an event Devpost page; not opened`;
+  const action = refuseLoad(url);
+  if (action) return `${url}: ${action}`;
   const tab = await chrome.tabs.create({ url, active: false });
   const tabId = tab.id!;
   try {
@@ -50,6 +53,7 @@ async function capturePage(url: string): Promise<string> {
     // After redirects the tab must still be on an event Devpost page (path may differ; host and scheme may not).
     const at = new URL((await chrome.tabs.get(tabId)).url ?? "about:blank");
     if (!DEVPOST_EVENT_URL.test(`${at.protocol}//${at.host}/`)) return `${url}: ended up on ${at.host || "a non-web page"}; not saved`;
+    if (refuseLoad(at.href)) return `${url}: redirected to ${at.pathname}, which ${refuseLoad(at.href)}; not saved`;
     await chrome.scripting.executeScript({ target: { tabId }, files: ["dist/page-snap.js"] });
     const [r] = await chrome.scripting.executeScript({ target: { tabId }, func: () => window.__hackreconSnap!() });
     const json = r?.result as string;

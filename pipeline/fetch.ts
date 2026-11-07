@@ -9,6 +9,7 @@
 // or renders no text without JavaScript is reported "needs the extension": the extension reads only pages that
 // need the user's login (or a browser to render). Fetched snapshots are access "public" by definition: the
 // request carries no cookies or credentials.
+import { refuseLoad } from "./urlsafety.ts";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { PageSnapshot } from "./schema.ts";
@@ -249,6 +250,8 @@ export class PoliteFetcher {
     let at = new URL(url);
     let requests = 0;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const action = refuseLoad(at.href);
+      if (action) return { url, status: "error", detail: `not fetched: ${at.pathname} ${action}`, requests };
       const unsafe = await publicTarget(at, this.resolve);
       if (unsafe) return { url, status: "error", detail: `not fetched: ${unsafe}`, requests };
       if (!robotsAllows(await this.robotsFor(at.origin), at.pathname + at.search))
