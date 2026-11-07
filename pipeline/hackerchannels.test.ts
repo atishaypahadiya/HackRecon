@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { countAuthors, hackerOnlyChannels } from "./hackerchannels.ts";
+import { countAuthors, hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { SCHEMA_VERSION, parseAuthorsCaptureFile } from "./schema.ts";
 
 describe("authors-only capture of hacker-only channels", () => {
@@ -26,6 +26,7 @@ describe("authors-only capture of hacker-only channels", () => {
     threads: { parents: 3, read: 2 },
     authors: [{ id: "U0C96ADHY8K", posts: 2 }],
     unidentified: 0,
+    self_ids: [{ id: "U0C96ADHY8K", sponsor: "Microsoft", match: true }],
   };
   test("the parser accepts exactly those fields", () => {
     expect(parseAuthorsCaptureFile(file).authors).toHaveLength(1);
@@ -35,5 +36,23 @@ describe("authors-only capture of hacker-only channels", () => {
     expect(() => parseAuthorsCaptureFile({ ...file, authors: [{ id: "U0C96ADHY8K", posts: 1, name: "Shiloah" }] })).toThrow("expected only id and posts");
     expect(() => parseAuthorsCaptureFile({ ...file, authors: [{ id: "looking for a team!", posts: 1 }] })).toThrow("expected a Slack user ID");
     expect(() => parseAuthorsCaptureFile({ ...file, threads: { parents: 1, read: 1, text: "hi" } })).toThrow("expected only parents and read");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0C96ADHY8K", sponsor: "Microsoft", match: true, phrase: "I am a recruiter with Microsoft" }] })).toThrow("expected only id, sponsor and match");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0C96ADHY8K", sponsor: "I am a recruiter with Microsoft, DM me", match: true }] }, "a", new Set(["Microsoft"]))).toThrow("not a sponsor in sponsors.json");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0C96ADHY8K", sponsor: "Microsoft", match: "yes" }] })).toThrow("expected true");
+  });
+
+  test("2b in the page: user ID, sponsor and the flag, once per person and sponsor; no text", () => {
+    const sp = [{ id: "Microsoft", names: ["Microsoft", "Azure"] }, { id: "Apify", names: ["Apify"] }];
+    const r = selfIdFlags(
+      [
+        { author_id: "U2", text: "Hello everyone! My name is Shiloah and I am a recruiter with Microsoft!" },
+        { author_id: "U2", text: "I'm Shiloah with Microsoft, come find me" },
+        { author_id: "U3", text: "Looking for a team! We're using Apify and Azure" },
+        { author_id: "B1", author_kind: "bot", text: "I'm Bot with Apify" },
+      ],
+      sp,
+    );
+    expect(r).toEqual([{ id: "U2", sponsor: "Microsoft", match: true }]);
+    expect(JSON.stringify(r)).not.toContain("recruiter");
   });
 });

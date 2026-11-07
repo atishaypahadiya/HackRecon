@@ -24,9 +24,9 @@ import {
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
-import { hackerOnlyChannels } from "./hackerchannels.ts";
+import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
-import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, type MentionPost, type RepSignalsFile } from "./reps.ts";
+import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
@@ -381,7 +381,7 @@ function syncIngest(args: string[]): number {
       }
       try {
         const v = JSON.parse(text);
-        if (/\.authors\.json$/.test(f.name)) parseAuthorsCaptureFile(v, f.name);
+        if (/\.authors\.json$/.test(f.name)) parseAuthorsCaptureFile(v, f.name, new Set(Object.values(readSponsors(SPONSORS_PATH)).map((s) => s.sponsor)));
         else if (typeof v?.channel_name === "string" && hackerOnly(v.channel_name)) throw new Error(`#${v.channel_name} is hacker-only: only its .authors.json is kept`);
         else if (/\.threads\.json$/.test(f.name)) parseThreadCaptureFile(v, f.name);
         writeFileSync(join(out, f.name), text);
@@ -2360,7 +2360,7 @@ async function repSignals(args: string[]): Promise<number> {
   const authorsFiles = new Map<string, AuthorsCaptureFile>();
   for (const d of syncDirs) {
     for (const f of readdirSync(d).filter((f) => /\.authors\.json$/.test(f)).sort()) {
-      const a = parseAuthorsCaptureFile(JSON.parse(readFileSync(join(d, f), "utf8")), f);
+      const a = parseAuthorsCaptureFile(JSON.parse(readFileSync(join(d, f), "utf8")), f, new Set(Object.values(sponsors).map((s) => s.sponsor)));
       authorsFiles.set(a.channel_name, a);
       known.add(a.channel_name);
     }
@@ -2378,12 +2378,24 @@ async function repSignals(args: string[]): Promise<number> {
   const fromExport = hackerChannels.filter((c) => !authorsFiles.has(c) && exp && existsSync(join(dir, c)));
   const unread = hackerChannels.filter((c) => !fromCapture.includes(c) && !fromExport.includes(c));
   let hackerPosters: Set<string> | null = null;
+  const hackerSelf: { id: string; sponsor: string; channel: string; ts: number }[] = [];
   let hackerSrc: string;
   if (!hackerChannels.length) hackerSrc = "not checked: no hacker-only channel known";
   else if (unread.length) hackerSrc = `not checked: ${unread.join(", ")} not in an authors-only capture or the export, so no one is likely staff`;
   else {
-    for (const c of fromCapture) for (const a of authorsFiles.get(c)!.authors) count(person(a.id), c, a.posts);
-    for (const c of fromExport) for (const m of readChannel(exp!, c)) if (m.user && !m.bot_id && m.subtype !== "thread_broadcast") count(person(m.user), c, 1);
+    for (const c of fromCapture) {
+      const a = authorsFiles.get(c)!;
+      for (const x of a.authors) count(person(x.id), c, x.posts);
+      for (const x of a.self_ids) hackerSelf.push({ id: x.id, sponsor: x.sponsor, channel: c, ts: Date.parse(a.finished_at) / 1000 });
+    }
+    for (const c of fromExport) {
+      const ms = readChannel(exp!, c).filter((m) => m.user && !m.bot_id && m.subtype !== "thread_broadcast");
+      for (const m of ms) count(person(m.user!), c, 1);
+      // As the page does: 2b's match runs over the text here, and only user ID and sponsor are kept. The time kept
+      // is the export's last post in the channel (when the source was read), never the post's own.
+      const end = Math.max(...ms.map((m) => Number(m.ts)));
+      for (const x of selfIdFlags(ms.map((m) => ({ author_id: m.user, text: m.text ?? "" })), selfIdSponsorList(sponsors))) hackerSelf.push({ id: x.id, sponsor: x.sponsor, channel: c, ts: end });
+    }
     hackerPosters = new Set(hackerCounts.keys());
     hackerSrc = [
       fromCapture.length ? `authors-only capture: ${fromCapture.map((c) => { const a = authorsFiles.get(c)!; return `${c} (${a.threads.read} of ${a.threads.parents} threads read to the end${a.unidentified ? `, ${a.unidentified} posts with no sender ID` : ""})`; }).join(", ")}` : "",
@@ -2393,8 +2405,8 @@ async function repSignals(args: string[]): Promise<number> {
   if (hackerPosters) notes.push(`hacker-only: ${hackerPosters.size} people posted in ${hackerChannels.join(", ")}`);
 
   // Signal 2b: each person's own posts and replies in sponsor channels.
-  const selfId = selfIdReps([...messages, ...replies.values()], sponsors, person);
-  notes.push(`self-identified: ${selfId.length} person-sponsor pairs name the sponsor as their employer or company in their own post`);
+  const selfId = selfIdReps([...messages, ...replies.values()], sponsors, person, hackerSelf);
+  notes.push(`says they work there: ${selfId.length} person-sponsor pairs, ${hackerSelf.length} of the flags from hacker-only channels (no text kept)`);
 
   const confirmedIds = new Map<string, Set<string>>();
   for (const x of [...email, ...mention.hits]) confirmedIds.set(person(x.id), (confirmedIds.get(person(x.id)) ?? new Set()).add(x.sponsor));
@@ -2417,7 +2429,7 @@ async function repSignals(args: string[]): Promise<number> {
   for (const e of file.reps) {
     const already = captured.some((m) => m.author_id && person(m.author_id) === e.person && sponsors[m.channel_name]?.sponsor === e.sponsor && base(m) === "sponsor-side");
     const name = [...captured].reverse().find((m) => m.author_id && person(m.author_id) === e.person)?.author_name ?? e.person;
-    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind === "self-identified" ? `self-identified (“${s.posts[0]!.phrase}”)` : s.kind === "hacker channels" ? `counter-signal: ${s.channels.map((c) => `#${c.channel} ${c.posts}`).join(", ")}` : s.kind)).join("; ")}`);
+    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind === "self-identified" ? `says they work there (${s.posts.map((p) => (p.phrase ? `“${p.phrase}”` : `in #${p.channel}`)).join("; ")})` : s.kind === "hacker channels" ? `counter-signal: ${s.channels.map((c) => `#${c.channel} ${c.posts}`).join(", ")}` : s.kind)).join("; ")}`);
   }
   console.log(`${file.reps.length} reps with a signal (${file.reps.filter((e) => e.standing === "confirmed").length} confirmed) → ${REP_SIGNALS_PATH}`);
   return 0;

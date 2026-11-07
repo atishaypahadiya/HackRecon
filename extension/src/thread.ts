@@ -186,10 +186,19 @@ export interface SyncConfig {
   event: string;
   channels: string[];
   authors_only?: string[];
+  /** Each sponsor and its names (sponsors.json), for signal 2b's match in hacker-only channels (selfid.ts). */
+  sponsors?: { id: string; names: string[] }[];
 }
 
-export function syncConfigFrom(sponsors: Record<string, unknown>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }): SyncConfig {
-  return { event: event.event ?? "", channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])], authors_only: event.hacker_only_channels ?? [] };
+export function syncConfigFrom(sponsors: Record<string, { sponsor?: string; aliases?: string[] }>, event: { event?: string; authority_channels?: string[]; hacker_only_channels?: string[] }): SyncConfig {
+  const names = new Map<string, Set<string>>();
+  for (const s of Object.values(sponsors)) if (s.sponsor && s.sponsor !== "event") names.set(s.sponsor, new Set([...(names.get(s.sponsor) ?? []), s.sponsor, ...(s.aliases ?? [])]));
+  return {
+    event: event.event ?? "",
+    channels: [...new Set([...Object.keys(sponsors), ...(event.authority_channels ?? [])])],
+    authors_only: event.hacker_only_channels ?? [],
+    sponsors: [...names].map(([id, n]) => ({ id, names: [...n] })),
+  };
 }
 
 export interface SyncSelection {

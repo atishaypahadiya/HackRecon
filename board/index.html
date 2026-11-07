@@ -314,6 +314,7 @@
   .enter { border: 0; margin: 0 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 0 20px; }
   .enter .ck input:checked + span { opacity: 1; } /* entering a track isn't finishing it */
   .enter legend { padding: 0; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .enter > .fold { flex-basis: 100%; min-height: 44px; text-align: left; font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
   .sgap { padding: 12px 0; border-top: 1px solid var(--line); }
   .sgap:first-child { border-top: 0; }
   .sgap p { margin: 0 0 6px; max-width: 75ch; }
@@ -774,7 +775,12 @@ function drawerContent(kind, now, prev) {
     const likely = (r) => (D.rep_likely?.[r.channel] ?? []).filter((x) => x.first <= now);
     const rs = D.reps.map((r) => ({ ...r, c: r.candidate_first.filter((t) => t <= now).length, m: multi(r), l: likely(r) })).sort((a, b) => b.c - a.c || b.l.length - a.l.length || b.offers - a.offers || b.posts - a.posts);
     return ["Reps", "Sponsor-side posters in each sponsor channel, with the signals they matched. Likely staff is listed apart and never counted. Names are hidden here; confirm a candidate yourself before you message anyone.",
-      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span>${r.c ? `<span class="s">Matched: ${esc(matched(r))}</span>` : ""}${r.l.map((x) => { const p = x.posts.filter((t) => t <= now).length, a = x.answers.filter((t) => t <= now).length; return `<span class="s">Likely staff, not counted: ${plural(p, "offer, prize or workshop post")}, ${plural(a, "answer")} to hackers${x.self != null && x.self <= now ? ", says they work there" : ""}${x.hacker ? `; also posted in a hacker-only channel (${plural(x.hacker, "post")})` : ", never in a hacker-only channel"}</span>`; }).join("")}</div>`).join("")];
+      rs.map((r) => `<div class="kv"><span>${esc(r.sponsor)} <span class="cap">#${esc(r.channel)}</span></span><span class="r">${r.c ? plural(r.c, "candidate") : "none found"}</span><span class="s">${plural(r.offers, "offer")} · ${plural(r.posts, "post")} in the channel${r.m.map((n) => ` · one candidate posts from ${n} accounts`).join("")}</span>${r.c ? `<span class="s">Matched: ${esc(matched(r))}</span>` : ""}${r.l.map((x) => {
+        // Likely by signal 3 (staff posts and answers), by 2b (says they work there), or both, as of the frame.
+        const p = x.posts.filter((t) => t <= now).length, a = x.answers.filter((t) => t <= now).length, staff = x.staff != null && x.staff <= now;
+        const parts = [staff && `${plural(p, "offer, prize or workshop post")}, ${plural(a, "answer")} to hackers`, x.self != null && x.self <= now && "says they work there"].filter(Boolean);
+        return `<span class="s">Likely staff, not counted: ${parts.join(", ")}${x.hacker ? `; also posted in a hacker-only channel (${plural(x.hacker, "post")})` : staff ? ", never in a hacker-only channel" : ""}</span>`;
+      }).join("")}</div>`).join("")];
   }
   if (kind === "activity") {
     const rows = days.map((d) => {
@@ -1334,11 +1340,13 @@ function paintShip() {
   $("sg").hidden = !P.input?.repo || (lh && !S.open.has("gaps"));
   paintGaps();
   const required = lh ? L.required.filter((x) => !P.steps.has(x.id)) : L.required;
-  // Plan's tracks, plus any entered track a newer plan no longer lists, so it can still be unticked.
-  const tracks = [...(P.res?.tracks || []), ...L.tracks.filter((t) => !(P.res?.tracks || []).some((x) => x.track_id === t.track_id))];
-  const chooser = tracks.length
-    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${tracks.map((t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}</span></label>`).join("")}</fieldset>`
-    : `<p class="note">Your plan's tracks show here once you make your plan; tick the ones you're entering.</p>`;
+  // Every track on Devpost, never Plan's picks: only what you tick is entered. With some ticked, the full list folds.
+  const all = L.choices || [], openAll = !S.entered.length || S.open.has("choices");
+  const box = (t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}</span></label>`;
+  const chooser = all.length
+    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${(openAll ? all : all.filter((t) => S.entered.includes(t.track_id))).map(box).join("")}${S.entered.length ? `<button type="button" class="fold" data-fold="choices" aria-expanded="${openAll}">${openAll ? "Show only the ones you ticked" : `All ${all.length} tracks on Devpost`}</button>` : ""}</fieldset>`
+    : `<p class="note">No tracks on the Devpost pages read.</p>`;
+  const tracks = all;
   const trackItems = L.tracks.flatMap((t) => t.items);
   const trackBody = chooser + (L.tracks.length
     ? L.tracks.map((t) => `<p class="stn">${esc(t.name)}</p>${t.items.length ? `<ul class="sits">${t.items.map(shipItem).join("")}</ul>` : `<p class="note">No requirements or entry steps stated for this track.</p>`}`).join("")
@@ -1377,6 +1385,8 @@ async function recheck() {
 $("p-ship").addEventListener("click", (e) => {
   if (e.target.closest("#sg-run")) return recheck();
   const f = e.target.closest("[data-fold]");
+  // The track list toggles, keeping focus on its button; the others open once.
+  if (f?.dataset.fold === "choices") { S.open.has("choices") ? S.open.delete("choices") : S.open.add("choices"); paintShip(); $("p-ship").querySelector('[data-fold="choices"]')?.focus(); return; }
   if (f) { S.open.add(f.dataset.fold); paintShip(); (f.dataset.fold === "gaps" ? $("sg-run") : $(`sh-${f.dataset.fold}`))?.focus(); return; }
   if (e.target.closest("#sd-open")) openDeadline(e.target.closest("#sd-open"));
 });

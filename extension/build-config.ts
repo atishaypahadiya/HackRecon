@@ -1,6 +1,7 @@
 // Writes extension/dist/sync-config.json from the current event's config: which channels "Sync this event" takes
 // (user 2026-11-06: every sponsors.json channel, event channels included, plus event.json authority_channels;
-// sidebar prefixes only discover channels the config doesn't list yet). Channel names only; no workspace content.
+// sidebar prefixes only discover channels the config doesn't list yet), and each sponsor's names for signal 2b's
+// match in hacker-only channels. Config only; no workspace content.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EVENTS_DIR, SPONSORS_PATH, EVENT_PATH } from "../pipeline/event.ts";

@@ -7,10 +7,11 @@
 // Everything lands under ~/Downloads/hackrecon/sync/<stamp>/ for `hr sync-ingest`:
 //   captures/<channel_id>.json, .threads.json, .threads.raw.json   slack-dom/<channel>--thread-*.html   sync.json
 // Hacker-only channels (team formation, introductions; user 2026-11-07) are read last and authors-only: the same
-// scroll and threads, but only sender IDs and post counts are saved (captures/<channel_id>.authors.json). No text,
-// raw rows, DOM samples or page fetches leave the tab for them.
+// scroll and threads, but only sender IDs, post counts and signal 2b's flags (user ID, sponsor, match; matched here
+// in the page) are saved (captures/<channel_id>.authors.json). No text, raw rows, DOM samples or page fetches leave
+// the tab for them.
 // UNVERIFIED in Chrome until the first run: sidebar clicks, the thread pane, its scroller and close button.
-import { countAuthors } from "../../pipeline/hackerchannels.ts";
+import { countAuthors, selfIdFlags } from "../../pipeline/hackerchannels.ts";
 import { SCHEMA_VERSION, authorsFileName, type AuthorsCaptureFile, type Message, type ThreadCaptureFile, type ThreadStopReason, type Ts } from "../../pipeline/schema.ts";
 import { STEP_WAIT_MS, NO_NEW_KEYS_STEPS } from "./accumulate.ts";
 import { autoPageTargets } from "./autopages.ts";
@@ -75,6 +76,8 @@ interface ChannelLog {
   /** "authors": a hacker-only channel, saved as sender IDs and counts only. */
   mode?: "authors";
   authors?: number;
+  /** Signal 2b flags kept (user ID, sponsor), never the text. */
+  self_ids?: number;
   opened: boolean;
   error?: string;
   messages?: number;
@@ -475,6 +478,7 @@ async function sync(): Promise<void> {
       await sleep(THREAD_PAUSE_MS);
     }
     const counted = countAuthors([...file.messages, ...replies]);
+    const selfIds = selfIdFlags([...file.messages, ...replies], config?.sponsors ?? []);
     const af: AuthorsCaptureFile = {
       schema_version: SCHEMA_VERSION,
       kind: "authors",
@@ -487,8 +491,10 @@ async function sync(): Promise<void> {
       stop_reason: file.stop_reason,
       threads: { parents: parents.length, read: cl.threads.filter((t) => t.stop === "parent_seen").length },
       ...counted,
+      self_ids: selfIds,
     };
     cl.authors = af.authors.length;
+    cl.self_ids = selfIds.length;
     if (await save(`captures/${authorsFileName(file.channel_id)}`, JSON.stringify(af, null, 2))) cl.saved.push(authorsFileName(file.channel_id));
     cl.secs = Math.round((Date.now() - t0) / 1000);
     await saveLog();

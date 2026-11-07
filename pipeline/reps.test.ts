@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { personKeys } from "./people.ts";
 import type { Sponsors } from "./pool.ts";
-import { emailReps, HACKER_ONLY, likelyReps, likelySince, mentionAuthority, mentionReps, repEvidence, repIndex, selfIdentification, selfIdReps, signalLabels, type MentionPost } from "./reps.ts";
+import { emailReps, HACKER_ONLY, likelyReps, likelySince, mentionAuthority, mentionReps, repEvidence, repIndex, selfIdReps, signalLabels, staffSince, type MentionPost } from "./reps.ts";
+import { selfIdentification, selfIdSponsors } from "./selfid.ts";
 import { rolesById } from "./roles.ts";
 import type { Item, Message } from "./schema.ts";
 
@@ -120,79 +121,105 @@ describe("evidence: one entry per person and sponsor, confirmed outranks likely"
   });
 });
 
-describe("signal 2b: self-identification in the sponsor's channel", () => {
-  const names = ["Apify"];
-  test("the writer names the sponsor as their employer or company", () => {
-    for (const t of [
-      "Hi all! I'm Petros with Apify, ask me anything",
-      "Hey, Petros here, Engineer at Apify <https://apify.com|apify>",
-      "I am one of the founders of Apify.",
-      "We're Apify, and we turn websites into APIs",
-      "we’re the team behind Apify",
-      "Hello! Here from Apify for the weekend",
-      "I work at Apify",
-      "the Apify team here, come say hi",
-      "Hello everyone! I am a recruiter with Apify!",
-    ])
-      expect([t, selfIdentification(t, names)]).toEqual([t, expect.any(String)]);
+describe("signal 2b: says they work there, in four phrasings anchored on the writer", () => {
+  const hit = (t: string, names = ["Apify"]) => selfIdentification(t, names)?.form ?? null;
+  test("role + at X, in the writer's introduction", () => {
+    expect(hit("Hi everyone!\n\nMy name is Tarik, I'm a Senior Software Engineer at CRS. This year…", ["CRS Credit API", "CRS"])).toBe("role at");
+    expect(hit("Hey Cal Hacks!\n\nI am Meredith, a technical recruiter at Armadin. Thank you", ["Armadin"])).toBe("role at");
+    expect(hit("I'm a developer advocate at Apify")).toBe("role at");
   });
-  test("using, building with, booths, tracks and questions don't count; nor another company", () => {
-    for (const t of [
-      "We're building with Apify for our project",
-      "We're using Apify to scrape listings",
-      "I'm at the Apify booth, come find me", // no name before "at"
-      "I'm Lee from the Apify workshop", // a workshop, not an employer
-      "Anyone here from Apify?",
-      "Is there an engineer at Apify who can help?",
-      "We're Apify users and love it",
-      "I'm Petros with Apifyx",
-      "I'm Petros with Microsoft",
-      "founder of <https://apify.com|apify>", // the name only inside a link
-    ])
-      expect([t, selfIdentification(t, names)]).toEqual([t, null]);
+  test("with X, as an introduction", () => {
+    expect(hit("Hi all, I'm Petros with Apify, ask me anything")).toBe("with");
+    expect(hit("Hello everyone! My name is Shiloah and I am a recruiter with Microsoft!", ["Microsoft", "Azure"])).toBe("with");
   });
-  test("aliases count, longest first; only the poster's own posts in that sponsor's channel", () => {
+  test("founder(s) of X, said of the writer", () => {
+    expect(hit("Hey everyone! I'm Behzad, one of the founders of Mana. We're sponsoring", ["Mana"])).toBe("founder of");
+    expect(hit("we're the co-founders of Apify")).toBe("founder of");
+  });
+  test("We're X only as the post's first sentence, after an optional greeting", () => {
+    expect(hit("Hey Cal Hacks! :wave:\nWe’re Bitdeer AI, a sponsor of Cal Hacks", ["Bitdeer AI", "Bitdeer"])).toBe("we're");
+    expect(hit("Hi everyone! :wave:\nWe're Wajo,\u00a0 we build Fo", ["Wajo AI", "Wajo"])).toBe("we're");
+    expect(hit("We're Apify. Come say hi")).toBe("we're");
+  });
+  test("misfires: using or building with X, X as a thing, someone else's role, questions, We're X mid-post", () => {
+    for (const [t, names] of [
+      ["we're using Bitdeer for inference", ["Bitdeer"]],
+      ["We're using Bitdeer AI and it's great", ["Bitdeer AI", "Bitdeer"]],
+      ["Hey! We're Bitdeer users and love it", ["Bitdeer"]],
+      ["We're Apify fans", ["Apify"]],
+      ["We're building with Apify", ["Apify"]],
+      ["Hi! Some news first. We're Apify", ["Apify"]], // not the first sentence
+      ["Jaroslav Hejlek <https://linkedin.com/in/j> - Founding Engineer at Apify", ["Apify"]], // a judge list
+      ["an exclusive session with an Early Career Recruiter at Figma", ["Figma"]],
+      ["I talked to an engineer at Apify", ["Apify"]],
+      ["Is anyone here an engineer at Apify?", ["Apify"]],
+      ["Thanks to the founders of Mana for the talk", ["Mana"]],
+      ["I'm Lee from the Apify workshop", ["Apify"]],
+      ["I am an intern at Amazon AWS on the Redshift Team", ["Annapurna Labs", "Amazon", "AWS"]], // a hacker's introduction
+      ["I'm a student at Berkeley working with Apify", ["Apify"]],
+      ["I'm Petros with Apifyx", ["Apify"]],
+      ["Ali from Mana team here", ["Mana"]], // not one of the four phrasings
+      ["Sahana here from Wajo AI.", ["Wajo AI"]],
+      ["we’re the team behind moss :wave:", ["Moss"]],
+    ] as [string, string[]][])
+      expect([t, hit(t, names)]).toEqual([t, null]);
+  });
+  test("in a hacker-only channel the page asks which sponsors, and keeps only that", () => {
+    const sp = [{ id: "Microsoft", names: ["Microsoft", "Azure"] }, { id: "Apify", names: ["Apify"] }];
+    expect(selfIdSponsors("My name is Shiloah and I am a recruiter with Microsoft! Looking for teams using Apify", sp)).toEqual(["Microsoft"]);
+    expect(selfIdSponsors("Looking for a team, I know Apify and Azure", sp)).toEqual([]);
+  });
+  test("only the poster's own posts in that sponsor's channel; hacker-channel flags join by sponsor", () => {
     const sp = { ...sponsors, "spons-crs": { sponsor: "CRS Credit API", kind: "sponsor", aliases: ["CRS"] } } as Sponsors;
     const m = (author_id: string, channel_name: string, text: string, extra: Partial<Message> = {}): Message => ({ id: `C:${text.length}`, channel_id: "C", channel_name, ts: String(text.length), author_id, author_name: author_id, text, links: [], permalink: `p/${text.length}`, captured_at: "", run_id: "r", ...extra });
     const r = selfIdReps(
       [
-        m("UT", "spons-crs", "Tarik, Engineer at CRS, happy to help"),
+        m("UT", "spons-crs", "My name is Tarik, I'm a Senior Software Engineer at CRS. Happy to help"),
         m("UP", "0-announcements", "I'm Petros with Apify"), // event channel
         m("UQ", "spons-fetch-ai", "I'm Quinn with Apify"), // not Apify's channel
         m("UB", "spons-apify", "We're Apify", { author_kind: "bot" }),
       ],
       sp,
       (id) => id,
+      [{ id: "US", sponsor: "Apify", channel: "1-introductions", ts: 900 }, { id: "UZ", sponsor: "Nobody", channel: "1-introductions", ts: 900 }],
     );
-    expect(r.map((x) => [x.person, x.sponsor, x.posts[0]!.phrase])).toEqual([["UT", "CRS Credit API", "Engineer at CRS"]]);
+    expect(r.map((x) => [x.person, x.sponsor, x.posts[0]!.phrase ?? x.posts[0]!.channel])).toEqual([
+      ["UT", "CRS Credit API", "My name is Tarik, I'm a Senior Software Engineer at CRS"],
+      ["US", "Apify", "1-introductions"],
+    ]);
+    expect(r[1]!.posts[0]).toEqual({ ts: 900, permalink: "", channel: "1-introductions" });
   });
 });
 
-describe("2b and the hacker-channel counter-signal", () => {
+describe("2b alone, and with the hacker-channel counter-signal", () => {
   const msg = (id: string, author_id: string, extra: Partial<Message> = {}): Message => ({ id: `C:${id}`, channel_id: "C", channel_name: "spons-apify", ts: id, author_id, author_name: author_id, text: "hi", links: [], permalink: `p/${id}`, captured_at: "", run_id: "r", ...extra });
   const item = (id: string, kind: string) => ({ message_id: `C:${id}`, kind }) as unknown as Item;
   const messages = [msg("1", "UX"), msg("2", "UH", { text: "can we use the free tier?" })];
   const o = { messages, replies: [msg("2.1", "UX", { thread_ts: "2" })], items: [item("1", "credit")], sponsors, person: (id: string) => id, hackerPosters: new Set(["UX"]) };
-  test("without 2b a hacker-channel post excludes; with it, it's shown as a counter-signal", () => {
+  const ix = (ev: ReturnType<typeof repEvidence>) => repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: ev });
+  test("2b alone makes likely staff, never a role, labeled says they work there", () => {
+    const ev = repEvidence({ email: [], mention: [], selfId: [{ person: "UM", accounts: ["UM"], sponsor: "Apify", posts: [{ ts: 5, permalink: "p/5", phrase: "I am Meredith, a recruiter at Apify" }] }], likely: [], person: (id) => id });
+    expect(ev.map((e) => [e.person, e.standing])).toEqual([["UM", "likely"]]);
+    const x = ix(ev);
+    expect([x.confirmed.size, [...x.likely.keys()]]).toEqual([0, ["UM"]]);
+    const file = x.signals.get("UM|Apify");
+    expect([likelySince(file), staffSince(file)]).toEqual([5, null]);
+    expect(signalLabels([], file)).toEqual(["says they work there: “I am Meredith, a recruiter at Apify”"]);
+    expect(signalLabels([], file, 4)).toEqual([]);
+  });
+  test("a hacker-channel flag has no phrase: the label names the channel", () => {
+    const ev = repEvidence({ email: [], mention: [], selfId: [{ person: "US", accounts: ["US"], sponsor: "Apify", posts: [{ ts: 900, permalink: "", channel: "1-introductions" }] }], likely: [], person: (id) => id });
+    expect(signalLabels([], ix(ev).signals.get("US|Apify"))).toEqual(["says they work there (in #1-introductions)"]);
+  });
+  test("without 2b a hacker-channel post excludes; with it, signal 3 holds from the self-identification on", () => {
     const role = rolesById(messages, sponsors, new Set());
     expect(likelyReps({ ...o, role })).toEqual([]);
     const likely = likelyReps({ ...o, role, selfIdentified: new Set(["UX|Apify"]) });
-    expect(likely.map((x) => x.person)).toEqual(["UX"]);
-    const self = [{ person: "UX", accounts: ["UX"], sponsor: "Apify", posts: [{ ts: 3, permalink: "p/3", phrase: "Engineer at Apify" }] }];
+    const self = [{ person: "UX", accounts: ["UX"], sponsor: "Apify", posts: [{ ts: 3, permalink: "p/3", phrase: "I'm UX with Apify" }] }];
     const ev = repEvidence({ email: [], mention: [], selfId: self, likely, hacker: new Map([["UX", [{ channel: "1-introductions", posts: 1 }]]]), person: (id) => id });
-    expect(ev[0]!.standing).toBe("likely");
-    const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: ev });
-    expect(ix.confirmed.size).toBe(0);
-    const file = ix.signals.get("UX|Apify");
-    expect(signalLabels([], file)).toEqual(["self-identified: “Engineer at Apify”", "likely staff: 1 offer, prize or workshop post, 1 answer to hackers", "counter-signal: posted in #1-introductions (1)"]);
-    // Replay: before the self-identification, the hacker-channel post still excludes them.
-    expect(likelySince(file)).toBe(3);
+    const file = ix(ev).signals.get("UX|Apify");
+    expect(signalLabels([], file)).toEqual(["says they work there: “I'm UX with Apify”", "likely staff: 1 offer, prize or workshop post, 1 answer to hackers", "counter-signal: posted in #1-introductions (1)"]);
+    expect([staffSince(file), likelySince(file)]).toEqual([3, 3]);
     expect(signalLabels([], file, 2.5)).toEqual(["counter-signal: posted in #1-introductions (1)"]);
-  });
-  test("2b alone, or the counter-signal alone, makes no rep", () => {
-    const ev = repEvidence({ email: [], mention: [], selfId: [{ person: "UM", accounts: ["UM"], sponsor: "Apify", posts: [{ ts: 1, permalink: "p", phrase: "recruiter at Apify" }] }], likely: [], hacker: new Map([["UZ", [{ channel: "1-team-formation", posts: 4 }]]]), person: (id) => id });
-    expect(ev.map((e) => [e.person, e.standing])).toEqual([["UM", "label"]]);
-    const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: ev });
-    expect([ix.confirmed.size, ix.likely.size]).toEqual([0, 0]);
   });
 });
