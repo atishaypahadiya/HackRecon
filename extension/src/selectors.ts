@@ -22,6 +22,8 @@ export const SEL = {
   unknownSender: '[data-qa="message_content"] > .c-missing_text',
   /** Attribute on the sender element that may hold the user ID. */
   senderIdAttr: "data-message-sender",
+  /** On an @-mention anchor (`a.c-member_slug`): the mentioned user's Slack ID. Seen in fixtures/slack-dom (2026-11-07). */
+  mentionIdAttr: "data-member-id",
   /** Inline title next to the author, only if Slack renders one (D6). */
   /** UNVERIFIED: no sample poster had an inline title. */
   senderTitle: '[data-qa="message_sender_title"], .c-message__sender_title',

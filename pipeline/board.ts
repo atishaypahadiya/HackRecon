@@ -7,7 +7,8 @@ import type { EventConfig } from "./classify.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
-import type { PosterRole } from "./roles.ts";
+import { likelySince, signalLabels, type RepIndex } from "./reps.ts";
+import { sponsorSignals, type A5Signal, type PosterRole } from "./roles.ts";
 import type { Message } from "./schema.ts";
 import {  } from "./event.ts";
 
@@ -76,6 +77,13 @@ export interface BoardData {
    *  candidate_first (people.ts: one person with two accounts is one candidate). Kept out of `reps`, whose shape
    *  D14 fingerprints. */
   rep_accounts: Record<string, number[]>;
+  /** Per sponsor channel, what each rep candidate matched (reps.ts signalLabels), aligned with candidate_first.
+   *  Signal 3 is left out here (Plan shows it): its counts depend on the replay's time. */
+  rep_signals: Record<string, string[][]>;
+  /** Per sponsor channel, likely staff (reps.ts signal 3) who aren't sponsor-side: shown apart, never counted as
+   *  reps, never given authority. `first` is when the signal first holds (a staff post and an answer both in);
+   *  posts and answers are their times, so a replay counts only what was posted by then. Never names. */
+  rep_likely: Record<string, { first: number; posts: number[]; answers: number[] }[]>;
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
@@ -215,6 +223,8 @@ export function boardData(o: {
   role: (m: Message) => PosterRole;
   /** Slack id → its person (people.ts); without it every account is its own person. */
   person?: (id: string) => string;
+  /** reps.ts evidence: signals to show per rep, and likely staff. */
+  reps?: RepIndex;
   basis: BoardData["basis"];
   /** Permalinks for sheet rows the capture missed. */
   permalinks?: Map<string, string>;
@@ -253,6 +263,8 @@ export function boardData(o: {
     };
   });
   const repAccounts: Record<string, number[]> = {};
+  const repSignals: Record<string, string[][]> = {};
+  const repLikely: Record<string, { first: number; posts: number[]; answers: number[] }[]> = {};
   const reps = Object.entries(o.sponsors)
     .filter(([ch, s]) => o.channels.includes(ch) && s.sponsor !== "event")
     .map(([ch, s]) => {
@@ -261,14 +273,28 @@ export function boardData(o: {
       const person = o.person ?? ((id: string) => id);
       const firstBy = new Map<string, number>();
       const accounts = new Map<string, Set<string>>();
+      const a5 = new Map<string, Set<A5Signal>>();
+      const likelyFirst = new Map<string, number>();
       for (const m of inCh) {
-        if (!m.author_id || o.role(m) !== "sponsor-side") continue;
+        if (!m.author_id) continue;
         const who = person(m.author_id);
+        if (o.role(m) !== "sponsor-side") {
+          const since = likelySince(o.reps?.signals.get(`${who}|${s.sponsor}`));
+          if (o.role(m) === "other" && o.reps?.likely.get(who)?.has(s.sponsor) && since !== null) likelyFirst.set(who, since);
+          continue;
+        }
         firstBy.set(who, Math.min(firstBy.get(who) ?? Infinity, Number(m.ts)));
         accounts.set(who, (accounts.get(who) ?? new Set()).add(m.author_id));
+        for (const x of sponsorSignals(m, s)) a5.set(who, (a5.get(who) ?? new Set()).add(x));
       }
       const ranked = [...firstBy].sort((a, b) => a[1] - b[1]);
       repAccounts[ch] = ranked.map(([who]) => accounts.get(who)!.size);
+      const fileSignals = (who: string) => o.reps?.signals.get(`${who}|${s.sponsor}`) ?? [];
+      repSignals[ch] = ranked.map(([who]) => signalLabels([...(a5.get(who) ?? [])], fileSignals(who).filter((x) => x.kind !== "likely staff")));
+      repLikely[ch] = [...likelyFirst].sort((a, b) => a[1] - b[1]).map(([who, first]) => {
+        const l = fileSignals(who).find((x) => x.kind === "likely staff");
+        return { first, posts: l?.kind === "likely staff" ? l.posts.map((e) => e.ts) : [], answers: l?.kind === "likely staff" ? l.answers.map((e) => e.ts) : [] };
+      });
       return {
         sponsor: s.sponsor,
         channel: ch,
@@ -289,6 +315,8 @@ export function boardData(o: {
     frames: replayFrames(posts, offers, o.timezone),
     reps,
     rep_accounts: repAccounts,
+    rep_signals: repSignals,
+    rep_likely: repLikely,
     event_deadlines: eventDeadlines(o.schedule ?? []),
     basis: o.basis,
   };

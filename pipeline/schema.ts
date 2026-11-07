@@ -32,6 +32,9 @@ export interface Message {
   text: string;
   /** Every href in the message body, in order (OV7, needed for URL merge). */
   links: string[];
+  /** @-mentions of people, in order: the Slack user ID (the DOM's data-member-id) and the label as rendered in
+   *  `text`. The label is the mentioned person's own display name, so it never counts as anyone's words. */
+  mentions?: { id: string; label: string }[];
   permalink: string;
   /** A parent post's rendered "N replies" (Slack counts sent-to-channel replies too). */
   reply_count?: number;
@@ -340,6 +343,12 @@ function checkMessage(v: unknown, where: string, channelId: string): void {
     fail(`${where}.subtype`, 'expected "thread_broadcast" with thread_ts set');
   }
   arr(m.links, `${where}.links`).forEach((l, i) => str(l, `${where}.links[${i}]`));
+  if (m.mentions !== undefined)
+    arr(m.mentions, `${where}.mentions`).forEach((x, i) => {
+      const o = obj(x, `${where}.mentions[${i}]`);
+      str(o.id, `${where}.mentions[${i}].id`);
+      str(o.label, `${where}.mentions[${i}].label`);
+    });
   if (m.reply_count !== undefined) num(m.reply_count, `${where}.reply_count`);
   if (m.latest_reply !== undefined) tsStr(m.latest_reply, `${where}.latest_reply`);
 }

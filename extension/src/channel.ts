@@ -113,6 +113,7 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
       if (m.sender.id) out.author_id = m.sender.id;
       out.author_kind = m.sender.bot ? "bot" : "user";
       if (m.sender.external) out.author_external = true;
+      if (m.mentions?.length) out.mentions = m.mentions;
       if (m.replies) {
         out.reply_count = m.replies.count;
         if (m.replies.last) out.latest_reply = m.replies.last;

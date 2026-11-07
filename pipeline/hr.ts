@@ -23,7 +23,8 @@ import {
   type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
-import { loadExport } from "./export.ts";
+import { loadExport, readChannel, rowClass } from "./export.ts";
+import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionReps, repEvidence, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
 import { formatGate, scoreGate } from "./gate.ts";
 import { labelApp } from "./label.ts";
@@ -60,7 +61,7 @@ import {
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
-import { buildOrganizers, loadOrganizerIds, rolesById } from "./roles.ts";
+import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import {
@@ -74,7 +75,7 @@ import {
   CAPTURES_DIR,
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
-  GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH,
+  GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH, REP_SIGNALS_PATH,
   SHIP_GAPS_PATH,
   PREFILL_CACHE_PATH,
   PRODUCTS_PATH,
@@ -239,6 +240,13 @@ const USAGE = `usage:
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
       receipt: URL merge only, no Opus credit pass, reps unconfirmed; it prints its basis and gaps.
   bun run hr organizers [--export DIR]
+  bun run hr rep-signals [--export DIR]
+      Writes ${REP_SIGNALS_PATH}: sponsor reps beyond the name/title and external-badge signals, each with its
+      evidence and source (reps.ts). Confirmed: a profile email on the sponsor's domain (sponsors.json "domains"), or
+      an organizer mentioning the person's user ID beside the sponsor's name. Likely staff: an offer, prize or workshop
+      post in the sponsor's channel, an answer to a hacker's question in its threads, and no post in a hacker-only
+      channel; shown, never given authority. The export is read for users.json emails, and for mentions and
+      hacker-only channels the capture doesn't hold (author IDs and mention IDs only). Run after person-links.
   bun run hr person-links [--export DIR]
       Links Slack accounts that are one person, so a rep with two accounts counts once (user 2026-11-07). Checks
       accounts on the same sponsor's side, in order: same profile email, same avatar image (fetched from Slack's
@@ -251,7 +259,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -260,6 +268,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "pool") return pool(rest);
   if (cmd === "organizers") return organizers(rest);
   if (cmd === "person-links") return personLinks(rest);
+  if (cmd === "rep-signals") return repSignals(rest);
   if (cmd === "classify") return classify(rest);
   if (cmd === "gate") return gate(rest);
   if (cmd === "label") return label(rest);
@@ -837,6 +846,7 @@ async function board(args: string[]): Promise<number> {
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
   const person = loadPersonKey();
+  const reps = loadRepIndex(person);
   const labels = readLabels();
   const messages = readMessages();
   const data = boardData({
@@ -848,8 +858,9 @@ async function board(args: string[]): Promise<number> {
     messages,
     sponsors,
     offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
-    role: rolesById(messages, sponsors, organizerIds, person),
+    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
     person,
+    reps,
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
     permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
@@ -1543,7 +1554,7 @@ async function planCli(args: string[]): Promise<number> {
     for (const q of b?.questions ?? []) out(`    ${q.grounds}  ${q.source_url}`);
     const p = people.find((x) => x.sponsor === sponsor);
     if (p && !p.reps.length) out("    Reps: no rep of a targeted track has posted yet");
-    for (const rep of p?.reps ?? []) out(`    Rep: ${rep.name}${rep.accounts > 1 ? ` (${rep.accounts} accounts)` : ""}, ${rep.posts} post${rep.posts === 1 ? "" : "s"}, first ${at(rep.first)}: "${rep.quote}"  ${rep.source_url}`);
+    for (const rep of p?.reps ?? []) out(`    ${rep.likely ? "Likely staff" : "Rep"}: ${rep.name}${rep.accounts > 1 ? ` (${rep.accounts} accounts)` : ""}, ${rep.posts} post${rep.posts === 1 ? "" : "s"}, first ${at(rep.first)}: "${rep.quote}"  ${rep.source_url}\n      matched: ${rep.signals.join("; ")}`);
   }
   if (pe && "error" in pe) out("  People: failed");
   if (dog?.targeted?.length) {
@@ -1887,6 +1898,7 @@ function receiptPreview(args: string[]): number {
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
   const person = loadPersonKey();
+  const reps = loadRepIndex(person);
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
   const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
   if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
@@ -1898,7 +1910,7 @@ function receiptPreview(args: string[]): number {
     messages,
     sponsors,
     channels: last?.channels ?? [],
-    role: rolesById(messages, sponsors, organizerIds, person),
+    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
     person,
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
@@ -2196,7 +2208,8 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
   const messages = readMessages();
   const byId = new Map(messages.map((m) => [m.id, m]));
   const person = loadPersonKey();
-  const role = rolesById(messages, sponsors, loadOrganizerIds(), person);
+  const reps = loadRepIndex(person);
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, reps.confirmed);
   const products = readProducts();
   const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
   const nowSec = nowMs / 1000;
@@ -2214,10 +2227,112 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
       const deadline = submissionDeadline(planMeta(ctx.entities, ctx.event).deadlines);
       return { deadline, sessions: planSessions(readJsonFile<Item[]>(ITEMS_PATH, []), byId, set(tracks), nowMs, deadline, shown) };
     },
-    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec, shown),
+    people: (tracks) => planPeople(messages, set(tracks), sponsors, role, person, nowSec, shown, reps),
   };
 }
 
 /** Runs Plan's stream (planstream.ts) with the real ranker, repo and gap check, hands each event to `on`, then saves
  *  what the model added to the caches and appends one timing line (PLAN_TIMINGS_PATH). `fresh` skips both caches
  *  and saves nothing: it times an input as if it were new. */
+
+/** `hr rep-signals`: reps.ts's three signals over the capture, with the export filling what the capture can't hold
+ *  yet (emails; mention IDs before the parser kept them; who posted in hacker-only channels, which aren't synced
+ *  because their posts would reach the classifier). Every source is written into the file. */
+async function repSignals(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const dir = fromCaller(values.export!);
+  const exp = existsSync(join(dir, "users.json")) ? loadExport(dir) : null;
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const event = readEvent();
+  const messages = readMessages();
+  const person = loadPersonKey();
+  const organizers = readJsonFile<Organizer[]>(ORGANIZERS_PATH, []);
+  const organizerIds = new Set(organizers.map((o) => o.id));
+  const notes: string[] = [];
+
+  // Replies: every synced thread capture, the newest copy of each reply.
+  const replies = new Map<string, Message>();
+  const syncDirs = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => d.startsWith("sync-")).sort().map((d) => join(CAPTURES_DIR, d)) : [];
+  for (const f of threadCaptureFiles(syncDirs)) for (const t of parseThreadCaptureFile(JSON.parse(readFileSync(f, "utf8")), f).threads) for (const r of t.replies) replies.set(r.id, r);
+  const repliesSrc = replies.size ? `capture (${replies.size} thread replies from ${syncDirs.length} syncs)` : "not checked: no thread capture yet";
+
+  // Signal 1: emails in the users.json snapshot.
+  const users = exp ? [...exp.users.values()].map((u) => ({ id: u.id, email: (u as SnapshotUser).profile?.email })) : [];
+  const shown = users.filter((u) => u.email).length;
+  const withDomains = Object.values(sponsors).filter((s) => s.domains?.length).length;
+  const emailsSrc = exp ? `export (${join(dir, "users.json")}): ${shown} of ${users.length} accounts show an email` : "not checked: no users.json snapshot";
+  if (exp) notes.push(`email: ${shown} of ${users.length} accounts in users.json show an email; ${withDomains} sponsor${withDomains === 1 ? "" : "s"} list a domain in sponsors.json`);
+  const email = emailReps(users, sponsors);
+
+  // Signal 2: authority (D19) = admin/owner-backed organizer ids, plus any post in an authority channel.
+  const authorityIds = new Set(organizers.filter((o) => o.why.includes("admin") || o.why.includes("owner")).map((o) => o.id));
+  const caps = captureFiles([CAPTURES_DIR, ...syncDirs]).map((f) => loadCapture(f).capture);
+  const authorityChannels = new Set([...(event.authority_channels ?? []), ...caps.filter((c) => c.posting_restricted === true).map((c) => c.channel_name)]);
+  const captured = [...messages, ...replies.values()];
+  const capturedMentions = captured.filter((m) => m.mentions?.length);
+  let mentionPosts: MentionPost[];
+  let mentionsSrc: string;
+  if (capturedMentions.length || !exp) {
+    mentionPosts = capturedMentions.map((m) => ({ author_id: m.author_id ?? "", channel_name: m.channel_name, text: m.text, mentions: m.mentions!, permalink: m.permalink }));
+    mentionsSrc = capturedMentions.length ? `capture (${capturedMentions.length} posts with mention IDs)` : "not checked: no capture carries mention IDs yet and no export";
+  } else {
+    const host = new URL(messages.find((m) => m.permalink)?.permalink ?? "https://slack.com").host;
+    const idOf = new Map([...exp.channelsById].map(([id, name]) => [name, id]));
+    mentionPosts = [...exp.channelsById.values()].filter((c) => existsSync(join(dir, c))).flatMap((c) =>
+      readChannel(exp, c)
+        .filter((m) => m.user && (rowClass(m) === "real" || rowClass(m) === "broadcast") && (m.text ?? "").includes("<@"))
+        .map((m) => ({
+          author_id: m.user!,
+          channel_name: c,
+          text: m.text ?? "",
+          mentions: [...(m.text ?? "").matchAll(/<@([UW][A-Z0-9]+)>/g)].map((x) => ({ id: x[1]!, label: x[0] })),
+          permalink: `https://${host}/archives/${idOf.get(c)}/p${m.ts.replace(".", "")}`,
+        })),
+    );
+    mentionsSrc = `export (${dir}): the capture carries no mention IDs yet (parser keeps them from the next sync)`;
+  }
+  const authority = (p: MentionPost) => authorityIds.has(p.author_id) || authorityChannels.has(p.channel_name);
+  const mention = mentionReps(mentionPosts, sponsors, authority, (id) => organizerIds.has(id));
+  notes.push(`organizer mention: ${authorityIds.size} admin/owner-backed organizer ids, ${authorityChannels.size} authority channel${authorityChannels.size === 1 ? "" : "s"}; ${mentionPosts.filter(authority).length} authority posts with a mention read; ${mention.ambiguous} line${mention.ambiguous === 1 ? "" : "s"} naming two or more sponsors skipped`);
+
+  // Signal 3: hacker-only channels' posters, from the capture if synced, else the export (author IDs only).
+  const known = new Set([...messages.map((m) => m.channel_name), ...(exp ? exp.channelsById.values() : [])]);
+  const hackerChannels = event.hacker_only_channels ?? [...known].filter((c) => HACKER_ONLY.test(c)).sort();
+  const inCapture = hackerChannels.filter((c) => messages.some((m) => m.channel_name === c));
+  let hackerPosters: Set<string> | null = null;
+  let hackerSrc: string;
+  if (!hackerChannels.length) hackerSrc = "not checked: no hacker-only channel known";
+  else if (inCapture.length === hackerChannels.length) {
+    hackerPosters = new Set(messages.filter((m) => hackerChannels.includes(m.channel_name) && m.author_id).map((m) => person(m.author_id!)));
+    hackerSrc = "capture";
+  } else if (exp && hackerChannels.every((c) => existsSync(join(dir, c)))) {
+    hackerPosters = new Set(hackerChannels.flatMap((c) => readChannel(exp, c).filter((m) => m.user).map((m) => person(m.user!))));
+    hackerSrc = `export (${dir}): author IDs only; these channels aren't synced`;
+  } else hackerSrc = `not checked: ${hackerChannels.filter((c) => !inCapture.includes(c)).join(", ")} not in the capture or the export, so no one is likely staff`;
+  if (hackerPosters) notes.push(`hacker-only: ${hackerPosters.size} people posted in ${hackerChannels.join(", ")}`);
+
+  const confirmedIds = new Map<string, Set<string>>();
+  for (const x of [...email, ...mention.hits]) confirmedIds.set(person(x.id), (confirmedIds.get(person(x.id)) ?? new Set()).add(x.sponsor));
+  const role = rolesById(captured, sponsors, organizerIds, person, confirmedIds);
+  const likely = likelyReps({ messages, replies: [...replies.values()], items: readJsonFile<Item[]>(ITEMS_PATH, []), sponsors, role, person, hackerPosters });
+
+  const file: RepSignalsFile = {
+    built_at: new Date().toISOString(),
+    sources: { emails: emailsSrc, mentions: mentionsSrc, replies: repliesSrc, hacker_only: hackerSrc },
+    hacker_only_channels: hackerChannels,
+    rule_notes: notes,
+    reps: repEvidence(email, mention.hits, likely, person),
+  };
+  mkdirSync(dirname(REP_SIGNALS_PATH), { recursive: true });
+  writeFileSync(REP_SIGNALS_PATH, JSON.stringify(file, null, 2) + "\n");
+  for (const [k, v] of Object.entries(file.sources)) console.log(`${k}: ${v}`);
+  for (const n of notes) console.log(n);
+  const base = rolesById(captured, sponsors, organizerIds, person);
+  for (const e of file.reps) {
+    const already = captured.some((m) => m.author_id && person(m.author_id) === e.person && sponsors[m.channel_name]?.sponsor === e.sponsor && base(m) === "sponsor-side");
+    const name = [...captured].reverse().find((m) => m.author_id && person(m.author_id) === e.person)?.author_name ?? e.person;
+    console.log(`${e.sponsor}: ${name} (${e.accounts.join(", ")}) ${e.standing}${already ? ", already sponsor-side by name, title or badge" : ", new"}: ${e.signals.map((s) => (s.kind === "likely staff" ? `likely staff (${s.posts.length} posts, ${s.answers.length} answers)` : s.kind)).join("; ")}`);
+  }
+  console.log(`${file.reps.length} reps with a signal (${file.reps.filter((e) => e.standing === "confirmed").length} confirmed) → ${REP_SIGNALS_PATH}`);
+  return 0;
+}

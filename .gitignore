@@ -7,6 +7,7 @@ captures/
 extension/dist/
 config/organizers.json
 config/person_links.json
+config/rep_signals.json
 data/
 review/
 
@@ -18,4 +19,5 @@ events/*/data/
 events/*/fixtures/
 events/*/config/organizers.json
 events/*/config/person_links.json
+events/*/config/rep_signals.json
 events/current
