@@ -99,9 +99,11 @@ const status = (text: string) => chrome.storage.session.set({ pull_status: `${ne
 /** Every pull's outcome, overwritten each time: times, counts and channel errors, never content or the session, so
  *  a pull that found nothing new still leaves a record outside the browser (live check, 2026-11-07). */
 const PULL_STATUS_FILE = "hackrecon/pull-status.json";
+/** Every hand-off from a Slack tab, overwritten each time: when, which team, and what the worker did. No token. */
+const HANDOFF_STATUS_FILE = "hackrecon/handoff-status.json";
 
 async function download(path: string, text: string): Promise<string | null> {
-  if ((path !== PULL_STATUS_FILE && !SYNC_FILE.test(path)) || path.includes("..")) return `${path}: refused: not a sync file`;
+  if ((path !== PULL_STATUS_FILE && path !== HANDOFF_STATUS_FILE && !SYNC_FILE.test(path)) || path.includes("..")) return `${path}: refused: not a sync file`;
   for (const part of splitParts(path, new TextEncoder().encode(text))) {
     try {
       await chrome.downloads.download({ url: `data:application/json;base64,${base64(part.bytes)}`, filename: part.name, conflictAction: "overwrite", saveAs: false });
@@ -183,12 +185,20 @@ async function ensureAlarm(dueMs: number): Promise<void> {
  *  load, so pulls resume after an extension reload or a browser restart without a click. Memory only. */
 async function takeSession(s: SlackSession): Promise<void> {
   const { slack } = (await chrome.storage.session.get("slack")) as { slack?: SlackSession };
-  if (slack?.token !== s.token || slack.origin !== s.origin) await chrome.storage.session.set({ slack: { token: s.token, origin: s.origin, team: s.team, workspace: s.workspace } });
+  const restored = slack?.token !== s.token || slack.origin !== s.origin;
+  if (restored) await chrome.storage.session.set({ slack: { token: s.token, origin: s.origin, team: s.team, workspace: s.workspace } });
   const { last_pull_at } = (await chrome.storage.local.get("last_pull_at")) as { last_pull_at?: number };
   const due = pullDue(last_pull_at, Date.now(), PULL_EVERY_MIN * 60_000);
-  if (due > 0) return ensureAlarm(due);
+  const hadAlarm = !!(await chrome.alarms.get(ALARM));
+  const record = (pull: string) =>
+    download(HANDOFF_STATUS_FILE, JSON.stringify({ at: new Date().toISOString(), team: s.team, workspace: s.workspace, session: restored ? "restored" : "already held", alarm: hadAlarm ? "kept" : "restored", pull }, null, 2));
+  if (due > 0) {
+    await ensureAlarm(due);
+    return void (await record(`next in ${Math.round(due / 1000)} s`));
+  }
   await chrome.alarms.clear(ALARM);
   await ensureAlarm(PULL_EVERY_MIN * 60_000);
+  await record("now");
   await runPull("handoff");
 }
 
