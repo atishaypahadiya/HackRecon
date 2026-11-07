@@ -186,7 +186,9 @@
   .x { width: 44px; height: 44px; flex: none; border-radius: 10px; font-size: 24px; line-height: 1; color: var(--muted); }
   .x:hover { background: var(--ghost); color: var(--text); }
   .db { overflow: auto; padding: 4px 24px 40px; overscroll-behavior: contain; }
-  .db h3 { font-size: 12px; font-weight: 650; letter-spacing: .04em; color: var(--muted); margin: 24px 0 0; text-transform: uppercase; }
+  .db h3 { font-size: 13px; font-weight: 650; color: var(--muted); margin: 24px 0 0; }
+  .db h3 + .item { padding-top: 8px; }
+  .db h3 + .item > p:first-child { margin-top: 0; }
   .item { padding: 16px 0; border-top: 1px solid var(--line); }
   .db h3 + .item, .db > .item:first-child { border-top: 0; }
   .item .acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 0; }
