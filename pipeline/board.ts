@@ -15,6 +15,8 @@ import {  } from "./event.ts";
 export const BOARD_PAGE = new URL("../board/index.html", import.meta.url).pathname;
 /** Inlined into the page at `<!-- prefill.js -->` (the CSP allows inline scripts only). */
 export const BOARD_PREFILL_JS = new URL("../board/prefill.js", import.meta.url).pathname;
+/** Inlined at `<!-- live.js -->`: Plan's live updates (D5). */
+export const BOARD_LIVE_JS = new URL("../board/live.js", import.meta.url).pathname;
 /** Self-hosted (CSP font-src 'self'), OFL texts beside them; see DESIGN.md. Only these names are served. */
 export const BOARD_FONT_DIR = new URL("../board/fonts/", import.meta.url).pathname;
 export const BOARD_FONTS = ["manrope.woff2", "atkinson-hyperlegible-mono.woff2"] as const;
