@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findTokens, scrubTokens, total } from "./domscrub.ts";
-import { EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "./event.ts";
+import { DEVPOST_FIXTURES_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "./event.ts";
 
 // Fake values shaped like the real ones; none of these is a live credential.
 const DIRTY = [
@@ -13,6 +13,16 @@ const DIRTY = [
   `Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345`,
   `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk`,
 ].join("\n");
+// Rails (Devpost) session values, in both attribute orders.
+const RAILS = [
+  `<meta name="csrf-token" content="Zm9vYmFyQ1NSRnRva2VuMTIzNDU2Nzg5MA==">`,
+  `<meta content="cXV1eENTUkZ0b2tlbjk4NzY1NDMyMQ==" name="csrf-token">`,
+  `<input type="hidden" name="authenticity_token" value="YXV0aGVudGljaXR5VG9rZW4xMjM0NTY=" autocomplete="off">`,
+  `<input value="c2Vzc2lvblZhbHVlOTg3NjU0MzIx" type="hidden" name="session_key">`,
+  `<a href="/software/x/like?authenticity_token=dG9rZW5JblVSTDEyMzQ1Njc4OQ&amp;y=1">like</a>`,
+  `document.cookie = "_devpost_session=c2Vzc2lvbkNvb2tpZTEyMzQ1Njc4OTA; path=/"`,
+  `{"csrfToken":"anNvbkNTUkZ0b2tlbjEyMzQ1Njc4OTA="}`,
+].join("\n");
 
 describe("scrubTokens", () => {
   test("strips every kind and leaves nothing a second scan finds", () => {
@@ -20,6 +30,12 @@ describe("scrubTokens", () => {
     expect(total(found)).toBeGreaterThanOrEqual(6);
     expect(total(findTokens(html))).toBe(0);
     for (const v of ["xoxc-1111", "xoxd-AbCd", "xoxe-0123", "abcdefghijklmnopqrstuvwxyz012345", "eyJhbGci", "0123456789abcdef01"]) expect(html).not.toContain(v);
+  });
+  test("Devpost: the csrf meta, authenticity_token fields and params, session cookies and JSON tokens", () => {
+    const { html, found } = scrubTokens(RAILS);
+    expect(total(found)).toBe(7);
+    expect(total(findTokens(html))).toBe(0);
+    for (const v of ["Zm9vYmFy", "cXV1eENT", "YXV0aGVu", "c2Vzc2lvblZh", "dG9rZW5J", "c2Vzc2lvbkNv", "anNvbkNT"]) expect(html).not.toContain(v);
   });
   test("leaves Slack markup the parser reads alone", () => {
     const html = `<div data-qa="message_container" data-msg-ts="1761300001.000100"><a href="https://calhacks.slack.com/archives/C0/p1761300001000100?thread_ts=1761300000.000100&cid=C0">3 replies</a></div>`;
@@ -29,6 +45,15 @@ describe("scrubTokens", () => {
 });
 
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
+const DEVPOST_DIR = join(EVENTS_DIR, "calhacks-13", DEVPOST_FIXTURES_DIR);
+describe.skipIf(!existsSync(DEVPOST_DIR))("saved Devpost samples carry no session values", () => {
+  test("every sample scans clean", () => {
+    const dirty = readdirSync(DEVPOST_DIR)
+      .filter((f) => f.endsWith(".html"))
+      .filter((f) => total(findTokens(readFileSync(join(DEVPOST_DIR, f), "utf8"))) > 0);
+    expect(dirty).toEqual([]);
+  });
+});
 describe.skipIf(!existsSync(DIR))("saved DOM samples carry no session tokens", () => {
   test("every sample scans clean (run `bun run hr scrub-dom` if this fails)", () => {
     const dirty = readdirSync(DIR)

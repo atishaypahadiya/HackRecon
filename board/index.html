@@ -1183,46 +1183,54 @@ async function readPlan(input, on, signal, stale = () => false) {
 }
 
 /* D5 live updates: when a sync changes what Plan reads (/plan/meta's version), the plan is rebuilt off screen and
-   compared (board/live.js). New rows go last, changed rows keep their place, both marked; nothing reorders until
-   "Show N updates". Urgent changes take the Next for you line at once. Any failed section keeps what's shown. */
-async function stagePlan(oldMeta) {
-  if (!P.input || P.sec.tracks !== "ok") return;
-  const seq = P.seq, res = { tracks: null, booths: null, credits: null, sessions: null, people: null };
-  let gaps = P.gaps, failed = false;
+   compared (board/live.js HRLive.check). New rows go last, changed rows keep their place, both marked; nothing
+   reorders until "Show N updates". Urgent changes take the Next for you line at once. A failed rebuild keeps what's
+   shown. */
+const mergeUrgent = (fresh) => [...fresh, ...P.live.urgent.filter((u) => !fresh.some((x) => x.key === u.key))];
+/** The plan for the saved input, read whole and off screen; null if any section failed or a newer plan started. */
+async function loadStaged(seq) {
+  const res = { tracks: null, booths: null, credits: null, sessions: null, people: null, gaps: P.gaps };
+  let failed = false;
   const on = (e) => {
     if (e.section === "done") return;
     if (e.error) failed = true;
-    else if (e.section === "gaps") gaps = e;
+    else if (e.section === "gaps") res.gaps = e;
     else res[e.section] = e.section === "credits" || e.section === "sessions" || e.section === "people" ? e : e[e.section];
   };
-  try { await readPlan(P.input, on, undefined, () => seq !== P.seq); } catch { return; }
-  if (seq !== P.seq || failed || !res.tracks) return;
-  const d = HRLive.diff(P.res, res);
-  const urgent = HRLive.urgent(d, oldMeta, P.meta, nowMs());
-  if (!d.count && !d.removed.length && !urgent.length) return;
-  for (const r of d.added) P.live.marks.set(`${r.section}:${r.key}`, "New");
-  for (const r of d.changed) {
-    const k = `${r.section}:${r.key}`;
-    P.live.marks.set(k, "Changed");
-    if (!P.live.was.has(k)) P.live.was.set(k, liveItem(P.res, r.section, r.key));
+  await readPlan(P.input, on, undefined, () => seq !== P.seq);
+  return seq !== P.seq || failed || !res.tracks ? null : res;
+}
+async function liveTick() {
+  const seq = P.seq;
+  const r = await HRLive.check({
+    meta: P.meta,
+    getMeta: () => fetch("/plan/meta", { cache: "no-store" }).then((x) => x.json()),
+    onMeta: (n, du) => {
+      P.meta = n;
+      P.live.urgent = mergeUrgent(du);
+      paintNext();
+      if (P.input) paintResults();
+    },
+    shown: () => (P.input && P.sec.tracks === "ok" && seq === P.seq ? P.res : null),
+    loadPlan: () => loadStaged(seq),
+    nowMs,
+  });
+  const u = r?.update;
+  if (!u || seq !== P.seq) return;
+  for (const m of u.marks) {
+    P.live.marks.set(m.key, m.mark);
+    if (m.was && !P.live.was.has(m.key)) P.live.was.set(m.key, m.was);
   }
-  P.live.next = res;
-  P.live.n += d.count + d.removed.length;
-  P.live.urgent = [...urgent, ...P.live.urgent.filter((u) => !urgent.some((x) => x.key === u.key))];
-  P.res = HRLive.present(P.res, res);
-  P.gaps = gaps;
+  P.live.next = u.next;
+  P.live.n += u.diff.count + u.diff.removed.length;
+  P.live.urgent = mergeUrgent(u.urgent);
+  P.res = u.present;
+  P.gaps = u.next.gaps;
   paintResults();
   paintNext();
   paintUpdates();
   // D11: one combined announcement per sync, never one per item.
-  if (d.count) $("say").textContent = `${plural(d.count, "update")} to your plan.`;
-}
-/** The row a key names in a plan result (for old → new). */
-function liveItem(res, section, key) {
-  if (section === "tracks") return res.tracks?.find((t) => t.track_id === key);
-  if (section === "credits") return res.credits?.credits.find((c) => c.offer_id === key);
-  if (section === "sessions") return res.sessions?.sessions.find((x) => `${x.source_url}|${x.sponsor}` === key);
-  return res.people?.people.flatMap((p) => p.reps.map((r) => ({ ...r, sponsor: p.sponsor }))).find((r) => `${r.sponsor}|${r.person}` === key);
+  if (u.diff.count) $("say").textContent = `${plural(u.diff.count, "update")} to your plan.`;
 }
 function paintUpdates() {
   $("pupd").hidden = !P.live.next || !P.live.n;
@@ -1531,19 +1539,7 @@ fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((m) => {
   paintNext();
   setInterval(paintNext, 60000);
   // D5: a sync changes /plan/meta's version; Plan is rebuilt off screen and the differences shown.
-  setInterval(() => {
-    fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((n) => {
-      if (!P.meta || n.version === P.meta.version) return;
-      const old = P.meta;
-      P.meta = n;
-      // A deadline moved earlier is urgent with or without a plan.
-      const du = HRLive.urgent({ added: [], changed: [], removed: [], count: 0 }, old, n, nowMs());
-      P.live.urgent = [...du, ...P.live.urgent.filter((u) => !du.some((x) => x.key === u.key))];
-      paintNext();
-      if (P.input) paintResults();
-      stagePlan(old);
-    }).catch(() => {});
-  }, 60000);
+  setInterval(() => liveTick().catch(() => {}), 60000);
   if (P.input) runPlan();
 }).catch(() => { $("pi-body").innerHTML = `<p class="pstate">Couldn't load this event's canon.</p>`; });
 

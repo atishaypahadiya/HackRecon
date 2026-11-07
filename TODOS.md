@@ -120,7 +120,7 @@ Now task P1b in docs/designs/hackrecon-v2.md, ahead of P2–P6 (user 2026-11-06)
 
 **Why:** What you entered on Devpost is the truth; ticking it again in Ship is a second place to get wrong.
 
-**Blocked on:** the page structure. The prize checkboxes are on the logged-in submission form (steps: Manage team, Project overview, Project details, Additional info, Submit), on devpost.com, not the event subdomain the background worker is limited to. Needs one read of a real submission form (the user's own Cal Hacks submission would do) before a parser and the URL rule are written. Ship's chooser already lists every Devpost track and pre-ticks nothing.
+**Status (2026-11-07):** the read-only visit and the scrubbed sample are built (`pipeline/devpostdraft.ts`, `extension/src/devpost-snap.ts`); the user runs Sync once. Next: write the selected-prizes parser and its test from `fixtures/devpost/<slug>.submission.html`, then prefill Ship's chooser labeled "from your Devpost draft". If the visit log shows a hop rule missed Devpost's real links, fix the rule from the links it logged.
 
 ### Gap check: find counter-evidence for requirements that name no product
 

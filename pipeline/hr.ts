@@ -26,6 +26,7 @@ import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, T
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
 import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
+import { scrubDevpostHtml } from "./devpostdraft.ts";
 import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
 import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
@@ -75,6 +76,7 @@ import {
   CANON_JUDGE_PATH,
   CANON_PATH,
   CANON_HISTORY_PATH,
+  DEVPOST_FIXTURES_DIR,
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
@@ -110,7 +112,7 @@ import {
   takeEventArg,
   useEvent,
 } from "./event.ts";
-import { scrubTokens, total } from "./domscrub.ts";
+import { findTokens, scrubTokens, total } from "./domscrub.ts";
 import { BUNDLE_DIR, summarizeSync, wholeFiles, type SyncLogLite } from "./syncbundle.ts";
 import { threadRunFromRaw, type ThreadRaw } from "../extension/src/thread.ts";
 import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
@@ -1404,6 +1406,32 @@ async function sync(args: string[]): Promise<number> {
       renameSync(path, join(inbox, "ingested", `${Date.now()}-${f}`));
       ingested.push({ ...d, file: f, snapshot: undefined });
       console.log(`extension page   ${snap.url}  ${d.action}: ${d.detail}`);
+    }
+  }
+
+  // The user's own submission, read by the extension's worker (devpostdraft.ts): scrubbed again here, and refused if
+  // a token scan still finds anything.
+  const draftInbox = join(homedir(), "Downloads", "hackrecon", "devpost");
+  if (existsSync(draftInbox)) {
+    mkdirSync(DEVPOST_FIXTURES_DIR, { recursive: true });
+    mkdirSync(join(draftInbox, "ingested"), { recursive: true });
+    for (const f of readdirSync(draftInbox).filter((f) => /^[a-z0-9-]+\.(submission\.html|visit\.json)$/.test(f))) {
+      const path = join(draftInbox, f);
+      if (f.endsWith(".html")) {
+        const { html, stripped } = scrubDevpostHtml(readFileSync(path, "utf8"));
+        const left = total(findTokens(html));
+        if (left) {
+          console.error(`devpost ${f}: ${left} session value${left === 1 ? "" : "s"} survived scrubbing; not saved`);
+          continue;
+        }
+        writeFileSync(join(DEVPOST_FIXTURES_DIR, f), html);
+        console.log(`devpost sample    ${f}: saved to ${DEVPOST_FIXTURES_DIR}/${stripped ? ` (stripped ${stripped} more on ingest)` : ""}`);
+      } else {
+        const v = JSON.parse(readFileSync(path, "utf8")) as { result?: string; sample?: { url: string } | null; pages?: unknown[] };
+        writeFileSync(join(DEVPOST_FIXTURES_DIR, f), JSON.stringify(v, null, 2));
+        console.log(`devpost visit     ${f}: ${v.pages?.length ?? 0} pages, ${v.result}${v.sample ? `; sample from ${v.sample.url}` : "; no sample"}`);
+      }
+      renameSync(path, join(draftInbox, "ingested", `${Date.now()}-${f}`));
     }
   }
 
