@@ -1,4 +1,4 @@
-// Real Slack DOM samples (fixtures/slack-dom/*.html, gitignored: they hold workspace data),
+// Real Cal Hacks Slack DOM samples (events/calhacks-13/fixtures/slack-dom/*.html, gitignored: they hold workspace data),
 // checked against the slackdump export rather than hand-typed expectations.
 // How to save samples: extension/README.md.
 import { describe, expect, test } from "bun:test";
@@ -10,7 +10,6 @@ import { parseRows } from "./parse.ts";
 import { channelFromPermalink, tsFromAttr, tsFromPermalink } from "./permalink.ts";
 import { SEL } from "./selectors.ts";
 import {
-  DEFAULT_EXPORT_DIR,
   expectedAuthorNames,
   isTopLevel,
   loadExport,
@@ -19,13 +18,15 @@ import {
   rowClass,
   type ExportMessage,
 } from "../../pipeline/export.ts";
+import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
-const DIR = join(import.meta.dir, "../../fixtures/slack-dom");
+const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
-const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html")).sort() : [];
+// Channel views only: thread-pane samples saved by "Sync this event" (`--thread-`) are checked in thread.fixtures.test.ts.
+const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".html") && !f.includes("--thread-")).sort() : [];
 
-test("fixtures/slack-dom has samples", () => {
-  if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "Saving DOM samples"`);
+test("calhacks-13 fixtures/slack-dom has samples", () => {
+  if (!files.length) throw new Error(`no .html samples in ${DIR}; see extension/README.md "DOM samples"`);
 });
 
 type Parsed = { file: string; doc: Document; rows: RawRow[]; channelId: string; byTs: Map<string, ExportMessage> };
@@ -149,4 +150,20 @@ describe("sample coverage (each case must appear in at least one sample)", () =>
   test("a channel-start header", () => expect(has(({ r }) => r.kind === "channel_start")).toBe(true));
   test("a labeled link serialized as `label <href>`", () =>
     expect(has(({ r }) => r.kind === "message" && r.links.some((l) => r.text.includes(`<${l}>`)))).toBe(true));
+});
+
+describe("@-mentions carry the export's user IDs", () => {
+  test("every mention ID parsed from a sample appears as <@ID> in that post's export text", () => {
+    if (!exp) return;
+    let checked = 0;
+    for (const p of parsed)
+      for (const r of p.rows) {
+        if (r.kind !== "message" || !r.mentions?.length) continue;
+        const e = p.byTs.get(r.ts);
+        if (!e) continue;
+        for (const m of r.mentions) expect(e.text ?? "").toContain(`<@${m.id}>`);
+        checked++;
+      }
+    expect(checked).toBeGreaterThan(0);
+  });
 });

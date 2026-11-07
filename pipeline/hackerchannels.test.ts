@@ -1,0 +1,58 @@
+import { describe, expect, test } from "bun:test";
+import { countAuthors, hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
+import { SCHEMA_VERSION, parseAuthorsCaptureFile } from "./schema.ts";
+
+describe("authors-only capture of hacker-only channels", () => {
+  test("by name unless event.json lists them", () => {
+    expect(hackerOnlyChannels(["1-team-formation", "1-introductions", "spons-apify", "intro-to-hackathons"])).toEqual(["1-introductions", "1-team-formation"]);
+    expect(hackerOnlyChannels(["1-team-formation", "find-a-team"], ["find-a-team"])).toEqual(["find-a-team"]);
+  });
+
+  test("reduced to sender IDs and counts; bots skipped; hidden senders counted, not guessed", () => {
+    const r = countAuthors([{ author_id: "U2" }, { author_id: "U1" }, { author_id: "U2" }, { author_kind: "bot", author_id: "B1" }, {}]);
+    expect(r).toEqual({ authors: [{ id: "U1", posts: 1 }, { id: "U2", posts: 2 }], unidentified: 1 });
+  });
+
+  const file = {
+    schema_version: SCHEMA_VERSION,
+    kind: "authors",
+    source: "extension",
+    run_id: "r",
+    channel_id: "C1",
+    channel_name: "1-team-formation",
+    started_at: "",
+    finished_at: "",
+    stop_reason: "channel_start",
+    threads: { parents: 3, read: 2 },
+    authors: [{ id: "U0Z7A0B9239", posts: 2 }],
+    unidentified: 0,
+    self_ids: [{ id: "U0Z7A0B9239", sponsor: "Microsoft", match: true }],
+  };
+  test("the parser accepts exactly those fields", () => {
+    expect(parseAuthorsCaptureFile(file).authors).toHaveLength(1);
+  });
+  test("any text, name or extra field is refused", () => {
+    expect(() => parseAuthorsCaptureFile({ ...file, messages: [] })).toThrow("not an authors-only field");
+    expect(() => parseAuthorsCaptureFile({ ...file, authors: [{ id: "U0Z7A0B9239", posts: 1, name: "Sam" }] })).toThrow("expected only id and posts");
+    expect(() => parseAuthorsCaptureFile({ ...file, authors: [{ id: "looking for a team!", posts: 1 }] })).toThrow("expected a Slack user ID");
+    expect(() => parseAuthorsCaptureFile({ ...file, threads: { parents: 1, read: 1, text: "hi" } })).toThrow("expected only parents and read");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0Z7A0B9239", sponsor: "Microsoft", match: true, phrase: "I am a recruiter with Microsoft" }] })).toThrow("expected only id, sponsor and match");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0Z7A0B9239", sponsor: "I am a recruiter with Microsoft, DM me", match: true }] }, "a", new Set(["Microsoft"]))).toThrow("not a sponsor in sponsors.json");
+    expect(() => parseAuthorsCaptureFile({ ...file, self_ids: [{ id: "U0Z7A0B9239", sponsor: "Microsoft", match: "yes" }] })).toThrow("expected true");
+  });
+
+  test("2b in the page: user ID, sponsor and the flag, once per person and sponsor; no text", () => {
+    const sp = [{ id: "Microsoft", names: ["Microsoft", "Azure"] }, { id: "Apify", names: ["Apify"] }];
+    const r = selfIdFlags(
+      [
+        { author_id: "U2", text: "Hello everyone! My name is Sam and I am a recruiter with Microsoft!" },
+        { author_id: "U2", text: "I'm Sam with Microsoft, come find me" },
+        { author_id: "U3", text: "Looking for a team! We're using Apify and Azure" },
+        { author_id: "B1", author_kind: "bot", text: "I'm Bot with Apify" },
+      ],
+      sp,
+    );
+    expect(r).toEqual([{ id: "U2", sponsor: "Microsoft", match: true }]);
+    expect(JSON.stringify(r)).not.toContain("recruiter");
+  });
+});

@@ -4,9 +4,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { LoadedCapture } from "./captures.ts";
 import type { Message, Run } from "./schema.ts";
+import { MESSAGES_PATH, RUNS_PATH } from "./event.ts";
 
-export const RUNS_PATH = "data/runs.json";
-export const MESSAGES_PATH = "data/messages.json";
 
 /** Builds the run record and the run's messages (re-stamped with its run_id), channels in `channelOrder`. */
 export function buildRun(runId: string, loaded: LoadedCapture[], channelOrder: string[]): { run: Run; messages: Message[] } {

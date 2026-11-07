@@ -4,18 +4,18 @@
 // reminders, re-posts and cross-posts of one offer merge; different offers from one sponsor stay apart.
 // Posts labeled not a credit never get here (they're dropped). Blind to Haiku, like `hr prelabel`: this
 // module reads the sheet's labels, the capture and config, never the classifier's outputs.
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
-import { OUTPUT_RETRIES, scheduleLines, type ClassifyInput, type EventConfig } from "./classify.ts";
+import { scheduleLines, type ClassifyInput, type EventConfig } from "./classify.ts";
+import { callChecked } from "./model.ts";
 import { JUDGE_EFFORT, JUDGE_MODEL } from "./prelabel.ts";
 import { AMOUNT_BASES, DEADLINE_STATUSES } from "./schema.ts";
-import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
+import type { Usage } from "./usage.ts";
 
 export const GROUP_MODEL = JUDGE_MODEL;
 export const GROUP_EFFORT = JUDGE_EFFORT;
 /** One request holds every credit post; thinking counts toward max_tokens, so it streams. */
 export const GROUP_MAX_TOKENS = 48000;
-export const GROUP_PATH = "review/offers.json";
 
 export interface Offer {
   sponsor: string;
@@ -234,50 +234,15 @@ export async function groupOffers(
   links: Set<string>,
   texts: Map<string, string> = new Map(),
 ): Promise<({ offers: Offer[]; not_offers: NotOffer[] } | { error: string }) & { usage: Usage; calls: number }> {
-  let usage = NO_USAGE;
-  let reason = "";
-  const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: request }];
-  for (let attempt = 1; attempt <= 1 + OUTPUT_RETRIES; attempt++) {
-    let res: Anthropic.Messages.Message;
-    try {
-      res = await client.messages
-        .stream({
-          model: GROUP_MODEL,
-          max_tokens: GROUP_MAX_TOKENS,
-          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-          output_config: { effort: GROUP_EFFORT, format: { type: "json_schema", schema: GROUP_SCHEMA } },
-          messages,
-        })
-        .finalMessage();
-    } catch (e) {
-      if (e instanceof Anthropic.APIError) return { error: `API ${e.status ?? "connection"}: ${e.message}`, usage, calls: attempt };
-      throw e;
-    }
-    usage = addUsage(usage, res.usage);
-    if (res.stop_reason === "refusal") return { error: "refusal", usage, calls: attempt };
-    if (res.stop_reason === "max_tokens") {
-      reason = "hit max_tokens";
-      continue;
-    }
-    const text = res.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") {
-      reason = "no text block";
-      continue;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text.text);
-    } catch {
-      reason = "output is not JSON";
-      continue;
-    }
-    const checked = checkGroups(parsed, ids, links, texts);
-    if ("error" in checked) {
-      reason = checked.error;
-      messages.push({ role: "assistant", content: res.content }, { role: "user", content: `That output failed validation: ${reason}. Return the corrected JSON for the same posts.` });
-      continue;
-    }
-    return { ...checked, usage, calls: attempt };
-  }
-  return { error: reason, usage, calls: 1 + OUTPUT_RETRIES };
+  const r = await callChecked(client, {
+    model: GROUP_MODEL,
+    effort: GROUP_EFFORT,
+    max_tokens: GROUP_MAX_TOKENS,
+    system,
+    schema: GROUP_SCHEMA,
+    request,
+    check: (parsed) => checkGroups(parsed, ids, links, texts),
+    retry: (reason) => `That output failed validation: ${reason}. Return the corrected JSON for the same posts.`,
+  });
+  return "value" in r ? { ...r.value, usage: r.usage, calls: r.calls } : r;
 }

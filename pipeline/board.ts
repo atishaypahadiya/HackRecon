@@ -1,17 +1,21 @@
 // `hr board`: the data the board renders (data/board.json, workspace data, gitignored) and the local
 // server for board/index.html. Offers come only from the Opus grouping pass (`hr group`); the board
 // never shows a number it can't link to source posts. Demo mode (D18, amended 2026-10-27) hides author
-// names only: offer text is the evidence, so excerpts are shown, with people's names in the text
-// redacted the same way as the classifier input.
+// names only: offer text is the evidence, so excerpts are shown as posted (user 2026-11-07: no name
+// redaction in quotes).
 import type { EventConfig } from "./classify.ts";
 import type { Offer } from "./group.ts";
 import type { Sponsors } from "./pool.ts";
-import { buildNameList, compileRedactor } from "./redact.ts";
-import type { PosterRole } from "./roles.ts";
+import { likelySince, signalLabels, staffSince, type RepIndex } from "./reps.ts";
+import { sponsorSignals, type A5Signal, type PosterRole } from "./roles.ts";
 import type { Message } from "./schema.ts";
+import {  } from "./event.ts";
 
-export const BOARD_DATA_PATH = "data/board.json";
 export const BOARD_PAGE = new URL("../board/index.html", import.meta.url).pathname;
+/** Inlined into the page at `<!-- prefill.js -->` (the CSP allows inline scripts only). */
+export const BOARD_PREFILL_JS = new URL("../board/prefill.js", import.meta.url).pathname;
+/** Inlined at `<!-- live.js -->`: Plan's live updates (D5). */
+export const BOARD_LIVE_JS = new URL("../board/live.js", import.meta.url).pathname;
 /** Self-hosted (CSP font-src 'self'), OFL texts beside them; see DESIGN.md. Only these names are served. */
 export const BOARD_FONT_DIR = new URL("../board/fonts/", import.meta.url).pathname;
 export const BOARD_FONTS = ["manrope.woff2", "atkinson-hyperlegible-mono.woff2"] as const;
@@ -70,9 +74,54 @@ export interface BoardData {
   offers: BoardOffer[];
   frames: number[];
   reps: BoardRep[];
+  /** Per sponsor channel, how many Slack accounts stand behind each rep candidate, aligned with that rep's
+   *  candidate_first (people.ts: one person with two accounts is one candidate). Kept out of `reps`, whose shape
+   *  D14 fingerprints. */
+  rep_accounts: Record<string, number[]>;
+  /** Per sponsor channel, what each rep candidate matched (reps.ts signalLabels), aligned with candidate_first.
+   *  Signal 3 is left out here (Plan shows it): its counts depend on the replay's time. */
+  rep_signals: Record<string, string[][]>;
+  /** Per sponsor channel, when each candidate first named the sponsor as their employer (reps.ts signal 2b), aligned
+   *  the same way; null if never. A time, so a replay shows it only once posted; no phrase, which can hold a name. */
+  rep_self: Record<string, (number | null)[]>;
+  /** Per sponsor channel, likely staff (reps.ts 2b or signal 3) who aren't sponsor-side: shown apart, never counted as
+   *  reps, never given authority. `first` is when the signal first holds (a staff post and an answer both in);
+   *  posts and answers are their times, so a replay counts only what was posted by then. Never names. */
+  rep_likely: Record<string, { first: number; posts: number[]; answers: number[]; staff: number | null; self: number | null; hacker: number }[]>;
   /** The organizers' own deadlines from config/event.json, superseded entries left out. */
   event_deadlines: BoardEventDeadline[];
   basis: { grouping: string; model: string; written_at: string };
+  /** v1's positional ids (`o<n>`) → today's, so done marks saved before OV5 migrate once in the browser. */
+  v1_ids?: Record<string, string>;
+}
+
+/** OV5: an offer's id is its first post: `o-<channel name>-<ts digits>`, the ts as the permalink writes it.
+ *  Stable when offers are regrouped or reordered; a second offer from the same first post gets `~2`. */
+export function offerIds(firsts: { channel: string; ts: string }[]): string[] {
+  const seen = new Map<string, number>();
+  return firsts.map((f) => {
+    const base = `o-${f.channel}-${f.ts.replace(".", "")}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    return n === 1 ? base : `${base}~${n}`;
+  });
+}
+
+const firstKey = (o: Pick<BoardOffer, "posts">) => {
+  const p = o.posts.reduce((a, b) => (b.ts < a.ts ? b : a));
+  return `${p.channel} ${p.ts}`;
+};
+
+/** v1 id → today's id, from the board.json this build replaces: carried forward when it already has the map,
+ *  else matched by first post when its ids are still positional (v1). Offers with no match are left out. */
+export function v1Ids(prev: Pick<BoardData, "offers" | "v1_ids"> | null, offers: BoardOffer[]): Record<string, string> {
+  if (!prev) return {};
+  const ids = new Set(offers.map((o) => o.id));
+  if (prev.v1_ids) return Object.fromEntries(Object.entries(prev.v1_ids).filter(([, id]) => ids.has(id)));
+  const byFirst = new Map(offers.filter((o) => o.posts.length).map((o) => [firstKey(o), o.id]));
+  const out: Record<string, string> = {};
+  for (const o of prev.offers) if (/^o\d+$/.test(o.id) && o.posts.length && byFirst.has(firstKey(o))) out[o.id] = byFirst.get(firstKey(o))!;
+  return out;
 }
 
 /** A Slack permalink's message time: .../p1792918203114859 is ts 1792918203.114859. */
@@ -176,21 +225,30 @@ export function boardData(o: {
   sponsors: Sponsors;
   offers: Offer[];
   role: (m: Message) => PosterRole;
+  /** Slack id → its person (people.ts); without it every account is its own person. */
+  person?: (id: string) => string;
+  /** reps.ts evidence: signals to show per rep, and likely staff. */
+  reps?: RepIndex;
   basis: BoardData["basis"];
   /** Permalinks for sheet rows the capture missed. */
   permalinks?: Map<string, string>;
 }): BoardData {
   const byId = new Map(o.messages.map((m) => [m.id, m]));
-  const redact = compileRedactor(buildNameList(new Set(o.messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), o.sponsors));
   const posts = o.messages.filter((m) => !m.subtype && m.author_kind !== "bot").map((m) => Number(m.ts)).sort((a, b) => a - b);
+  const ids = offerIds(
+    o.offers.map((f) => {
+      const id = f.posts.reduce((a, b) => (Number(b.split(":")[1]) < Number(a.split(":")[1]) ? b : a));
+      return { channel: byId.get(id)?.channel_name ?? "", ts: id.split(":")[1] ?? "" };
+    }),
+  );
   const offers: BoardOffer[] = o.offers.map((f, i) => {
     const ps = f.posts.map((id) => {
       const m = byId.get(id);
       return { ts: Number(m?.ts ?? id.split(":")[1]), permalink: m?.permalink ?? o.permalinks?.get(id) ?? "", channel: m?.channel_name ?? "" };
     });
-    const texts = f.posts.map((id) => byId.get(id)).filter((m): m is Message => !!m).map((m) => ({ raw: m.text, plain: redact(plainText(m.text)).text }));
+    const texts = f.posts.map((id) => byId.get(id)).filter((m): m is Message => !!m).map((m) => ({ raw: m.text, plain: plainText(m.text) }));
     return {
-      id: `o${i + 1}`,
+      id: ids[i]!,
       sponsor: f.sponsor === "event" ? o.event : f.sponsor,
       title: f.title,
       value_short: f.value_short,
@@ -207,19 +265,60 @@ export function boardData(o: {
       posts: ps.sort((a, b) => a.ts - b.ts),
     };
   });
+  const repAccounts: Record<string, number[]> = {};
+  const repSignals: Record<string, string[][]> = {};
+  const repSelf: Record<string, (number | null)[]> = {};
+  const repLikely: BoardData["rep_likely"] = {};
   const reps = Object.entries(o.sponsors)
     .filter(([ch, s]) => o.channels.includes(ch) && s.sponsor !== "event")
     .map(([ch, s]) => {
       const inCh = o.messages.filter((m) => m.channel_name === ch && !m.subtype && m.author_kind !== "bot");
+      // Keyed by person: a Slack id, or the ids people.ts links on hashed evidence. A rename never splits or merges a rep.
+      const person = o.person ?? ((id: string) => id);
       const firstBy = new Map<string, number>();
-      for (const m of inCh) if (o.role(m) === "sponsor-side") firstBy.set(m.author_name, Math.min(firstBy.get(m.author_name) ?? Infinity, Number(m.ts)));
+      const accounts = new Map<string, Set<string>>();
+      const a5 = new Map<string, Set<A5Signal>>();
+      const likelyFirst = new Map<string, number>();
+      for (const m of inCh) {
+        if (!m.author_id) continue;
+        const who = person(m.author_id);
+        if (o.role(m) !== "sponsor-side") {
+          const since = likelySince(o.reps?.signals.get(`${who}|${s.sponsor}`));
+          if (o.role(m) === "other" && o.reps?.likely.get(who)?.has(s.sponsor) && since !== null) likelyFirst.set(who, since);
+          continue;
+        }
+        firstBy.set(who, Math.min(firstBy.get(who) ?? Infinity, Number(m.ts)));
+        accounts.set(who, (accounts.get(who) ?? new Set()).add(m.author_id));
+        for (const x of sponsorSignals(m, s)) a5.set(who, (a5.get(who) ?? new Set()).add(x));
+      }
+      const ranked = [...firstBy].sort((a, b) => a[1] - b[1]);
+      repAccounts[ch] = ranked.map(([who]) => accounts.get(who)!.size);
+      const fileSignals = (who: string) => o.reps?.signals.get(`${who}|${s.sponsor}`) ?? [];
+      const selfSince = (who: string) => {
+        const x = fileSignals(who).find((x) => x.kind === "self-identified");
+        return x?.kind === "self-identified" && x.posts.length ? Math.min(...x.posts.map((e) => e.ts)) : null;
+      };
+      repSignals[ch] = ranked.map(([who]) => signalLabels([...(a5.get(who) ?? [])], fileSignals(who).filter((x) => x.kind === "email domain" || x.kind === "organizer mention" || x.kind === "hacker channels")));
+      repSelf[ch] = ranked.map(([who]) => selfSince(who));
+      repLikely[ch] = [...likelyFirst].sort((a, b) => a[1] - b[1]).map(([who, first]) => {
+        const l = fileSignals(who).find((x) => x.kind === "likely staff");
+        const h = fileSignals(who).find((x) => x.kind === "hacker channels");
+        return {
+          first,
+          posts: l?.kind === "likely staff" ? l.posts.map((e) => e.ts) : [],
+          answers: l?.kind === "likely staff" ? l.answers.map((e) => e.ts) : [],
+          staff: staffSince(fileSignals(who)),
+          self: selfSince(who),
+          hacker: h?.kind === "hacker channels" ? h.channels.reduce((n, c) => n + c.posts, 0) : 0,
+        };
+      });
       return {
         sponsor: s.sponsor,
         channel: ch,
         posts: inCh.length,
         offers: offers.filter((f) => f.posts.some((p) => p.channel === ch)).length,
         candidates: firstBy.size,
-        candidate_first: [...firstBy.values()].sort((a, b) => a - b),
+        candidate_first: ranked.map(([, t]) => t),
       };
     })
     .sort((a, b) => b.offers - a.offers || b.candidates - a.candidates || b.posts - a.posts);
@@ -232,6 +331,10 @@ export function boardData(o: {
     offers,
     frames: replayFrames(posts, offers, o.timezone),
     reps,
+    rep_accounts: repAccounts,
+    rep_signals: repSignals,
+    rep_self: repSelf,
+    rep_likely: repLikely,
     event_deadlines: eventDeadlines(o.schedule ?? []),
     basis: o.basis,
   };

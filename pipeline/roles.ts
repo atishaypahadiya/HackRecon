@@ -4,17 +4,17 @@ import { existsSync, readFileSync } from "node:fs";
 import type { SlackExport } from "./export.ts";
 import type { SponsorEntry } from "./pool.ts";
 import type { Message } from "./schema.ts";
+import { ORGANIZERS_PATH } from "./event.ts";
 
-export const ORGANIZERS_PATH = "config/organizers.json";
 
 export type PosterRole = "organizer" | "sponsor-side" | "other";
 
 const ORG_TAG = /\bcal\s*hacks\b/i;
 const ORG_TITLE = /director|exec|organi[sz]er|logistics/i;
 
+/** organizers.json is Slack user IDs only (user 2026-11-06): names change mid-event and aren't needed to match. */
 export interface Organizer {
   id: string;
-  name: string;
   why: string[];
 }
 
@@ -42,7 +42,7 @@ export function buildOrganizers(exp: SlackExport): Organizer[] {
       ORG_TAG.test(names) && "cal hacks tag",
       ORG_TITLE.test(u.profile?.title ?? "") && "title",
     ].filter((w): w is string => !!w);
-    return why.length ? [{ id: u.id, name: u.profile?.display_name || u.real_name || u.name || u.id, why }] : [];
+    return why.length ? [{ id: u.id, why }] : [];
   });
 }
 
@@ -53,15 +53,63 @@ export function loadOrganizerIds(path = ORGANIZERS_PATH): Set<string> {
 
 const norm = (s: string) => ` ${s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()} `;
 
-/** Organizer wins over sponsor-side. Sponsor-side: the name (bracket tag included) or inline title
- *  names the channel's sponsor or an alias, or the poster carries Slack's external-org badge.
- *  In event channels (0-announcements, 2-opportunities) any configured sponsor counts. */
-export function posterRole(m: Message, channel: SponsorEntry | undefined, organizerIds: Set<string>, all: SponsorEntry[] = []): PosterRole {
-  if ((m.author_id && organizerIds.has(m.author_id)) || ORG_TAG.test(m.author_name) || ORG_TITLE.test(m.author_title ?? "")) return "organizer";
+/** Why a post reads as sponsor-side (A5), strongest last: the name (bracket tag included) or inline title names the
+ *  channel's sponsor or an alias, or the poster carries Slack's external-org badge. In event channels
+ *  (0-announcements, 2-opportunities) any configured sponsor's name counts; the badge doesn't name a sponsor there. */
+export type A5Signal = "name or title" | "external badge";
+export function sponsorSignals(m: Message, channel: SponsorEntry | undefined, all: SponsorEntry[] = []): A5Signal[] {
   const event = !channel || channel.sponsor === "event";
   const candidates = event ? all.filter((s) => s.sponsor !== "event") : [channel];
   const who = norm(`${m.author_name} ${m.author_title ?? ""}`);
-  if (candidates.some((s) => [s.sponsor, ...s.aliases].some((n) => who.includes(norm(n))))) return "sponsor-side";
-  if (!event && m.author_external) return "sponsor-side";
-  return "other";
+  const out: A5Signal[] = [];
+  if (candidates.some((s) => [s.sponsor, ...s.aliases].some((n) => who.includes(norm(n))))) out.push("name or title");
+  if (!event && m.author_external) out.push("external badge");
+  return out;
+}
+
+/** Organizer wins over sponsor-side (sponsorSignals). */
+export function posterRole(m: Message, channel: SponsorEntry | undefined, organizerIds: Set<string>, all: SponsorEntry[] = []): PosterRole {
+  if ((m.author_id && organizerIds.has(m.author_id)) || ORG_TAG.test(m.author_name) || ORG_TITLE.test(m.author_title ?? "")) return "organizer";
+  return sponsorSignals(m, channel, all).length ? "sponsor-side" : "other";
+}
+
+/**
+ * Roles keyed by Slack user ID only (user 2026-11-06: display names change mid-event; a cohost rep's
+ * "LenaRose (Annapurna Labs)" became "LenaRose" between the Oct 27 capture and the Nov 6 sync).
+ * posterRole reads one post's signals (name tag, inline title, external badge). Here a signal seen on any of a
+ * user's posts holds for all of them: organizer everywhere; sponsor-side for that sponsor's channels, and in event
+ * channels. A post with no author_id gets no role ("other"): names alone never key a person. `person` maps an id to
+ * its person (people.ts links, built from hashed evidence, never names), so two accounts of one rep share signals.
+ * `confirmed` adds reps.ts's confirmed reps (email domain, organizer mention), person → sponsors. Likely staff
+ * (reps.ts signal 3) is never passed here: it grants no role, so no authority over links or offers.
+ */
+export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>, person: (id: string) => string = (id) => id, confirmed: Map<string, Set<string>> = new Map()): (m: Message) => PosterRole {
+  const all = Object.values(sponsors);
+  const organizer = new Set([...organizerIds].map(person));
+  const sponsorSide = new Set<string>();
+  const anySponsor = new Set<string>();
+  for (const [who, sps] of confirmed) {
+    for (const sp of sps) sponsorSide.add(`${person(who)}|${sp}`);
+    if (sps.size) anySponsor.add(person(who));
+  }
+  for (const m of messages) {
+    if (!m.author_id || m.author_kind === "bot") continue;
+    const ch = sponsors[m.channel_name];
+    const r = posterRole(m, ch, organizerIds, all);
+    const who = person(m.author_id);
+    if (r === "organizer") organizer.add(who);
+    if (r === "sponsor-side") {
+      sponsorSide.add(`${who}|${ch?.sponsor ?? "event"}`);
+      anySponsor.add(who);
+    }
+  }
+  return (m) => {
+    if (!m.author_id) return "other";
+    const who = person(m.author_id);
+    if (organizer.has(who)) return "organizer";
+    const ch = sponsors[m.channel_name];
+    const event = !ch || ch.sponsor === "event";
+    if (event ? anySponsor.has(who) : sponsorSide.has(`${who}|${ch.sponsor}`)) return "sponsor-side";
+    return "other";
+  };
 }

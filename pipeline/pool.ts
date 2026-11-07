@@ -22,6 +22,8 @@ export interface SponsorEntry {
   kind: string;
   aliases: string[];
   stretch?: boolean;
+  /** Email domains of the sponsor's staff (reps.ts signal 1: a profile email on one of these, or a subdomain). */
+  domains?: string[];
 }
 export type Sponsors = Record<string, SponsorEntry>;
 

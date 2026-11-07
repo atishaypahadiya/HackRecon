@@ -33,6 +33,13 @@ describe("serializeBody", () => {
     expect(r).toEqual({ text: "hi @Ada see @Bob", links: [] });
   });
 
+  test("a mention keeps its Slack user ID from data-member-id; the text is unchanged", () => {
+    const r = serializeBody(
+      body('ask <a class="c-member_slug" data-member-id="U0ZC363EB7D" href="/team/U0ZC363EB7D">@Charlie [Apify]</a> or <a data-member-id="not-an-id" href="/team/x">@x</a> at the booth'),
+    );
+    expect(r).toEqual({ text: "ask @Charlie [Apify] or @x at the booth", links: [], mentions: [{ id: "U0ZC363EB7D", label: "@Charlie [Apify]" }] });
+  });
+
   test("message permalinks count as links", () => {
     const p = "https://calhacks.slack.com/archives/C1/p1791591648310369";
     expect(serializeBody(body(`see <a href="${p}">this</a>`)).links).toEqual([p]);
@@ -127,5 +134,69 @@ describe("parseRows: non-posts and broadcasts from the day-1 capture", () => {
     acc.ingest(parseRows(pane([post({ ts: "1792819005.075629", sender: "Charlie [Cal Hacks]", href: `${W}/C0C7TCNCR1N/p1792819005075629`, body: "hi" })])));
     acc.ingest(parseRows(pane([post({ ts: "1792819005.075629", sender: "Charlie [Cal Hacks]" })])));
     expect(acc.finalize().messages.map((m) => m.ts)).toEqual(["1792819005.075629"]);
+  });
+});
+
+describe("headers whose author name Slack hadn't loaded (2026-11-06 sync)", () => {
+  test("an unknown header is not a grouped post: blank author, not the one above", async () => {
+    const { parseHTML } = await import("linkedom");
+    const { Accumulator } = await import("./accumulate.ts");
+    const row = (ts: string, head: string) =>
+      `<div class="c-virtual_list__item" data-item-key="${ts}"><div data-qa="message_container" data-msg-ts="${ts}"><div data-qa="message_content">${head}<a class="c-timestamp" data-ts="${ts}" href="https://w.slack.com/archives/C1/p${ts.replace(".", "")}?thread_ts=1792951566.402279&amp;cid=C1">t</a><div data-qa="message-text">hi ${ts}</div></div></div></div>`;
+    const html = `<div data-qa="message_pane">${row("1792954145.002549", '<span data-qa="message_sender"><button data-qa="message_sender_name">Alex Lane</button></span>')}${row("1792954221.441149", '<span class="c-missing_text c-missing_text--unknown"></span>')}${row("1792954250.000100", "")}</div>`;
+    const doc = parseHTML(`<html><body>${html}</body></html>`).document as unknown as Document;
+    const acc = new Accumulator();
+    acc.ingest(parseRows(doc, "https://app.slack.com/"));
+    const out = acc.finalize();
+    expect(out.messages.map((m) => m.sender.name)).toEqual(["Alex Lane", "", ""]);
+    expect(out.unresolvedAuthors).toEqual(["1792954221.441149", "1792954250.000100"]);
+  });
+
+  // Sync 2026-11-07: 70 posts and 59 replies were read while Slack still showed this placeholder (no name, no text).
+  const LOADING = '<span class="c-missing_text c-missing_text--unknown"></span>';
+  const row2 = (ts: string, head: string, text: string) =>
+    `<div class="c-virtual_list__item" data-item-key="${ts}"><div data-qa="message_container" data-msg-ts="${ts}"><div data-qa="message_content">${head}<a class="c-timestamp" data-ts="${ts}" href="https://w.slack.com/archives/C1/p${ts.replace(".", "")}">t</a>${text ? `<div data-qa="message-text">${text}</div>` : ""}</div></div></div>`;
+  const NAMED = '<span data-qa="message_sender"><button data-qa="message_sender_name">Toby Clark</button></span>';
+  const rowsOf = (html: string) => parseRows(parseHTML(`<html><body><div data-qa="message_pane">${html}</div></body></html>`).document as unknown as Document, "https://app.slack.com/");
+  test("a placeholder post is loading until a later rendering fills it in; the filled one wins", () => {
+    const acc = new Accumulator();
+    acc.ingest(rowsOf(row2("1791253193.612529", LOADING, "")));
+    expect(acc.loading).toEqual(["1791253193.612529"]);
+    acc.ingest(rowsOf(row2("1791253193.612529", NAMED, "SpacetimeDB office hours")));
+    expect(acc.loading).toEqual([]);
+    expect(acc.finalize().messages.map((m) => [m.sender.name, m.text])).toEqual([["Toby Clark", "SpacetimeDB office hours"]]);
+  });
+  test("a named header is never replaced by a later rendering that's still loading", () => {
+    const acc = new Accumulator();
+    acc.ingest(rowsOf(row2("1791253193.612529", NAMED, "SpacetimeDB office hours")));
+    acc.ingest(rowsOf(row2("1791253193.612529", LOADING, "")));
+    expect(acc.loading).toEqual([]);
+    expect(acc.finalize().messages.map((m) => [m.sender.name, m.text])).toEqual([["Toby Clark", "SpacetimeDB office hours"]]);
+  });
+  test("the thread recorder replaces a placeholder with the loaded row, even a shorter one, and tracks what's still loading", async () => {
+    const { ThreadRecorder } = await import("./thread.ts");
+    const els = (html: string) => [...(parseHTML(`<div id="r">${html}</div>`).document.getElementById("r") as unknown as Element).children];
+    const rec = new ThreadRecorder();
+    const pad = `<span data-pad="${"x".repeat(400)}"></span>`;
+    rec.record(els(row2("1792883875.617919", LOADING + pad, "") + row2("1792897979.050679", NAMED, "ok")));
+    expect([...rec.loading]).toEqual(["1792883875.617919"]);
+    rec.record(els(row2("1792883875.617919", NAMED, "the reply")));
+    expect([...rec.loading]).toEqual([]);
+    expect(rec.rows["1792883875.617919"]).toContain("the reply");
+    rec.record(els(row2("1792883875.617919", LOADING + pad, "")));
+    expect([...rec.loading]).toEqual([]);
+    expect(rec.rows["1792883875.617919"]).toContain("the reply");
+  });
+
+  test("a deleted parent with replies is kept as a thread to open, not a post", async () => {
+    const { parseHTML } = await import("linkedom");
+    const { Accumulator } = await import("./accumulate.ts");
+    const html = `<div data-qa="message_pane"><div class="c-virtual_list__item" data-item-key="1792831361.174779"><div data-qa="message_container" data-msg-ts="1792831361.174779"><div data-qa="message_content"><div>This message was deleted.</div><div data-qa="reply_bar"><button data-qa="reply_bar_count">4 replies</button><span data-qa="reply_bar_hover_last_reply" data-ts="1792840000.000100">Last reply</span></div></div></div></div></div>`;
+    const doc = parseHTML(`<html><body>${html}</body></html>`).document as unknown as Document;
+    const acc = new Accumulator();
+    acc.ingest(parseRows(doc, "https://app.slack.com/"));
+    const out = acc.finalize();
+    expect(out.messages).toEqual([]);
+    expect(out.deletedParents).toEqual([{ ts: "1792831361.174779", count: 4, last: "1792840000.000100" }]);
   });
 });
