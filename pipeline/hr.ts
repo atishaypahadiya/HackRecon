@@ -197,7 +197,8 @@ const USAGE = `usage:
   bun run hr prefill-eval [--dry-run] [--limit N] [--concurrency 4]
       P1b's eval on ${PREFILL_REPOS_PATH}: Built With recall of the drafted stack, and fit recall@3/@5 with the
       drafted stack in place of Built With (run C), paired against ${FIT_BASELINE_PATH}'s run B.
-  bun run hr ship --from fixtures/dogfood/<name>.json --enter "Best Actor, Claude for Public Benefit, ..." [--repo URL]
+  bun run hr ship --from fixtures/dogfood/<name>.json [--enter "Best Actor, Claude for Public Benefit, ..."] [--repo URL]
+      --enter defaults to the fixture's "entered" list.
       Ship's Recheck gaps: the entered tracks' stated requirements and entry steps against the repo's latest
       commit (the result is reused while the commit is unchanged), open gaps first, then the tracks' checklist.
       Plan's Tracks section for one project, from data/canon.json: the same ranker, quote check and cache as
@@ -1312,7 +1313,7 @@ function matchTracks(entities: Entity[], parts: string[]): { ids: string[] } | {
 
 async function shipCli(args: string[]): Promise<number> {
   const { values } = parseArgs({ args, options: { from: { type: "string" }, enter: { type: "string" }, repo: { type: "string" } } });
-  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string } | null>(values.from, null) : null;
+  const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; repo?: string; entered?: string[] } | null>(values.from, null) : null;
   if (!dog) {
     console.error(values.from ? `${values.from} not found` : "--from is required");
     return 2;
@@ -1323,13 +1324,13 @@ async function shipCli(args: string[]): Promise<number> {
     return 2;
   }
   const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
-  const m = matchTracks(entities, (values.enter ?? "").split(","));
+  const m = matchTracks(entities, values.enter !== undefined ? values.enter.split(",") : (dog.entered ?? []));
   if ("error" in m) {
     console.error(`--enter: ${m.error}`);
     return 2;
   }
   if (!m.ids.length) {
-    console.error('--enter is required: the tracks you plan to enter, e.g. --enter "Best Actor, Claude for Public Benefit"');
+    console.error('--enter is required (or "entered" in the fixture): the tracks you plan to enter, e.g. --enter "Best Actor, Claude for Public Benefit"');
     return 2;
   }
   const event = readEvent();
@@ -1348,7 +1349,7 @@ async function shipCli(args: string[]): Promise<number> {
   const out = (line: string) => console.log(wrapText(line, cliWidth()));
   out(`Ship: ${tracks.length} tracks you plan to enter`);
   out(`Recheck gaps: ${r.repo} @ ${r.commit.slice(0, 7)}, the latest commit as of ${at(r.latest_at)}. ${r.from === "reused" ? `Checked ${at(r.checked_at)}; the commit hasn't changed since, so that result stands.` : `Checked ${at(r.checked_at)}.`} ${r.checked} stated requirements and entry steps, ${r.repo_lines} repo lines.`);
-  out(r.gaps.length ? `\nOpen gaps (${r.gaps.length})` : "\nOpen gaps: none found. That says nothing about whether the requirements are met.");
+  out(r.gaps.length ? `\nOpen gaps (${r.gaps.length})` : !r.checked ? "\nOpen gaps: nothing to check. None of these tracks states a requirement or entry step on the pages read." : "\nOpen gaps: none found. That says nothing about whether the requirements are met.");
   for (const g of r.gaps) {
     out(`  ${g.track}\n    ${g.gap}`);
     out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
