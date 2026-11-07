@@ -78,6 +78,20 @@ Folded into `hr sync` (D11 reversed by the user, 2026-11-06): public pages are f
 
 The DOM exposes the sender's user ID (`data-message-sender`): 1004 of 1006 human posts in the Oct 27 captures carry one, and 1186 of 1186 in the Nov 6 sync. `organizers.json` is now `{id, why}` only. Reps and organizers are keyed by ID (`rolesById` in `pipeline/roles.ts`), because display names change mid-event: "LenaRose (Annapurna Labs)" became "LenaRose" between captures. A post with no ID gets no role.
 
+Two accounts of one person are linked by `hr person-links` (user 2026-11-07; design doc §Step 1 notes). Each link needs the same email, the same avatar image, or the same real name + title + company, never a name alone.
+
+### Same-person links without the export
+
+**What:** Build `config/person_links.json` from what a sync can see, not the baseline's users.json: the avatar `img` each message row already renders, hashed as `hr person-links` does.
+
+**Why:** A live event has no export. Today the links come from the Cal Hacks users.json snapshot, which a hacker won't have.
+
+**Context:** Of the three rules, only the avatar one fires in this workspace: 1 of 2,900 accounts shows an email, and there's no company field. The row's avatar is already in the DOM, so this needs no extra request and no profile card (both ruled out). The hash and threshold are `pipeline/people.ts`'s.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** Approach B (live syncs)
+
 ## Plan
 
 ### ~~Prefill the Plan input from a project link~~ Moved into v2 step 4 (P1b)

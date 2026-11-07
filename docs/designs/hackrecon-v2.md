@@ -477,6 +477,16 @@ Total: about 10–14 solo days [estimated, no basis beyond v1's pace]. Steps 1 a
       - **Close button:** every end-of-pane sample has one close button, matching both `data-qa="close_flexpane"` and `aria-label="Close"`. Syncs now log the matched candidate per thread (`close` in sync.json).
     - **Channel selection comes from the event config (user, 2026-11-06):** every `sponsors.json` channel (event channels like 2-opportunities included) plus `event.json` `authority_channels`, in config order. Sidebar prefixes only discover channels the config doesn't list yet, and sync.json reports them, along with config channels missing from the sidebar. The build writes the list to `extension/dist/sync-config.json` (channel names only), and the popup hands it to the sync. A test checks that every locked channel is selected. The next sync captures 2-opportunities.
     - **Reps and organizers are keyed by Slack user ID only (user, 2026-11-06):** `rolesById` in `pipeline/roles.ts`. A role signal seen on any of a user's posts (an organizer tag or title, a sponsor name in the display name or title, the external badge) holds for all their posts, so a rename mid-event can't drop it. A post with no ID gets no role. `organizers.json` holds `{id, why}` only. On the current run's 1007 messages no role changed, so classifier inputs (and their cache) are unchanged.
+    - **Same-person links (user, 2026-11-07).** ID keying counted one Fetch.ai rep twice: a guest account and a member account with the same display name and title. The Claim board's Reps went from 3 to 4, and D14 failed. The ID stays the key everywhere. A separate layer (`pipeline/people.ts`, `hr person-links`) links two IDs as one person only on strong evidence from one users.json snapshot, checked in order:
+      1. the same profile email;
+      2. the same avatar image: identical bytes, else a 16×16 box-averaged difference hash within 8 of 256 bits, custom images only;
+      3. the same real name + title + company.
+      - Never by name alone, and the display name is never read, so a rename can't create or break a link (tested).
+      - Each link is written with its evidence to `config/person_links.json` (gitignored), hashed, never the email or the image.
+      - **Scope:** accounts on the same sponsor's side, where the Reps tile counts people (16 accounts, 6 sponsors).
+      - **What the snapshot supports:** 1 of 2,900 accounts shows an email, and users.json has no company field, so in this workspace only the avatar rule can fire. The avatar is fetched from Slack's image CDN at the URL users.json lists (no Slack API call), hashed and discarded.
+      - **Result:** 1 link, U0ZBE4D36F8 = U0Z1400D401 (Fetch.ai), avatars 3 bits apart. The closest pair of different people among the 11 hashed avatars is 104 bits apart.
+      - Fetch.ai shows 3 candidates again, and D14 passes with no exceptions. Board.json's new `rep_accounts` (kept out of the fingerprinted `reps`) puts both accounts behind the one rep. The Reps drawer says "one candidate posts from 2 accounts". No role changed on the 1,007 messages.
 
 ## Not in scope
 
@@ -1641,7 +1651,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
     - **Ranking moved with the used-fors:** the new stack lines changed the ranker's request (a new cache key). Likely is unchanged; the possible Figma track is now [Figma] Best Use Case instead of Best Design.
     - **Board:**
       - The input has an optional "Repo link" field.
-      - After the tracks show, `POST /plan/gaps` (same Origin + token guard) re-ranks from the cache rather than trusting a track list from the page, then checks gaps.
+      - After the tracks show, the gap check runs on the server's own ranking, never a track list from the page. (Built as `POST /plan/gaps`; since P2 it is a step of `POST /plan/stream`.)
       - A row shows "Gap: …". The drawer's Gaps section lists the sentence, the page's quote and each project quote with its source (repo lines link to GitHub at the commit).
       - Checked in the headless browser at 1440 and 360.
 
@@ -1799,6 +1809,18 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
       - the module never touches storage, and the page saves the input only on submit.
     - Checked in the headless browser on Hindsight at 1440 and 390: 17 drafts, focus moves to the list, storage is empty before and after Use, and only the used item is saved on submit. No console errors, no horizontal scroll.
 - [ ] **P2** Parallel streaming sections with cache-first results (D4), and time-to-first-section logging. Verify: measured on Hindsight, target < 8 s.
+  - **Built 2026-11-07, for the sections that exist (tracks, booths, gaps):**
+    - `POST /plan/stream` (same Origin + token guard) replaces `POST /plan` and `POST /plan/gaps`. It sends NDJSON, one line per section as it's ready (`pipeline/planstream.ts`).
+    - **Order:** tracks, then booths built from them, then gaps, then booths rebuilt from the gaps, then `done` with the time to the first section.
+    - **Overlap:** the repo is cloned (`checkoutRepoAsync`) while the tracks are ranked, not after them. Each step reads its cache first (fit and gap caches, by input hash).
+    - **Board:** reads the stream line by line. Each section has its own `aria-busy` and paints on arrival. A new input aborts the previous request. A stream that ends early marks its unsent sections failed, never "Matching…" forever. The polite announcement fires once, on `done` (D11).
+    - **Logging:** every request appends `{first, total_ms, sections: {from, ms}}` to `data/plan_timings.jsonl`. The description and stack are not logged. `hr plan` runs the same stream in-process; `--fresh` skips both caches to time an input as if new.
+    - **Measured on Hindsight (`fixtures/dogfood/hindsight.json`, repo linked):**
+      - Uncached (`--fresh`, n = 5): first section (tracks) at 4,072–4,474 ms, median 4,126 ms. All sections at 6,556–7,381 ms.
+      - Cached: tracks at 8 ms, all sections at 112 ms.
+      - In the headless browser at 1440, uncached (a one-item stack, so a new cache key): "Matching…" at 96 ms, tracks and booths at 4,418 ms, booths rebuilt from the gap at 7,107 ms. No console errors.
+      - **Under the 8 s target on every sample.** n = 5 on one input and one machine; it says nothing about slower inputs or a cold clone.
+    - **Not built: Credits, Sessions and People.** No step-4 task specifies how they match the input, so there's nothing to stream for them yet. Each joins `planStream` as its own task, emitting into the same queue in settle order; the stream already takes them unordered.
 - [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
 - [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
 - [ ] **P5** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
