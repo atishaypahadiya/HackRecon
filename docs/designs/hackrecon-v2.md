@@ -333,7 +333,7 @@ One local page per event with five tabs: **Plan** (the default), Claim, Now, Mee
     - **Open gaps** go above the checklist, each with its sentence, the page's quote and the project's quotes with their sources (repo lines link to the commit).
     - **Caching:** when the latest commit is the one already checked, the stored result stands ("the commit hasn't changed since") with no clone update and no model call. A new commit updates the cache clone and reruns. If the matching repo lines are unchanged, the gap check's own cache answers, with links re-pointed at the new commit.
     - **Scope:** "Tracks the user plans to enter" are Ship's "tracks you entered", whatever their fit, so possible tracks are checked too.
-    - **Built (engine):** `pipeline/ship.ts` `recheckGaps`, `hr ship --from … --enter "…"`, and `POST /ship/gaps` (same Origin + token guard). The item's rendering is P6.
+    - **Built (engine):** `pipeline/ship.ts` `recheckGaps`, `hr ship --from … --enter "…"`, and `POST /ship/gaps` (same Origin + token guard). The item's rendering is P9.
 
 ### 5. Per-event config and generalize
 
@@ -1533,7 +1533,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
 
 ### Step 4 progress (2026-11-06)
 
-- **P2 / P7, Tracks section and dogfood.** `pipeline/plan.ts` builds Plan's Tracks section with the same ranker, quote check and cache as fit-eval, so the gate's numbers describe what Plan shows. `hr plan --from fixtures/dogfood/hindsight.json` on real canon:
+- **P2 / P10, Tracks section and dogfood.** `pipeline/plan.ts` builds Plan's Tracks section with the same ranker, quote check and cache as fit-eval, so the gate's numbers describe what Plan shows. `hr plan --from fixtures/dogfood/hindsight.json` on real canon:
   - **Results:** likely fits for [Anthropic] Claude for Public Benefit, [Apify] Best Use of Apify and [Factory] Best Use of the Factory Droid SDK; also possible: [Figma] Best Design and [Apify] Best Actor. All 4 tracks Hindsight targeted appear. They were targeted, not won (no track prizes), so this isn't a win label. (Entered, per the user on 2026-11-06: Claude for Public Benefit, Factory Droid SDK and Best Use of Apify; not Best Actor, and Figma wasn't submitted.)
   - **Time to the section:** 4,955 ms uncached (n = 1, Sonnet, $0.02), 1 ms cached. Under the 8 s target on one sample; more samples come with the board endpoint.
   - **The three open items, done as the user specified (2026-11-06), in one change. It FAILS the fit gate. Not committed; awaiting the user.**
@@ -1821,11 +1821,36 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
       - In the headless browser at 1440, uncached (a one-item stack, so a new cache key): "Matching…" at 96 ms, tracks and booths at 4,418 ms, booths rebuilt from the gap at 7,107 ms. No console errors.
       - **Under the 8 s target on every sample.** n = 5 on one input and one machine; it says nothing about slower inputs or a cold clone.
     - **Not built: Credits, Sessions and People.** No step-4 task specifies how they match the input, so there's nothing to stream for them yet. Each joins `planStream` as its own task, emitting into the same queue in settle order; the stream already takes them unordered.
-- [ ] **P3** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
-- [ ] **P4** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
-- [ ] **P5** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
-- [ ] **P6** Ship layout, the drafts item, the merge line, last-hour mode (D13), and the Recheck gaps item: commit and time checked, open gaps above the checklist with their quotes (engine built: `POST /ship/gaps`). Verify: frames at 61 and 59 min before the deadline; a recheck on an unchanged commit makes no model call.
-- [ ] **P7** Eval: recall@3/@5 (done in fiteval.ts); credits, sessions, booths relevance by the Opus judge with n; Hindsight dogfood saved to `fixtures/dogfood/hindsight.json` (gitignored).
+- [ ] **P3–P5** Credits, Sessions and People (user 2026-11-07). These are deterministic joins with no model calls, streamed by `planStream` after gaps as the sections `credits`, `sessions` and `people`, in that order, then `done`. They are code-built, so they need no cache and cost nothing.
+  - **The sponsors they join on (shared):** sponsors in the user's stack, plus the sponsors of the likely tracks.
+    - A stack item names a sponsor when the sponsor's name, a `sponsors.json` alias or a `products.json` product name appears in it as a whole word (fit.ts `productMentioned`), e.g. "Claude API" → Anthropic.
+    - Each sponsor carries why it's there: "in your stack: Claude API" or "likely track: [Apify] Best Use of Apify".
+    - Possible tracks don't add sponsors.
+  - **Now:** the server's clock. `hr plan --at <ISO>` replays an instant.
+  - **P3 Credits:** Claim's offers (`data/board.json`, built by `hr board` from the grouped offers) whose sponsor is in the set, first posted at or before now, and still open: no stated limit, or a limit after now.
+    - **Order:** soonest limit first, then offers with no stated limit, by first post.
+    - **Quote:** the offer's excerpt, checked verbatim (whitespace-normalized) against the text of one of its posts. An offer whose quote fails is dropped.
+    - **Row:** the value (value_short, else the title), the quote, then mono metadata: why · "closes Sat 6:00 PM" · the claim step · the code · source ↗.
+    - **None:** "No offer posted so far matches your stack".
+  - **P4 Sessions:** classifier items of kind `workshop` (workshops, talks, office hours) with a start time, whose sponsor is in the set, starting after now and before the submission deadline.
+    - **Submission deadline:** event.json's unsuperseded schedule entry naming the submission (Cal Hacks: "Devpost submission deadline extended", Sun 9:30 AM). With none, sessions are upcoming only and the section says no deadline is known.
+    - **Order and quote:** by start time. One per sponsor and start time. The quote is the post's first line, verbatim, and it is the row's name.
+    - **Row:** the quote, then mono metadata: start time · sponsor · why · source ↗.
+    - **None:** "No upcoming session from these sponsors before the submission deadline".
+  - **P5 People:** reps for each likely track's sponsor, keyed by Slack user ID with person links (people.ts).
+    - **Who counts:** sponsor-side posters (`rolesById`) in that sponsor's channels, posted at or before now. Bots and replies-only threads are excluded.
+    - **Each rep shows:** the display name from their latest post, the number of accounts when more than one, the first post's time, its first line (verbatim) and its link, and the post count.
+    - **Order:** sponsors in likely-track order; reps by first post.
+    - **Layout:** People renders inside "Booths and reps", under that sponsor's questions. This replaces D2's separate People column: a rep and the question to ask them belong together, and a third column would repeat the questions. The band is now Sessions | Booths and reps, 1 : 2.
+    - **Names:** Plan shows reps' display names. It is the user's own view; the Claim board's demo mode still hides them.
+    - **None:** "No rep of a targeted track has posted yet".
+  - **Layout (D2, D7):** Credits is the second tile, Tracks 8 | Credits 4. Tablet: Tracks 12, Credits 12, band 12. Phone order: input, Tracks, band, Credits.
+  - **Verify:** unit tests on each join (sponsor set, open and expired offers, a failed quote, the deadline cut, person links); Hindsight's output for each section, at a stated instant.
+- [ ] **P6** State table (D4) and live updates with the urgent bypass (D5). Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).
+- [ ] **P7** Judging, still claimable and Follow up after the deadline (D6). Verify: replay frames before and after 9:30 and after results.
+- [ ] **P8** Tabs and checkbox per DESIGN.md (D9, D10); shared Plan/Ship step state. Verify: keyboard-only pass; a screen reader announces per D11.
+- [ ] **P9** Ship layout, the drafts item, the merge line, last-hour mode (D13), and the Recheck gaps item: commit and time checked, open gaps above the checklist with their quotes (engine built: `POST /ship/gaps`). Verify: frames at 61 and 59 min before the deadline; a recheck on an unchanged commit makes no model call.
+- [ ] **P10** Eval: recall@3/@5 (done in fiteval.ts); credits, sessions, booths relevance by the Opus judge with n; Hindsight dogfood saved to `fixtures/dogfood/hindsight.json` (gitignored).
 
 TODOS: none deferred from this review. Every approved fix is a step 4 task above.
 
