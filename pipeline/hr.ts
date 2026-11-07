@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // hr: HackRecon pipeline CLI. Subcommands land here as tasks ship (compare first).
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -25,6 +25,7 @@ import {
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
 import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
+import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
 import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
 import { emailReps, HACKER_ONLY, likelyReps, loadRepIndex, mentionAuthority, mentionReps, repEvidence, selfIdReps, selfIdSponsorList, type MentionPost, type RepSignalsFile } from "./reps.ts";
 import { HAND_LABELER, labelerOf, labelProblems, OPUS_LABELER, readLabels, readRules } from "./labels.ts";
@@ -48,7 +49,7 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_LIVE_JS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
 import { joinSponsors, planCredits, planPeople, planSessions, submissionDeadline } from "./planjoin.ts";
 import { GROUP_EFFORT, GROUP_MODEL, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
@@ -73,6 +74,7 @@ import {
   CANON_JUDGE_FIXTURES_PATH,
   CANON_JUDGE_PATH,
   CANON_PATH,
+  CANON_HISTORY_PATH,
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
@@ -1006,10 +1008,10 @@ async function board(args: string[]): Promise<number> {
       }
       if (path === "/plan/meta") {
         const { entities, event } = planContext();
-        return json(planMeta(entities, event));
+        return json({ ...planMeta(entities, event), version: dataVersion(), stale: stalePages() });
       }
       if (path === "/")
-        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`), {
+        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
           headers: {
             ...headers,
             "Content-Type": "text/html; charset=utf-8",
@@ -1254,6 +1256,10 @@ async function canon(args: string[]): Promise<number> {
   }
   writeJsonFile(CANON_STORE_PATH, store);
   for (const [k, c] of prev) if (!out.some((o) => pageKey(o.url) === k)) out.push(c); // pages no longer listed stay until removed by hand
+  // A page record a new snapshot replaces is kept (live canon only): merge places each changed field in the window
+  // between the two captures (§3 rule 2).
+  const replaced = values.fixtures ? [] : out.flatMap((o) => { const p = prev.get(pageKey(o.url)); return p && p.snapshot_hash !== o.snapshot_hash ? [p] : []; });
+  if (replaced.length) writeJsonFile(CANON_HISTORY_PATH, [...readJsonFile<CanonPage[]>(CANON_HISTORY_PATH, []), ...replaced]);
   writeJsonFile(outPath, out);
   console.log(`\nwrote ${outPath}: ${out.length} page(s), ${out.reduce((n, p) => n + p.entities.length, 0)} entities`);
 
@@ -1602,13 +1608,28 @@ function matchTracks(entities: Entity[], parts: string[]): { ids: string[] } | {
 
 /** Ship's checklist (shiplist.ts) for the entered tracks, as of `nowMs`: the capture's posts by then, rendered as the
  *  board renders them. */
+/** Each canon page's first snapshot (the baseline) and every later field change with its window (merge §3). With
+ *  no replaced records, the baseline is today's canon and there are no changes. */
+function canonTimeline(): { baseline: Entity[]; changes: PageChange[] } {
+  const byPage = new Map<string, CanonPage[]>();
+  for (const p of [...readJsonFile<CanonPage[]>(CANON_HISTORY_PATH, []), ...readJsonFile<CanonPage[]>(CANON_PATH, [])]) byPage.set(pageKey(p.url), [...(byPage.get(pageKey(p.url)) ?? []), p]);
+  const baseline: Entity[] = [], changes: PageChange[] = [];
+  for (const recs of byPage.values()) {
+    baseline.push(...recs[0]!.entities);
+    for (let k = 1; k < recs.length; k++) changes.push(...mergePageChanges(recs[k - 1]!, recs[k]!));
+  }
+  return { baseline, changes };
+}
+
 function shipListAt(entities: Entity[], event: EventConfig, entered: string[], nowMs: number): ShipList {
   const sponsors = readSponsors(SPONSORS_PATH);
   const messages = readMessages();
   const person = loadPersonKey();
   const role = rolesById(messages, sponsors, loadOrganizerIds(), person, loadRepIndex(person).confirmed);
   const redact = compileRedactor(buildNameList(new Set(messages.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-  return shipList({ entities, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => redact(plainText(m.text)).text, entered, nowSec: nowMs / 1000 });
+  // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
+  const t = canonTimeline();
+  return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => redact(plainText(m.text)).text, entered, nowSec: nowMs / 1000 });
 }
 
 async function shipCli(args: string[]): Promise<number> {
@@ -2433,4 +2454,19 @@ async function repSignals(args: string[]): Promise<number> {
   }
   console.log(`${file.reps.length} reps with a signal (${file.reps.filter((e) => e.standing === "confirmed").length} confirmed) → ${REP_SIGNALS_PATH}`);
   return 0;
+}
+
+/** Changes whenever a file Plan or Ship reads changes (a sync, a canon run, rep signals): the board polls it and,
+ *  on a change, rebuilds the plan and shows what's new (D5). File times and sizes only, no contents. */
+function dataVersion(): string {
+  const parts = [CANON_PATH, CANON_HISTORY_PATH, MESSAGES_PATH, ITEMS_PATH, EVENT_PATH, SPONSORS_PATH, REP_SIGNALS_PATH, BOARD_DATA_PATH].map((p) => (existsSync(p) ? `${p}:${statSync(p).mtimeMs}:${statSync(p).size}` : `${p}:-`));
+  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/** D4's stale state: canon pages the last sync couldn't fetch (refused, login, error) and the extension didn't read
+ *  either, so Plan says "Devpost as of <the snapshot's time>". */
+function stalePages(): string[] {
+  const d = readJsonFile<{ fetch?: { url: string; status: string; role?: string }[]; extension_pages?: { url: string; action: string }[] }>(DISCOVERED_PATH, {});
+  const read = new Set((d.extension_pages ?? []).filter((x) => x.action === "saved" || x.action === "same").map((x) => pageKey(x.url)));
+  return (d.fetch ?? []).filter((r) => r.role === "canon" && r.status !== "fetched" && !read.has(pageKey(r.url))).map((r) => r.url);
 }

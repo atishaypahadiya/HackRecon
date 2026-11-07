@@ -54,6 +54,8 @@ export const CANON_FIXTURES_PATH = "data/canon.fixtures.json";
  *  rejects temperature, and the same request gave 80 vs 78 prizes (2026-11-06), so canon is made
  *  deterministic by never extracting the same input twice (--force to re-extract). */
 export const CANON_STORE_PATH = "data/canon_extractions.json";
+/** Canon page records a later snapshot replaced, oldest first: merge reads page changes from them (§3 rule 2). */
+export const CANON_HISTORY_PATH = "data/canon_history.json";
 export const CANON_JUDGE_PATH = "review/canon_judge.json";
 export const CANON_JUDGE_FIXTURES_PATH = "review/canon_judge.fixtures.json";
 /** Idea-fit rankings by input hash (shared by `hr fit-eval` and, later, POST /fit). */

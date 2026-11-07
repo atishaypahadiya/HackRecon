@@ -48,6 +48,17 @@ describe("Ship's deadline: the page, moved by a post once it's posted", () => {
     const d = at("2026-10-25T09:05:00-07:00").deadline!;
     expect(d).toMatchObject({ at: "2026-10-25T09:30:00-07:00", from: "slack", quote: "We’ve extended the Devpost submission deadline to 9:30 AM.", channel: "0-announcements", was: { at: "2026-10-25T09:00-07:00" } });
   });
+  test("merge's authority (D8): a post by someone who isn't an organizer never moves it", () => {
+    const d = shipList({ entities, event, messages, isOrganizer: () => false, shown: (m) => m.text, entered: [], nowSec: sec("2026-10-25T09:05:00-07:00") }).deadline!;
+    expect([d.at, d.from, d.was]).toEqual(["2026-10-25T09:00-07:00", "page", undefined]);
+  });
+  test("merge rule 4: the page edited in a window holding the post: no winner, and the line says so", () => {
+    const sub = entities.find((x) => x.fields.rule_kind?.value === "submission" && x.fields.deadline)!;
+    const window = { after: "2026-10-25T08:50:00-07:00", until: "2026-10-25T09:02:00-07:00" };
+    const pageChanges = [{ entity_id: sub.id, field: "deadline", kind: "set" as const, to: { value: "2026-10-25T10:00:00-07:00", source: { kind: "page" as const, url: "https://e.devpost.com/", quote: "10 AM", captured_at: window.until } }, window }];
+    const d = shipList({ entities, event, messages, isOrganizer: (m) => m.author_id === "UORG", shown: (m) => m.text, entered: [], nowSec: sec("2026-10-25T09:05:00-07:00"), pageChanges }).deadline!;
+    expect([d.at, d.from, d.disagree]).toEqual(["2026-10-25T09:00-07:00", "page", `Page and Slack disagree; page changed between ${window.after} and ${window.until}`]);
+  });
   test("a schedule entry counts from its post's time; a superseded one until its replacement is posted", () => {
     expect(currentSchedule(event, sec("2026-10-24T12:00:00-07:00")).map((x) => x.what)).toEqual([]);
     expect(currentSchedule(event, sec("2026-10-25T08:00:00-07:00")).map((x) => x.what)).toEqual(["Final Devpost submissions due", "Arrive with the whole team", "Judging window"]);

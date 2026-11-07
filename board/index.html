@@ -269,6 +269,8 @@
   .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sum .stk { color: var(--muted); }
   #next { grid-column: 1 / -1; margin: 0; padding: 0 4px; font-size: 15px; font-weight: 650; }
+  #pupd { grid-column: 1 / -1; margin: -8px 0 0; padding: 0 4px; }
+  .upd { min-height: 44px; font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
   .prows, .bqs { list-style: none; margin: 0; padding: 0; }
   .prow { border-top: 1px solid var(--line); padding-bottom: 10px; }
   .prow:first-child { border-top: 0; }
@@ -386,6 +388,7 @@
     <div id="pi-body"></div>
   </section>
   <p id="next" hidden></p>
+  <p id="pupd" hidden><button type="button" class="upd" id="pupd-btn"></button></p>
   <section class="tile tracks" id="pt" aria-labelledby="h-pt" hidden>
     <div class="th"><h2 id="h-pt">Tracks to target</h2><span class="ctx m" id="pt-ctx"></span></div>
     <div id="pt-body"></div>
@@ -491,6 +494,7 @@
 <div class="sr" aria-live="polite" id="say"></div>
 
 <!-- prefill.js -->
+<!-- live.js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -963,6 +967,9 @@ addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { bui
 const TOKEN = document.querySelector('meta[name="hr-token"]').content;
 // res holds the sections as they stream in (P2); sec is each one's state: busy, ok or failed.
 const P = { meta: null, input: null, res: null, gaps: null, sec: {}, seq: 0, abort: null, steps: new Set() };
+// D5: rows a sync added or changed ("New", "Changed" with the old row), the sync's full result in its own order
+// (applied by "Show N updates"), its urgent items (Next for you), and the marks seen on Plan (cleared on leaving it).
+P.live = { marks: new Map(), was: new Map(), next: null, n: 0, urgent: [], seen: new Set() };
 const planKey = () => `hackrecon:plan:${P.meta.event}`, stepKey = () => `hackrecon:steps:${P.meta.event}`;
 const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? u : null);
 // ?now=ISO is a review aid (frames before and during the event); otherwise the clock.
@@ -971,7 +978,11 @@ const pfmt = (iso, o) => new Date(iso).toLocaleString("en-US", { timeZone: P.met
 const firstSentence = (s) => s.split(/(?<=[.!?])\s+|\n+/)[0] || s;
 
 function setTab(name, focus) {
+  // D5: markers clear once Plan has been opened after they arrived, so leaving Plan drops the ones seen there.
+  const clear = tab === "plan" && name !== "plan" && P.live.seen.size;
+  if (clear) for (const k of P.live.seen) { P.live.marks.delete(k); P.live.was.delete(k); P.live.seen.delete(k); }
   tab = name;
+  if (clear && P.input) paintResults();
   for (const t of document.querySelectorAll('[role="tab"]')) {
     const on = t.id === `t-${name}`;
     t.setAttribute("aria-selected", String(on));
@@ -1099,6 +1110,17 @@ function beforeLine() {
    the start isn't known (Cal Hacks' config has none), an item shows only within 24 h of it. */
 function paintNext() {
   const now = nowMs(), m = P.meta, el = $("next");
+  // D5: an urgent change takes the line at once, read out (assertive); otherwise the next deadline, unannounced.
+  // The soonest; a cancellation first, since it has no time to wait for.
+  const u = P.live.urgent.filter((x) => x.why === "cancelled" || (x.at && x.at > now)).sort((a, b) => (a.why === "cancelled" ? -Infinity : a.at) - (b.why === "cancelled" ? -Infinity : b.at))[0];
+  el.setAttribute("aria-live", u ? "assertive" : "off");
+  if (u) {
+    el.hidden = false;
+    const at = (t) => pfmt(t, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    const rel = u.at ? countdown(u.at - now) : "";
+    el.textContent = u.why === "cancelled" ? `Cancelled · ${u.label}` : u.why === "earlier" ? `${at(u.at)} · ${u.label} · moved earlier from ${pfmt(u.was, { hour: "numeric", minute: "2-digit" })} · in ${rel}` : `${at(u.at)} · ${u.label} · ${u.why === "closes soon" ? "closes" : "starts"} in ${rel}`;
+    return;
+  }
   const started = m?.hacking_start ? now >= Date.parse(m.hacking_start) : null;
   const d = m && started !== false ? m.deadlines.find((x) => Date.parse(x.at) > now && (started || Date.parse(x.at) - now <= 86400000)) : null;
   el.hidden = !d;
@@ -1135,24 +1157,87 @@ async function runPlan() {
     paintResults();
   };
   try {
-    const r = await fetch("/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(P.input), signal: ctl.signal });
-    if (!r.ok || !r.body) throw new Error(String(r.status));
-    const rd = r.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await rd.read();
-      if (seq !== P.seq) return;
-      if (done) break;
-      buf += value;
-      for (let k; (k = buf.indexOf("\n")) >= 0; buf = buf.slice(k + 1)) if (k) on(JSON.parse(buf.slice(0, k)));
-    }
+    await readPlan(P.input, on, ctl.signal, () => seq !== P.seq);
+    if (seq !== P.seq) return;
   } catch { if (seq !== P.seq) return; }
+  P.live = { ...P.live, marks: new Map(), was: new Map(), next: null, n: 0, urgent: [] };
+  paintUpdates();
   // A stream that ended early leaves its unsent sections failed, never "Matching…" forever.
   if (Object.values(P.sec).includes("busy")) {
     for (const k in P.sec) if (P.sec[k] === "busy") P.sec[k] = "failed";
     paintResults();
   }
 }
+/** POST /plan/stream, read line by line; `on` gets each section as the server sends it. */
+async function readPlan(input, on, signal, stale = () => false) {
+  const r = await fetch("/plan/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-HR-Token": TOKEN }, body: JSON.stringify(input), signal });
+  if (!r.ok || !r.body) throw new Error(String(r.status));
+  const rd = r.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await rd.read();
+    if (stale() || done) return;
+    buf += value;
+    for (let k; (k = buf.indexOf("\n")) >= 0; buf = buf.slice(k + 1)) if (k) on(JSON.parse(buf.slice(0, k)));
+  }
+}
+
+/* D5 live updates: when a sync changes what Plan reads (/plan/meta's version), the plan is rebuilt off screen and
+   compared (board/live.js). New rows go last, changed rows keep their place, both marked; nothing reorders until
+   "Show N updates". Urgent changes take the Next for you line at once. Any failed section keeps what's shown. */
+async function stagePlan(oldMeta) {
+  if (!P.input || P.sec.tracks !== "ok") return;
+  const seq = P.seq, res = { tracks: null, booths: null, credits: null, sessions: null, people: null };
+  let gaps = P.gaps, failed = false;
+  const on = (e) => {
+    if (e.section === "done") return;
+    if (e.error) failed = true;
+    else if (e.section === "gaps") gaps = e;
+    else res[e.section] = e.section === "credits" || e.section === "sessions" || e.section === "people" ? e : e[e.section];
+  };
+  try { await readPlan(P.input, on, undefined, () => seq !== P.seq); } catch { return; }
+  if (seq !== P.seq || failed || !res.tracks) return;
+  const d = HRLive.diff(P.res, res);
+  const urgent = HRLive.urgent(d, oldMeta, P.meta, nowMs());
+  if (!d.count && !d.removed.length && !urgent.length) return;
+  for (const r of d.added) P.live.marks.set(`${r.section}:${r.key}`, "New");
+  for (const r of d.changed) {
+    const k = `${r.section}:${r.key}`;
+    P.live.marks.set(k, "Changed");
+    if (!P.live.was.has(k)) P.live.was.set(k, liveItem(P.res, r.section, r.key));
+  }
+  P.live.next = res;
+  P.live.n += d.count + d.removed.length;
+  P.live.urgent = [...urgent, ...P.live.urgent.filter((u) => !urgent.some((x) => x.key === u.key))];
+  P.res = HRLive.present(P.res, res);
+  P.gaps = gaps;
+  paintResults();
+  paintNext();
+  paintUpdates();
+  // D11: one combined announcement per sync, never one per item.
+  if (d.count) $("say").textContent = `${plural(d.count, "update")} to your plan.`;
+}
+/** The row a key names in a plan result (for old → new). */
+function liveItem(res, section, key) {
+  if (section === "tracks") return res.tracks?.find((t) => t.track_id === key);
+  if (section === "credits") return res.credits?.credits.find((c) => c.offer_id === key);
+  if (section === "sessions") return res.sessions?.sessions.find((x) => `${x.source_url}|${x.sponsor}` === key);
+  return res.people?.people.flatMap((p) => p.reps.map((r) => ({ ...r, sponsor: p.sponsor }))).find((r) => `${r.sponsor}|${r.person}` === key);
+}
+function paintUpdates() {
+  $("pupd").hidden = !P.live.next || !P.live.n;
+  $("pupd-btn").textContent = `Show ${plural(P.live.n, "update")}`;
+}
+$("pupd-btn").addEventListener("click", () => {
+  // The sync's own order; the markers stay until Plan is left.
+  P.res = P.live.next;
+  P.live.next = null;
+  P.live.n = 0;
+  paintResults();
+  paintUpdates();
+  $("pt").focus?.();
+});
+
 // D11: one polite announcement once every section has settled.
 function announcePlan() {
   if (tab === "ship") paintShip(); // Ship's chooser lists Plan's tracks
@@ -1163,6 +1248,13 @@ function announcePlan() {
 }
 const gapsOf = (id) => P.gaps?.gaps?.filter((g) => g.track_id === id) ?? [];
 
+// D5's markers, in the row's metadata: mono "New" or "Changed", as Claim marks a new offer.
+function liveMark(key) {
+  const m = P.live.marks.get(key);
+  if (!m) return "";
+  if (tab === "plan") P.live.seen.add(key);
+  return `<span class="new">${m}</span> · `;
+}
 const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
 const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
 function trackRow(t) {
@@ -1170,7 +1262,7 @@ function trackRow(t) {
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
   const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
   const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}</span>`).join("");
-  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
+  return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${liveMark(`tracks:${t.track_id}`)}${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
 }
 function paintResults() {
   const show = !!P.input;
@@ -1188,7 +1280,9 @@ function paintResults() {
     $("pt-body").innerHTML = P.sec.tracks === "failed" ? failed : state("Matching…");
   } else {
     const likely = ts.filter((t) => t.fit === "likely"), possible = ts.filter((t) => t.fit !== "likely");
-    $("pt-ctx").textContent = ts.length ? `${likely.length} likely · ${possible.length} possible` : "";
+    // D4: when the last sync couldn't read a Devpost page, the tracks say how old the page is.
+    const asOf = P.meta?.stale?.length && P.meta.as_of ? `Devpost as of ${pfmt(P.meta.as_of, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
+    $("pt-ctx").textContent = [ts.length ? `${likely.length} likely · ${possible.length} possible` : "", asOf].filter(Boolean).join(" · ");
     $("pt-body").innerHTML = !ts.length
       ? state("No track's stated requirements match this description")
       : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
@@ -1200,14 +1294,14 @@ function paintResults() {
     ? (P.sec.credits === "failed" ? failed : state("Matching…"))
     : !cr.credits.length
       ? state("No offer posted so far matches your stack")
-      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${[esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${liveMark(`credits:${c.offer_id}`)}${[esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
   // P4 Sessions: upcoming, before the submission deadline, by time. The row's name is the post's first line, verbatim.
   const se = P.res.sessions;
   $("ps-body").innerHTML = !se
     ? (P.sec.sessions === "failed" ? failed : state("Matching…"))
     : !se.sessions.length
       ? state(se.deadline ? "No upcoming session from these sponsors before the submission deadline" : "No upcoming session from these sponsors; no submission deadline is known yet")
-      : `<ul class="prows">${se.sessions.map((x) => `<li class="prow flat"><span class="pn">${esc(x.quote)}</span><span class="pr">${esc(x.why[0])}</span><div class="pmeta m">${esc(pfmt(x.start, { weekday: "short", hour: "numeric", minute: "2-digit" }))} · ${esc(x.sponsor)} · ${srcLink(x.source_url)}</div></li>`).join("")}</ul>`;
+      : `<ul class="prows">${se.sessions.map((x) => `<li class="prow flat"><span class="pn">${esc(x.quote)}</span><span class="pr">${esc(x.why[0])}</span><div class="pmeta m">${liveMark(`sessions:${x.source_url}|${x.sponsor}`)}${esc(pfmt(x.start, { weekday: "short", hour: "numeric", minute: "2-digit" }))}${wasTime(`sessions:${x.source_url}|${x.sponsor}`, x.start)} · ${esc(x.sponsor)} · ${srcLink(x.source_url)}</div></li>`).join("")}</ul>`;
   // One block per sponsor; once gaps are checked, a track with a gap asks from it (the server rebuilds the blocks).
   const bs = P.res.booths;
   if (!bs) { $("pb-body").innerHTML = P.sec.booths === "failed" ? failed : state("Matching…"); return; }
@@ -1218,7 +1312,7 @@ function paintResults() {
     const x = pe.find((y) => y.sponsor === sp);
     if (!x) return "";
     if (!x.reps.length) return `<p class="pstate">No rep of a targeted track has posted yet</p>`;
-    return `<ul class="reps-l">${x.reps.map((r) => `<li><span class="rn">${esc(r.name)}</span><span class="pr">${esc(r.quote)}</span>${r.signals?.length ? `<span class="pr">Matched: ${esc(r.signals.join("; "))}</span>` : ""}<div class="pmeta m">${[r.accounts > 1 ? plural(r.accounts, "account") : "", plural(r.posts, "post"), `first ${pfmt(r.first * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, srcLink(r.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+    return `<ul class="reps-l">${x.reps.map((r) => `<li><span class="rn">${esc(r.name)}</span><span class="pr">${esc(r.quote)}</span>${r.signals?.length ? `<span class="pr">Matched: ${esc(r.signals.join("; "))}</span>` : ""}<div class="pmeta m">${liveMark(`people:${x.sponsor}|${r.person}`)}${[r.accounts > 1 ? plural(r.accounts, "account") : "", plural(r.posts, "post"), `first ${pfmt(r.first * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, srcLink(r.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
   };
   $("pb-body").innerHTML = !sponsorsShown.length
     ? state("No questions yet for the tracks in your plan")
@@ -1229,13 +1323,27 @@ function paintResults() {
       }).join("")}</ul>`;
 }
 
+// A changed session has no drawer: its old time shows beside the new one ("Sun 8:15 AM, was 10:00 AM").
+function wasTime(key, start) {
+  const w = P.live.was.get(key);
+  return w?.start && w.start !== start ? `, was ${esc(pfmt(w.start, { hour: "numeric", minute: "2-digit" }))}` : "";
+}
+// Changed rows show old → new in their drawer (D5).
+function changedPart(key, fields) {
+  const w = P.live.was.get(key), cur = fields.cur;
+  if (!w) return "";
+  const lines = fields.list.filter(([, f]) => f(w) !== f(cur)).map(([name, f]) => `<p>${esc(name)}: ${esc(f(w) || "none")} → ${esc(f(cur) || "none")}</p>`);
+  return lines.length ? `<h3>Changed</h3><div class="item">${lines.join("")}</div>` : "";
+}
 function openCredit(id, from) {
   const c = P.res?.credits?.credits.find((x) => x.offer_id === id);
   if (!c) return;
   if (!$("drawer").open) drawerFrom = from;
   drawer = null;
   $("dr-title").innerHTML = `${esc(c.value)}<span class="cap">${esc(c.sponsor)}</span>`;
+  const lim = (x) => (x.limit ? pfmt(x.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   $("dr-body").innerHTML = [
+    changedPart(`credits:${c.offer_id}`, { cur: c, list: [["Offer", (x) => x.value], ["Closes", lim], ["Claim", (x) => x.claim], ["Code", (x) => x.promo_code]] }),
     `<h3>Why it's here</h3><div class="item">${c.why.map((w) => `<p>${esc(w[0].toUpperCase() + w.slice(1))}</p>`).join("")}</div>`,
     `<h3>The post</h3><div class="item"><q>${esc(c.quote)}</q></div>`,
     `<h3>Claim</h3><div class="item"><p>${esc(c.claim || "No post says how")}${c.promo_code ? ` · code <span class="m">${esc(c.promo_code)}</span>` : ""}</p><p class="note">${esc(c.limit ? `Closes ${pfmt(c.limit * 1000, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "A limit is mentioned but not clear" : "No stated limit")}</p></div>`,
@@ -1254,6 +1362,7 @@ function openTrack(id, from) {
   const fit = t.fit === "likely" ? "likely fits" : t.capped ? "possible (ranked likely, but your project doesn't name the product in this track's title)" : "possible";
   $("dr-title").innerHTML = `${esc(t.name)}<span class="cap">${esc([fit, t.label].filter(Boolean).join(" · "))}</span>`;
   const parts = [
+    changedPart(`tracks:${t.track_id}`, { cur: t, list: [["Fit", (x) => x.fit], ["Why", (x) => x.reason], ["Entry steps", (x) => (x.steps || []).map((s) => s.label).join("; ")]] }),
     `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
     gapsOf(t.track_id).length
       ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">The page's ${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
@@ -1333,7 +1442,7 @@ function paintShip() {
   if (!L) return;
   const now = nowMs(), d = L.deadline;
   $("sd-body").innerHTML = d
-    ? `<button type="button" class="sdl" id="sd-open">${Date.parse(d.at) > now ? `Submissions close ${esc(shipFmt(d.at))} · in ${countdown(Date.parse(d.at) - now)}` : `Submissions closed ${esc(shipFmt(d.at))}`}</button><div class="pmeta m">${d.was ? `Devpost said ${esc(shipFmt(d.was.at))} · ` : ""}${d.from === "slack" ? `moved in #${esc(d.channel)}` : "on Devpost"}</div>`
+    ? `<button type="button" class="sdl" id="sd-open">${Date.parse(d.at) > now ? `Submissions close ${esc(shipFmt(d.at))} · in ${countdown(Date.parse(d.at) - now)}` : `Submissions closed ${esc(shipFmt(d.at))}`}</button><div class="pmeta m">${d.was ? `Devpost said ${esc(shipFmt(d.was.at))} · ` : ""}${d.from === "slack" ? `moved in #${esc(d.channel)}` : "on Devpost"}</div>${d.disagree ? `<p class="note">${esc(d.disagree.replace(/between (\S+) and (\S+)$/, (_, a, b) => `between ${shipFmt(a)} and ${shipFmt(b)}`))}</p>` : ""}`
     : `<p class="pstate">No submission deadline on the pages or in the posts read.</p>`;
   const lh = lastHour();
   // Recheck gaps: only with a repo linked; in the last hour it folds with the other groups.
@@ -1421,6 +1530,20 @@ fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((m) => {
   paintInput(!P.input);
   paintNext();
   setInterval(paintNext, 60000);
+  // D5: a sync changes /plan/meta's version; Plan is rebuilt off screen and the differences shown.
+  setInterval(() => {
+    fetch("/plan/meta", { cache: "no-store" }).then((r) => r.json()).then((n) => {
+      if (!P.meta || n.version === P.meta.version) return;
+      const old = P.meta;
+      P.meta = n;
+      // A deadline moved earlier is urgent with or without a plan.
+      const du = HRLive.urgent({ added: [], changed: [], removed: [], count: 0 }, old, n, nowMs());
+      P.live.urgent = [...du, ...P.live.urgent.filter((u) => !du.some((x) => x.key === u.key))];
+      paintNext();
+      if (P.input) paintResults();
+      stagePlan(old);
+    }).catch(() => {});
+  }, 60000);
   if (P.input) runPlan();
 }).catch(() => { $("pi-body").innerHTML = `<p class="pstate">Couldn't load this event's canon.</p>`; });
 

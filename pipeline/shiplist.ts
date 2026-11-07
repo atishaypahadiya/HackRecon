@@ -4,7 +4,8 @@
 import type { EventConfig } from "./classify.ts";
 import { entrySteps, trackDetail } from "./plan.ts";
 import type { Shown } from "./planjoin.ts";
-import type { Entity, Message } from "./schema.ts";
+import { baseline, disagreement, merge, type PageChange } from "./merge.ts";
+import type { Change, Entity, Message } from "./schema.ts";
 
 export interface ShipItem {
   /** Done-state key, shared with Plan: an entry step's id is the same in both, so ticking either ticks both. */
@@ -30,6 +31,8 @@ export interface ShipDeadline {
   channel?: string;
   /** What the page said, when a post moved it (D13's merge line: "Sun 9:30 · Devpost said 9:00"). */
   was?: { at: string; quote: string; source_url: string };
+  /** Merge rule 4: a post landed inside a page edit's window, so no winner is picked ("Page and Slack disagree…"). */
+  disagree?: string;
 }
 
 export interface ShipList {
@@ -83,6 +86,8 @@ export function shipList(o: {
   shown: Shown;
   entered: string[];
   nowSec: number;
+  /** Later snapshots' field changes (merge rule 2); none when each page has one snapshot. */
+  pageChanges?: PageChange[];
 }): ShipList {
   const tz = o.event.timezone;
   const byLink = new Map(o.messages.map((m) => [m.permalink, m]));
@@ -92,21 +97,40 @@ export function shipList(o: {
   };
   const schedule = currentSchedule(o.event, o.nowSec);
 
-  // The deadline: the page's submission rule, moved by a post when one says so (by now).
-  const rules = o.entities.filter((x) => x.kind === "rule");
-  const canon = rules
+  // The deadline: the page's submission rule, merged (§3) with the schedule's submission entry as a Slack change at
+  // its post's time, authorized only for an organizer's post (D8), and with any later snapshot's edit by now.
+  // `o.entities` is each page's first snapshot; page edits made by now are merged in (a replay never sees one early).
+  const pageNow = (o.pageChanges ?? []).filter((c) => Date.parse(c.window.until) <= o.nowSec * 1000);
+  const entities = pageNow.length ? merge(o.entities, { page: pageNow, authorized: () => true }) : o.entities;
+  const rules = entities.filter((x) => x.kind === "rule");
+  const subRule = o.entities
+    .filter((x) => x.kind === "rule")
     .filter((x) => x.fields.rule_kind?.value === "submission" && typeof x.fields.deadline?.value === "string")
-    .map((x) => ({ at: String(x.fields.deadline!.value), quote: String(x.fields.text?.value ?? x.fields.deadline!.source.quote), source_url: x.fields.deadline!.source.url }))
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))[0];
+    .sort((a, b) => Date.parse(String(a.fields.deadline!.value)) - Date.parse(String(b.fields.deadline!.value)))[0];
   const slackDl = schedule.filter((x) => /\bsubmi(?:ssions?|t)\b/i.test(x.what)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at))[0];
-  let deadline: ShipDeadline | null = canon ? { ...canon, from: "page" } : null;
-  // A post that agrees with the page changes nothing: the page stays the source.
-  if (slackDl && !(canon && Date.parse(canon.at) === Date.parse(slackDl.at))) {
-    const m = fromPost(slackDl.source);
-    const quote = m ? sentenceAt(o.shown(m), slackDl.at, undefined, tz) : null;
-    if (m && quote) {
-      deadline = { at: slackDl.at, quote, from: "slack", source_url: m.permalink, channel: m.channel_name, ...(canon ? { was: canon } : {}) };
-    }
+  const post = slackDl ? fromPost(slackDl.source) : null;
+  const postQuote = post && slackDl ? sentenceAt(o.shown(post), slackDl.at, undefined, tz) : null;
+  let deadline: ShipDeadline | null = null;
+  if (subRule) {
+    // A post that agrees with the page (the same instant, however written) changes nothing: the page stays the source.
+    const slack: Change[] = post && postQuote && Date.parse(slackDl!.at) !== Date.parse(String(subRule.fields.deadline!.value))
+      ? [{ entity_id: subRule.id, field: "deadline", kind: "set", to: { value: slackDl!.at, source: { kind: "slack", url: post.permalink, quote: postQuote, captured_at: post.captured_at, posted_at: new Date(Number(post.ts) * 1000).toISOString() } } }]
+      : [];
+    const page = pageNow.filter((c) => c.entity_id === subRule.id);
+    const [m] = merge([subRule], { page, slack, authorized: (c) => c.to.source.kind !== "slack" || (!!post && o.isOrganizer(post)) });
+    const d = m!.fields.deadline!, base = baseline(m!, "deadline");
+    const text = (f: typeof d) => String(m!.fields.text?.value ?? f.source.quote);
+    deadline = {
+      at: String(d.value),
+      quote: d.source.kind === "slack" ? d.source.quote : text(d),
+      from: d.source.kind === "slack" ? "slack" : "page",
+      source_url: d.source.url,
+      ...(d.source.kind === "slack" && post ? { channel: post.channel_name } : {}),
+      ...(base && base.value !== d.value ? { was: { at: String(base.value), quote: String(subRule.fields.text?.value ?? base.source.quote), source_url: base.source.url } } : {}),
+      ...(disagreement(m!, "deadline") ? { disagree: disagreement(m!, "deadline")! } : {}),
+    };
+  } else if (post && postQuote && o.isOrganizer(post)) {
+    deadline = { at: slackDl!.at, quote: postQuote, from: "slack", source_url: post.permalink, channel: post.channel_name };
   }
 
   // 1. Required: "Submit on Devpost, not just save a draft", from the latest organizer post about drafts, then the rules.
@@ -125,12 +149,12 @@ export function shipList(o: {
 
   // 2. The tracks you entered: their entry steps (the same ids as Plan's), then their stated requirements.
   const tracks = o.entered.flatMap((id) => {
-    const t = o.entities.find((x) => x.id === id && x.kind === "track");
+    const t = entities.find((x) => x.id === id && x.kind === "track");
     if (!t) return [];
     const url = t.name.source.url;
-    const steps = entrySteps(o.entities, [id]).map((s): ShipItem => ({ id: s.id, label: s.label, quote: s.quote, from: "page", source_url: s.source_url }));
+    const steps = entrySteps(entities, [id]).map((s): ShipItem => ({ id: s.id, label: s.label, quote: s.quote, from: "page", source_url: s.source_url }));
     const quoted = new Set(steps.map((s) => s.quote));
-    const reqs = trackDetail(o.entities, id).requirements.filter((r) => !quoted.has(r)).map((r, k): ShipItem => ({ id: `${id}:req:${k}`, label: r, from: "page", source_url: url }));
+    const reqs = trackDetail(entities, id).requirements.filter((r) => !quoted.has(r)).map((r, k): ShipItem => ({ id: `${id}:req:${k}`, label: r, from: "page", source_url: url }));
     return [{ track_id: id, name: t.name.value ?? "", source_url: url, items: [...steps, ...reqs] }];
   });
 
@@ -150,7 +174,7 @@ export function shipList(o: {
       .map((x): ShipItem => ({ id: x.id, label: String(x.fields.text!.value), from: "page", source_url: x.fields.text!.source.url })),
   ];
 
-  const choices = o.entities.filter((x) => x.kind === "track").map((t) => ({ track_id: t.id, name: t.name.value ?? "" }));
+  const choices = entities.filter((x) => x.kind === "track").map((t) => ({ track_id: t.id, name: t.name.value ?? "" }));
   return { deadline, required, tracks, judging, choices };
 }
 
