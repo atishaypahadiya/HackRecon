@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseHTML } from "linkedom";
 import { snapshotPage } from "../extension/src/page.ts";
-import { checkCanon, checkJudge, deadlineInQuote, entityId, keyed, numbersIn, rematch, similarity, type RawEntity } from "./canon.ts";
+import { checkCanon, checkJudge, deadlineInQuote, entityId, keepDropped, keyed, numbersIn, rematch, similarity, type RawEntity } from "./canon.ts";
 import { coverage, figuresIn, moneyValue, statedTotal } from "./coverage.ts";
 import { redactSnapshot, needsRedaction } from "./pages.ts";
 import type { Entity } from "./schema.ts";
@@ -289,5 +289,37 @@ describe("rematch (D7)", () => {
   test("similarity ignores case, spacing and punctuation", () => {
     expect(similarity("Best  Use of Fetch.ai!", "best use of fetch ai")).toBe(1);
     expect(similarity("abc", "xyz")).toBe(0);
+  });
+});
+
+// User 2026-11-07: the 2026-11-07 re-read of Cal Hacks' Devpost page lost two entry steps the page still stated
+// (GoDaddy's "Register your domain name", Apify's "Building an actor"); a re-read must keep them and say so.
+describe("a re-read never silently drops an entry step or a requirement", () => {
+  const src = (quote: string) => ({ kind: "page" as const, url: "https://mini.devpost.com/", quote, captured_at: "2026-11-06T00:00:00Z", snapshot_hash: "h", block: 0 });
+  const f = (value: string) => ({ value, source: src(value) });
+  const track = (id: string, reqs: string[]): Entity => ({ id, kind: "track", sponsor: "Acme", name: f("[Acme] Best Use of Acme"), fields: Object.fromEntries(reqs.map((r, i) => [`requirements[${i}]`, f(r)])), history: [], origin: "page" }) as Entity;
+  const step = (id: string, track_id: string, text: string): Entity => ({ id, kind: "entry_step", sponsor: "Acme", name: f(text), fields: { track_id: f(track_id), text: f(text) }, history: [], origin: "page" }) as Entity;
+  const onPage = "You must submit your hack by October 25th @ 9 AM PST.";
+  const before = [track("t1", [onPage, "Use Acme meaningfully."]), step("s1", "t1", onPage), step("s2", "t1", "Register your domain name")];
+
+  test("lost ones come back from the previous read, unchanged, and are listed; whether the page still says it is noted", () => {
+    const after = [track("t1", ["Use Acme meaningfully."])];
+    const r = keepDropped(before, after, snap);
+    expect(r.entities.find((e) => e.id === "s2")).toEqual(before[2]);
+    expect(r.entities.find((e) => e.id === "t1")!.fields).toMatchObject({ "requirements[0]": { value: "Use Acme meaningfully." }, "requirements[1]": { value: onPage } });
+    expect(r.kept).toEqual([
+      { kind: "entry_step", id: "s1", value: onPage, quote_on_page: true },
+      { kind: "entry_step", id: "s2", value: "Register your domain name", quote_on_page: false },
+      { kind: "requirement", id: "t1", value: onPage, quote_on_page: true },
+    ]);
+    expect(after).toEqual([track("t1", ["Use Acme meaningfully."])]); // inputs untouched
+  });
+  test("nothing is kept when the new read has them: same id, or the same text on the same track under a new id", () => {
+    const same = [track("t1", ["use acme   meaningfully.", onPage]), step("s1", "t1", onPage), step("s2-new", "t1", "Register your  domain name")];
+    expect(keepDropped(before, same, snap)).toEqual({ entities: same, kept: [] });
+  });
+  test("a first read has nothing to keep; a requirement whose track is gone isn't kept (it's in no_longer_on_page)", () => {
+    expect(keepDropped([], before, snap).kept).toEqual([]);
+    expect(keepDropped([track("t9", ["Only here."])], [], snap)).toEqual({ entities: [], kept: [] });
   });
 });

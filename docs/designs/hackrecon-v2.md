@@ -12,6 +12,18 @@ Predecessor: `docs/designs/hackrecon-demo-scope.md` (v1, decisions D1–D26). It
 - Quotes on Claim, Plan and Ship are the post's plain text, names included (`board.ts` excerpts, hr.ts `shown`). Model inputs (classifier, grouping, prelabel) are still built redacted; changing them re-runs those passes and is listed in TODOS.
 - Hacker-only channels are ordinary Sync targets (after the config channels); sync-ingest no longer refuses their text. The authors-only reader stays for files already captured.
 - Demo run (2026-11-07, board at `?now=2026-10-24T12:00-07:00`, 390 and 1440 wide, no console errors): repo link → 17 drafts from Hindsight @ db92f7d → Plan in 8.1 s cold (tracks at 5.0 s; 149 ms cached): 4 likely tracks + 1 possible, the Best Actor gap with its repo lines, 2 credits, the Anthropic workshop at 1 PM, 4 sponsors' booth questions and reps → Ship: the three entered tracks state nothing to check; adding Best Actor shows its gap. Two fixes: Plan's sections and its Next-for-you times now take the board's review clock (Sessions was empty and the banner showed Sunday's 9:30 extension on Saturday); Ship already did.
+- **Spend guard (user 2026-11-07, `pipeline/costguard.ts`):**
+  - Every client hr makes is wrapped. Before each call it estimates the call from the request: input at 2 characters a token, uncached (measured 2.49 on the Devpost canon request and 2.62 on Slack posts with the token-counting endpoint), plus the call's whole output budget, at list price.
+  - A run whose spend so far plus the next call would pass $1 is refused unless `--yes` is given.
+  - classify, prelabel, group, canon, fit-eval and prefill-eval print and check the run's total before the first call. canon's judge and prefill-eval's later fit rankings are checked as they run.
+  - The board's Plan, Recheck gaps and repo drafts are guarded per request (`hr board --yes` lifts the limit).
+  - On today's data, `hr canon --force` prints "2 model calls (claude-opus-5-5 ×2): estimated at most $2.64" and stops with exit 2.
+- **`hr sync` calls no model** unless given `--canon` (then `hr canon --judge`, under the guard). Changed canon pages are listed instead.
+- **A canon re-read keeps what it lacks (user 2026-11-07, `canon.ts keepDropped`):**
+  - An entry step or requirement the previous read had and the new read lacks is carried over unchanged.
+  - It is printed and listed in the page's `kept_from_previous`, with whether its quote is still on the page.
+  - Ids with no entity left are printed too (they were already in `no_longer_on_page`).
+  - Replayed on today's bad re-read, it keeps both lost steps; both quotes are still on the page.
 - Canon: the 2026-11-07 `hr sync` re-extraction ($2.76, not announced in advance) dropped two entry steps the page still states (GoDaddy's "Register your domain name", Apify's "Building an actor"); the 2026-11-06 records were restored and today's are kept outside the repo.
 
 ## The brief (user, 2026-10-28, verbatim)
