@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 // hr: HackRecon pipeline CLI. Subcommands land here as tasks ship (compare first).
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
@@ -59,6 +60,7 @@ import {
   type Labels,
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById } from "./roles.ts";
+import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import {
   BOARD_DATA_PATH,
@@ -71,7 +73,7 @@ import {
   CAPTURES_DIR,
   DISCOVERED_PATH,
   FIT_CACHE_PATH,
-  GAPS_CACHE_PATH,
+  GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH,
   SHIP_GAPS_PATH,
   PREFILL_CACHE_PATH,
   PRODUCTS_PATH,
@@ -130,10 +132,11 @@ import {
 } from "./canon.ts";
 import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
-import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked } from "./fit.ts";
+import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked, type SponsorAliases } from "./fit.ts";
 import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
 import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
-import { checkoutRepo, repoFacts, repoTexts } from "./repo.ts";
+import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
+import { planStream, type PlanEvent } from "./planstream.ts";
 import { prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
 import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
@@ -194,8 +197,10 @@ const USAGE = `usage:
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline]
-  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."]
+  bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
+      Runs the board's Plan stream in-process and appends its timing to ${PLAN_TIMINGS_PATH}. --fresh skips the fit and
+      gap caches (and saves nothing) to time an input as if it were new: that makes model calls.
   bun run hr prefill --repo https://github.com/<owner>/<repo>
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
@@ -232,6 +237,11 @@ const USAGE = `usage:
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
       receipt: URL merge only, no Opus credit pass, reps unconfirmed; it prints its basis and gaps.
   bun run hr organizers [--export DIR]
+  bun run hr person-links [--export DIR]
+      Links Slack accounts that are one person, so a rep with two accounts counts once (user 2026-11-07). Checks
+      accounts on the same sponsor's side, in order: same profile email, same avatar image (fetched from Slack's
+      image CDN as users.json lists it, hashed, discarded; macOS sips), same real name + title + company. Never by
+      name alone. Writes ${PERSON_LINKS_PATH} (ids and hashed evidence).
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
   bun run hr classify [--labeled-only] [--dry-run] [--limit N] [--concurrency N] [--show MESSAGE_ID]
@@ -239,7 +249,7 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -247,6 +257,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "record-run") return recordRun(rest);
   if (cmd === "pool") return pool(rest);
   if (cmd === "organizers") return organizers(rest);
+  if (cmd === "person-links") return personLinks(rest);
   if (cmd === "classify") return classify(rest);
   if (cmd === "gate") return gate(rest);
   if (cmd === "label") return label(rest);
@@ -823,6 +834,7 @@ async function board(args: string[]): Promise<number> {
   const event = readEvent();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
+  const person = loadPersonKey();
   const labels = readLabels();
   const messages = readMessages();
   const data = boardData({
@@ -834,7 +846,8 @@ async function board(args: string[]): Promise<number> {
     messages,
     sponsors,
     offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
-    role: rolesById(messages, sponsors, organizerIds),
+    role: rolesById(messages, sponsors, organizerIds, person),
+    person,
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
     permalinks: new Map(labels.map((r) => [r.message_id, r.permalink])),
   });
@@ -852,7 +865,8 @@ async function board(args: string[]): Promise<number> {
     port: Number(values.port),
     async fetch(req) {
       const path = new URL(req.url).pathname;
-      if (req.method === "POST" && path === "/plan") {
+      if (req.method === "POST" && path === "/plan/stream") {
+        // P2: Plan's sections as NDJSON, one line per section as it's ready (planstream.ts), tracks first.
         if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
         const text = await req.text();
         if (text.length > 16_000) return json({ error: "request too large" }, 413);
@@ -864,16 +878,36 @@ async function board(args: string[]): Promise<number> {
         }
         const input = parsePlanBody(body);
         if ("error" in input) return json(input, 400);
-        const { entities, event, aliases } = planContext();
-        const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
-        const r = await planTracks(anthropicClient(), input, entities, event, cache, aliases);
-        if ("error" in r) {
-          console.error(`plan: couldn't rank tracks: ${r.error}`);
-          return json({ error: "couldn't rank tracks" }, 503);
-        }
-        if (r.from === "model") writeJsonFile(FIT_CACHE_PATH, cache);
-        console.log(`plan: tracks in ${r.ms} ms (${r.from})`);
-        return json({ tracks: r.items.map((t) => ({ ...t, detail: trackDetail(entities, t.track_id) })), booths: boothBlocks(boothQuestions(r.items, input)), from: r.from, ms: r.ms });
+        const ctx = planContext();
+        const enc = new TextEncoder();
+        let open = true;
+        const stream = new ReadableStream<Uint8Array>({
+          async start(ctrl) {
+            // Read to the end even if the page went away (it typed again): finished model calls are still cached.
+            await runPlanStream(input, ctx, { via: "board" }, (e) => {
+              if (!open) return;
+              // Errors stay in the server log; the page shows its own sentence.
+              const out =
+                "error" in e
+                  ? { section: e.section, ms: e.ms, error: true }
+                  : e.section === "tracks"
+                    ? { section: e.section, ms: e.ms, from: e.from, tracks: e.tracks.map((t) => ({ ...t, detail: trackDetail(ctx.entities, t.track_id) })) }
+                    : e.section === "gaps"
+                      ? { section: e.section, ms: e.ms, from: e.from, gaps: e.gaps, checked: e.checked, repo_lines: e.facts.repo }
+                      : e;
+              try {
+                ctrl.enqueue(enc.encode(JSON.stringify(out) + "\n"));
+              } catch {
+                open = false;
+              }
+            });
+            if (open) ctrl.close();
+          },
+          cancel() {
+            open = false;
+          },
+        });
+        return new Response(stream, { headers: { ...headers, "Content-Type": "application/x-ndjson; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
       }
       if (req.method === "POST" && path === "/ship/gaps") {
         // Ship's Recheck gaps (P6 renders it): the entered tracks against the repo's latest commit.
@@ -931,38 +965,6 @@ async function board(args: string[]): Promise<number> {
         writeJsonFile(PREFILL_CACHE_PATH, cache);
         console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
         return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
-      }
-      if (req.method === "POST" && path === "/plan/gaps") {
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const text = await req.text();
-        if (text.length > 16_000) return json({ error: "request too large" }, 413);
-        let body: unknown;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          return json({ error: "not JSON" }, 400);
-        }
-        const input = parsePlanBody(body);
-        if ("error" in input) return json(input, 400);
-        const { entities, event, aliases } = planContext();
-        // The ranking was just made by POST /plan, so it comes from the cache; the board sends no track list to trust.
-        const r = await planTracks(anthropicClient(), input, entities, event, readJsonFile<FitCache>(FIT_CACHE_PATH, {}), aliases);
-        if ("error" in r) return json({ error: "couldn't rank tracks" }, 503);
-        const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
-        let lines: ProjectFact[] = [];
-        if (input.repo) {
-          const repo = checkoutRepo(input.repo);
-          if ("error" in repo) console.error(`plan: ${repo.error}`);
-          else lines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
-        }
-        const g = await planGaps(anthropicClient(), r.items, entities, input, lines, gcache);
-        if ("error" in g) {
-          console.error(`plan: couldn't check requirements: ${g.error}`);
-          return json({ error: "couldn't check requirements" }, 503);
-        }
-        if (g.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
-        console.log(`plan: gaps in ${g.ms} ms (${g.from})`);
-        return json({ gaps: g.gaps, checked: g.checked, repo_lines: g.facts.repo, booths: boothBlocks(boothQuestions(r.items, input, g.gaps)) });
       }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
       if (path === "/plan/meta") {
@@ -1411,8 +1413,51 @@ interface FitCached {
   calls: number;
 }
 
+type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
+
+/** Runs Plan's stream (planstream.ts) with the real ranker, repo and gap check, hands each event to `on`, then saves
+ *  what the model added to the caches and appends one timing line (PLAN_TIMINGS_PATH). `fresh` skips both caches
+ *  and saves nothing: it times an input as if it were new. */
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+  const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
+  const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+  const client = anthropicClient();
+  const events: PlanEvent[] = [];
+  for await (const e of planStream({
+    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases),
+    repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
+    repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
+    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache),
+    booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
+    log: (l) => console.error(l),
+  })) {
+    if ("error" in e) console.error(`plan: ${e.section}: ${e.error}`);
+    events.push(e);
+    on(e);
+  }
+  const of = (section: string) => events.find((e) => e.section === section && !("error" in e)) as Extract<PlanEvent, { from: string }> | undefined;
+  if (!opts.fresh) {
+    if (of("tracks")?.from === "model") writeJsonFile(FIT_CACHE_PATH, fcache);
+    if (of("gaps")?.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
+  }
+  const done = events.at(-1) as Extract<PlanEvent, { section: "done" }>;
+  const timing = {
+    at: new Date().toISOString(),
+    via: opts.via,
+    ...(opts.fresh ? { fresh: true } : {}),
+    first: done.first,
+    total_ms: done.ms,
+    sections: Object.fromEntries(events.filter((e) => e.section !== "done").map((e) => [e.section, "error" in e ? { ms: e.ms, error: true } : { ms: e.ms, ...("from" in e ? { from: e.from } : {}) }])),
+    repo: !!input.repo,
+  };
+  mkdirSync(dirname(PLAN_TIMINGS_PATH), { recursive: true });
+  appendFileSync(PLAN_TIMINGS_PATH, JSON.stringify(timing) + "\n");
+  console.log(`plan: first section ${done.first ? `(${done.first.section}) in ${done.first.ms} ms` : "never"}; all in ${done.ms} ms (${Object.entries(timing.sections).map(([k, v]) => `${k} ${"from" in v ? v.from : "error" in v ? "error" : ""}`.trim()).join(", ")})`);
+  return events;
+}
+
 async function planCli(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { idea: { type: "string" }, stack: { type: "string" }, from: { type: "string" }, repo: { type: "string" }, fresh: { type: "boolean" } } });
   // A fixture's stack is the CLI string or a list of {name, used_for} (a used-for may hold commas).
   const dog = values.from ? readJsonFile<{ idea: string; stack: string | StackItem[]; targeted?: string[]; repo?: string } | null>(values.from, null) : null;
   if (values.from && !dog) {
@@ -1425,42 +1470,30 @@ async function planCli(args: string[]): Promise<number> {
     return 2;
   }
   const input: PlanInput = { idea, stack: values.stack !== undefined || typeof dog?.stack !== "object" ? parseStack(values.stack ?? (dog?.stack as string | undefined)) : dog.stack.length ? dog.stack : null };
-  const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities);
-  const cache = readJsonFile<FitCache>(FIT_CACHE_PATH, {});
-  const r = await planTracks(anthropicClient(), input, entities, readEvent(), cache, sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})));
-  if ("error" in r) {
-    console.error(`couldn't rank tracks: ${r.error}`);
-    return 1;
-  }
-  writeJsonFile(FIT_CACHE_PATH, cache);
-
-  // Gaps first, so each prints under its track as on the board: likely tracks' stated requirements and entry steps
-  // against the project, and the repo when linked.
   const repoUrl = values.repo ?? dog?.repo;
   if (repoUrl) input.repo = repoUrl;
-  let repoLines: ProjectFact[] = [];
-  let repoNote = "";
-  if (repoUrl) {
-    const repo = checkoutRepo(repoUrl);
-    if ("error" in repo) console.error(`repo: ${repo.error}; checking against the description and stack only`);
-    else {
-      repoLines = repoFacts(repo, r.items.filter((t) => t.fit === "likely").flatMap((t) => t.product_names));
-      repoNote = `repo ${repo.url} @ ${repo.sha.slice(0, 7)}: ${repoLines.length} lines naming the likely tracks' products`;
-    }
-  }
-  const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
-  const g = await planGaps(anthropicClient(), r.items, entities, input, repoLines, gcache);
-  if ("error" in g) {
-    console.error(`couldn't check requirements: ${g.error}`);
+  // The board's stream (P2), run in-process: the same steps, caches and timing line.
+  const ctx: PlanContext = { entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
+  const events = await runPlanStream(input, ctx, { via: "cli", fresh: values.fresh }, () => {});
+  const tr = events.find((e) => e.section === "tracks");
+  const ge = events.find((e) => e.section === "gaps");
+  if (!tr || "error" in tr || tr.section !== "tracks") {
+    console.error("couldn't rank tracks (see above)");
     return 1;
   }
-  writeJsonFile(GAPS_CACHE_PATH, gcache);
+  if (!ge || "error" in ge || ge.section !== "gaps") {
+    console.error("couldn't check requirements (see above)");
+    return 1;
+  }
+  const r = { items: tr.tracks, from: tr.from, ms: tr.ms, usage: tr.usage };
+  const g = { gaps: ge.gaps, checked: ge.checked, facts: ge.facts, from: ge.from, ms: ge.ms, usage: ge.usage };
+  const repoNote = ge.repo ? `repo ${ge.repo.url} @ ${ge.repo.commit.slice(0, 7)}: ${ge.facts.repo} lines naming the likely tracks' products` : "";
 
   // Every line is wrapped at spaces here, so the terminal never soft-wraps one (a soft wrap can lose the space).
   const width = cliWidth();
   const out = (line: string) => console.log(wrapText(line, width));
-  out(`Tracks to target (${r.from}, ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
-  out(`Gaps (${g.from}, ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
+  out(`Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
+  out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
   let shown = "";
   for (const t of r.items) {
     if (t.fit === "possible" && shown !== "possible") out("\n  Also possible");
@@ -1822,6 +1855,7 @@ function receiptPreview(args: string[]): number {
   const messages = readMessages();
   const last = readRuns().at(-1);
   const organizerIds = loadOrganizerIds();
+  const person = loadPersonKey();
   const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
   const fresh = grouped && grouped.input_hash === groupInput(sponsors).input_hash;
   if (grouped && !fresh) console.log(`${GROUP_PATH} is stale (the credit labels, capture or prompt changed): using URL merge; rerun bun run hr group`);
@@ -1833,12 +1867,89 @@ function receiptPreview(args: string[]): number {
     messages,
     sponsors,
     channels: last?.channels ?? [],
-    role: rolesById(messages, sponsors, organizerIds),
+    role: rolesById(messages, sponsors, organizerIds, person),
+    person,
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
   const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";
   const basis = fresh ? `Opus grouping ${grouped.input_hash} (${grouped.posts} credit posts)` : `classifier prompt ${run.prompt_hash}${stale}, ${run.classified.length} messages classified`;
   console.log(formatPreview(p, `${basis}, run ${last?.run_id ?? "none"}`));
+  return 0;
+}
+
+async function personLinks(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const dir = fromCaller(values.export!);
+  const usersFile = join(dir, "users.json");
+  const users = loadExport(dir).users;
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const messages = readMessages();
+  // Roles from each account's own posts (no links yet); a link only merges accounts already on one sponsor's side.
+  const role = rolesById(messages, sponsors, loadOrganizerIds());
+  const sides = new Map<string, Set<string>>();
+  for (const m of messages) {
+    const s = sponsors[m.channel_name];
+    if (!s || s.sponsor === "event" || !m.author_id || m.author_kind === "bot" || role(m) !== "sponsor-side") continue;
+    sides.set(s.sponsor, (sides.get(s.sponsor) ?? new Set()).add(m.author_id));
+  }
+  type Raw = SnapshotUser;
+  const evidence = new Map<string, AccountEvidence>();
+  const avatars: PersonLinksFile["avatars"] = {};
+  const account = async (id: string): Promise<AccountEvidence> => {
+    if (evidence.has(id)) return evidence.get(id)!;
+    const raw = (users.get(id) as Raw | undefined) ?? { id };
+    const p = raw.profile ?? {};
+    const e = profileEvidence(raw);
+    if (p.is_custom_image && p.image_192) {
+      const h = await avatarHashes(p.image_192);
+      if ("error" in h) console.error(`person-links: ${id}: avatar not hashed (${h.error})`);
+      else (e.avatar = h), (avatars[id] = h);
+    }
+    evidence.set(id, e);
+    return e;
+  };
+  const checked: PersonLinksFile["checked"] = [];
+  const links: PersonLink[] = [];
+  let closest: number | null = null;
+  for (const [sponsor, ids] of [...sides].sort()) {
+    if (ids.size < 2) continue;
+    const list = [...ids].sort();
+    checked.push({ scope: `sponsor-side for ${sponsor}`, accounts: list });
+    for (let i = 0; i < list.length; i++)
+      for (let j = i + 1; j < list.length; j++) {
+        const [a, b] = [await account(list[i]!), await account(list[j]!)];
+        const ev = linkEvidence(a, b);
+        if (ev) links.push({ ids: [a.id, b.id], scope: `sponsor-side for ${sponsor}`, evidence: ev });
+        else if (a.avatar && b.avatar) closest = Math.min(closest ?? 256, hammingHex(a.avatar.dhash, b.avatar.dhash));
+      }
+  }
+  // The avatar threshold's margin: the closest pair of different people among every avatar hashed here.
+  const hashed = Object.entries(avatars);
+  let closestAny: number | null = null;
+  const linkedPair = new Set(links.map((l) => l.ids.join("|")));
+  for (let i = 0; i < hashed.length; i++)
+    for (let j = i + 1; j < hashed.length; j++) {
+      const ids = [hashed[i]![0], hashed[j]![0]].sort().join("|");
+      if (!linkedPair.has(ids)) closestAny = Math.min(closestAny ?? 256, hammingHex(hashed[i]![1].dhash, hashed[j]![1].dhash));
+    }
+  const all = [...users.values()] as Raw[];
+  const out: PersonLinksFile = {
+    snapshot: { file: "users.json", sha256: createHash("sha256").update(readFileSync(usersFile)).digest("hex") },
+    built_at: new Date().toISOString(),
+    rule_notes: [
+      `email: ${all.filter((u) => u.profile?.email).length} of ${all.length} accounts in this snapshot show one`,
+      ...(all.some((u) => u.profile?.company) ? [] : ["profile: users.json has no company field, so real name + title + company can't hold"]),
+      `avatar: identical bytes, or a 16x16 difference hash within ${AVATAR_MAX_BITS} of 256 bits; custom images only`,
+    ],
+    checked,
+    avatars,
+    links,
+  };
+  writeJsonFile(PERSON_LINKS_PATH, out);
+  console.log(`wrote ${PERSON_LINKS_PATH}: ${links.length} link${links.length === 1 ? "" : "s"} among ${checked.reduce((n, c) => n + c.accounts.length, 0)} accounts on ${checked.length} sponsors' sides (${hashed.length} avatars hashed)`);
+  for (const l of links) console.log(`  ${l.ids.join(" = ")}  ${l.scope}  ${JSON.stringify(l.evidence)}`);
+  for (const n of out.rule_notes) console.log(`  rule note: ${n}`);
+  console.log(`  closest unlinked avatars: ${closest ?? "none"} bits within a sponsor's side, ${closestAny ?? "none"} across all hashed (threshold ${AVATAR_MAX_BITS})`);
   return 0;
 }
 

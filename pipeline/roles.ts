@@ -71,29 +71,32 @@ export function posterRole(m: Message, channel: SponsorEntry | undefined, organi
  * "LaurenElize (Annapurna Labs)" became "LaurenElize" between the Oct 27 capture and the Nov 6 sync).
  * posterRole reads one post's signals (name tag, inline title, external badge). Here a signal seen on any of a
  * user's posts holds for all of them: organizer everywhere; sponsor-side for that sponsor's channels, and in event
- * channels. A post with no author_id gets no role ("other"): names alone never key a person.
+ * channels. A post with no author_id gets no role ("other"): names alone never key a person. `person` maps an id to
+ * its person (people.ts links, built from hashed evidence, never names), so two accounts of one rep share signals.
  */
-export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>): (m: Message) => PosterRole {
+export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>, person: (id: string) => string = (id) => id): (m: Message) => PosterRole {
   const all = Object.values(sponsors);
-  const organizer = new Set(organizerIds);
+  const organizer = new Set([...organizerIds].map(person));
   const sponsorSide = new Set<string>();
   const anySponsor = new Set<string>();
   for (const m of messages) {
     if (!m.author_id || m.author_kind === "bot") continue;
     const ch = sponsors[m.channel_name];
     const r = posterRole(m, ch, organizerIds, all);
-    if (r === "organizer") organizer.add(m.author_id);
+    const who = person(m.author_id);
+    if (r === "organizer") organizer.add(who);
     if (r === "sponsor-side") {
-      sponsorSide.add(`${m.author_id}|${ch?.sponsor ?? "event"}`);
-      anySponsor.add(m.author_id);
+      sponsorSide.add(`${who}|${ch?.sponsor ?? "event"}`);
+      anySponsor.add(who);
     }
   }
   return (m) => {
     if (!m.author_id) return "other";
-    if (organizer.has(m.author_id)) return "organizer";
+    const who = person(m.author_id);
+    if (organizer.has(who)) return "organizer";
     const ch = sponsors[m.channel_name];
     const event = !ch || ch.sponsor === "event";
-    if (event ? anySponsor.has(m.author_id) : sponsorSide.has(`${m.author_id}|${ch.sponsor}`)) return "sponsor-side";
+    if (event ? anySponsor.has(who) : sponsorSide.has(`${who}|${ch.sponsor}`)) return "sponsor-side";
     return "other";
   };
 }

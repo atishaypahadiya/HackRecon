@@ -5,7 +5,8 @@
 //
 // events/<slug>/
 //   config/event.json, config/sponsors.json   tracked: hand-written, no workspace text
-//   config/organizers.json                    gitignored: names and Slack ids
+//   config/organizers.json                    gitignored: Slack ids
+//   config/person_links.json                  gitignored: Slack ids linked as one person, with hashed evidence
 //   captures/ data/ review/ fixtures/         gitignored: workspace content
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -16,12 +17,14 @@ export const EVENTS_DIR = join(REPO_ROOT, "events");
 export const DEFAULT_EVENT = "current";
 
 /** Paths under an event directory that hold workspace content and must never be tracked by git. */
-export const UNTRACKED_EVENT_PATHS = ["captures/", "review/", "data/", "fixtures/", "config/organizers.json"] as const;
+export const UNTRACKED_EVENT_PATHS = ["captures/", "review/", "data/", "fixtures/", "config/organizers.json", "config/person_links.json"] as const;
 
 // Event-relative paths.
 export const EVENT_PATH = "config/event.json";
 export const SPONSORS_PATH = "config/sponsors.json";
 export const ORGANIZERS_PATH = "config/organizers.json";
+/** Same-person links between Slack ids (people.ts, `hr person-links`). */
+export const PERSON_LINKS_PATH = "config/person_links.json";
 export const CAPTURES_DIR = "captures";
 /** Page snapshots from the extension's "Capture this page" (D11): canon. */
 export const PAGES_DIR = "captures/pages";
@@ -54,6 +57,8 @@ export const CANON_JUDGE_FIXTURES_PATH = "review/canon_judge.fixtures.json";
 /** Idea-fit rankings by input hash (shared by `hr fit-eval` and, later, POST /fit). */
 export const FIT_CACHE_PATH = "data/fit_cache.json";
 export const GAPS_CACHE_PATH = "data/gaps_cache.json";
+/** One line per Plan request: time to the first section and to each section, cache or model (P2, D4's 8 s target). */
+export const PLAN_TIMINGS_PATH = "data/plan_timings.jsonl";
 export const SHIP_GAPS_PATH = "data/ship_gaps.json";
 export const PREFILL_CACHE_PATH = "data/prefill_cache.json";
 /** Sponsor products and their names, packages, hosts and code terms (P1b's sponsor-product pass). */

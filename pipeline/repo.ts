@@ -4,7 +4,7 @@
 // clone with no working tree: depth 1, blobs over 300 kB left on the server, nothing checked out. So nothing from it
 // is ever on disk as a file to run, and a symlink is only a blob holding a path, which is skipped. Text is read from
 // git's object store and reaches a model only as quoted lines with their path.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -37,20 +37,42 @@ const git = (args: string[], cwd?: string, input?: string) => execFileSync("git"
 export const BLOB_LIMIT = 300_000;
 const remote = (p: { owner: string; name: string }) => `https://github.com/${p.owner}/${p.name}.git`;
 
-/** Clone once (partial, no checkout) and reuse it. With `latest`, first move it to the default branch's newest commit
- *  (Ship's recheck): fetch that commit the same way and point HEAD at it. */
-export function checkoutRepo(url: string, opts: { latest?: boolean } = {}): Repo | { error: string } {
+/** The git commands that clone once (partial, no checkout) or, with `latest`, move the clone to the default branch's
+ *  newest commit (Ship's recheck): fetch that commit the same way and point HEAD at it. */
+function checkoutSteps(url: string, opts: { latest?: boolean }): { url: string; dir: string; steps: [string[], string?][] } | { error: string } {
   const p = parseRepoUrl(url);
   if (!p) return { error: "only public https://github.com/<owner>/<repo> links are read" };
   const dir = join(REPOS_DIR, `${p.owner}__${p.name}`);
+  const filter = `--filter=blob:limit=${BLOB_LIMIT}`;
+  const steps: [string[], string?][] = !existsSync(join(dir, ".git"))
+    ? [[["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", "--no-checkout", filter, remote(p), dir]]]
+    : opts.latest
+      ? [[["fetch", "--quiet", "--depth", "1", "--no-tags", filter, "origin", "HEAD"], dir], [["update-ref", "HEAD", "FETCH_HEAD"], dir]]
+      : [];
+  return { url: `https://github.com/${p.owner}/${p.name}`, dir, steps };
+}
+
+export function checkoutRepo(url: string, opts: { latest?: boolean } = {}): Repo | { error: string } {
+  const c = checkoutSteps(url, opts);
+  if ("error" in c) return c;
   try {
-    const filter = `--filter=blob:limit=${BLOB_LIMIT}`;
-    if (!existsSync(join(dir, ".git"))) git(["clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", "--no-checkout", filter, remote(p), dir]);
-    else if (opts.latest) {
-      git(["fetch", "--quiet", "--depth", "1", "--no-tags", filter, "origin", "HEAD"], dir);
-      git(["update-ref", "HEAD", "FETCH_HEAD"], dir);
-    }
-    return { url: `https://github.com/${p.owner}/${p.name}`, dir, sha: git(["rev-parse", "HEAD"], dir) };
+    for (const [args, cwd] of c.steps) git(args, cwd);
+    return { url: c.url, dir: c.dir, sha: git(["rev-parse", "HEAD"], c.dir) };
+  } catch (e) {
+    return { error: `couldn't read ${url}: ${(e as Error).message.split("\n")[0]}` };
+  }
+}
+
+const gitAsync = (args: string[], cwd?: string) =>
+  new Promise<string>((ok, fail) => execFile("git", args, { cwd, encoding: "utf8", env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (e, out) => (e ? fail(e) : ok(out.trim()))));
+
+/** checkoutRepo without blocking the server: Plan's stream clones while the tracks are ranked (P2). */
+export async function checkoutRepoAsync(url: string, opts: { latest?: boolean } = {}): Promise<Repo | { error: string }> {
+  const c = checkoutSteps(url, opts);
+  if ("error" in c) return c;
+  try {
+    for (const [args, cwd] of c.steps) await gitAsync(args, cwd);
+    return { url: c.url, dir: c.dir, sha: await gitAsync(["rev-parse", "HEAD"], c.dir) };
   } catch (e) {
     return { error: `couldn't read ${url}: ${(e as Error).message.split("\n")[0]}` };
   }

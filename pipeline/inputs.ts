@@ -4,6 +4,7 @@ import { buildInput, type ClassifyInput } from "./classify.ts";
 import type { LabelRow } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
+import { loadPersonKey } from "./people.ts";
 import { loadOrganizerIds, rolesById } from "./roles.ts";
 import type { Message } from "./schema.ts";
 
@@ -16,7 +17,7 @@ export function redactedInputs(
   organizerIds: Set<string> = loadOrganizerIds(),
 ): ClassifyInput[] {
   const redact = compileRedactor(buildNameList(new Set(captured.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
-  const role = rolesById([...captured, ...extra], sponsors, organizerIds);
+  const role = rolesById([...captured, ...extra], sponsors, organizerIds, loadPersonKey());
   return [...captured, ...extra].map((m) => buildInput(m, { role: role(m), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash }));
 }
 
