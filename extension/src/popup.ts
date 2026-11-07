@@ -7,6 +7,10 @@ const status = document.getElementById("status")!;
 const pageButton = document.getElementById("capture-page") as HTMLButtonElement;
 const pageStatus = document.getElementById("page-status")!;
 
+chrome.storage.session.get("pull_status").then((r) => {
+  if (r.pull_status) syncStatus.textContent = `Last background pull ${r.pull_status}`;
+});
+
 syncButton.addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url?.startsWith("https://app.slack.com/client/")) {
@@ -14,11 +18,33 @@ syncButton.addEventListener("click", async () => {
     return;
   }
   syncButton.disabled = true;
+  // The API pull (user 2026-11-07): the open Slack tab's own session, handed to the service worker, which reads the
+  // event's channels through read-only methods in the background. Without one, the tab is synced as rendered.
+  const [found] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      try {
+        const team = location.pathname.split("/")[2] ?? "";
+        const t = (JSON.parse(localStorage.getItem("localConfig_v2") ?? "null") as { teams?: Record<string, { token?: string; url?: string; name?: string }> } | null)?.teams?.[team];
+        return t?.token && t.url ? { token: t.token, origin: new URL(t.url).origin, team, workspace: t.name ?? "" } : null;
+      } catch {
+        return null;
+      }
+    },
+  });
+  const slack = found?.result;
+  if (slack) {
+    const r = (await chrome.runtime.sendMessage({ type: "api-start", slack })) as { error?: string } | undefined;
+    if (!r?.error) {
+      syncStatus.textContent = `Syncing ${slack.workspace || "this workspace"} in the background through Slack's read-only API, then every 30 minutes while the browser is open. Files land in Downloads/hackrecon/sync/.`;
+      return;
+    }
+  }
   // The event's channels, written at build time from its config (extension/build-config.ts).
   const config = await fetch(chrome.runtime.getURL("dist/sync-config.json")).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (c: unknown) => void ((window as unknown as { __hackreconSyncConfig: unknown }).__hackreconSyncConfig = c), args: [config] });
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/sync.js"] });
-  syncStatus.textContent = "Syncing in the tab. Its overlay shows progress; files land in Downloads/hackrecon/sync/.";
+  syncStatus.textContent = "Syncing in the tab as rendered (no Slack session to pull with). Its overlay shows progress; files land in Downloads/hackrecon/sync/.";
 });
 
 button.addEventListener("click", async () => {

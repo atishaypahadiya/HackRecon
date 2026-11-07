@@ -29,6 +29,8 @@ export interface ClassifyRun {
   classified: string[];
   /** Message ids that failed this run (D10): scored as predicted negative. */
   errors: string[];
+  /** Messages whose items come from an earlier prompt's answer (classify --new). */
+  earlier_prompts?: number;
   /** This run's API calls only (cached messages cost nothing). */
   usage?: Usage;
   cost_usd?: number;
@@ -323,6 +325,16 @@ export async function classifyOne(
 }
 
 /** Cached items as schema Items. Sponsor names go through sponsors.json (sponsor or alias → sponsor). */
+/** What to send and which answer each message keeps. Normally: whatever has no answer under this prompt and input.
+ *  onlyNew (classify --new, user 2026-11-07): only messages never classified under any prompt, so a sync's new posts
+ *  cost a few calls even after event.json changed the prompt; the rest keep their newest answer. */
+export function classifyPlan<I extends { key: string; message: { id: string } }>(inputs: I[], cache: Cache, onlyNew: boolean) {
+  const newest = new Map<string, CacheEntry>();
+  if (onlyNew) for (const e of Object.values(cache)) if ((newest.get(e.message_id)?.classified_at ?? "") < e.classified_at) newest.set(e.message_id, e);
+  const answer = (i: I): CacheEntry | undefined => cache[i.key] ?? newest.get(i.message.id);
+  return { todo: inputs.filter((i) => !answer(i)), answer };
+}
+
 export function toItems(entry: CacheEntry, sponsors: Sponsors): Item[] {
   const canon = new Map<string, string>();
   for (const s of Object.values(sponsors)) for (const n of [s.sponsor, ...s.aliases]) canon.set(n.toLowerCase(), s.sponsor);

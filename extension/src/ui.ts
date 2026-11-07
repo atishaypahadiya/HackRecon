@@ -22,7 +22,7 @@ export function overlay(stopLabel = "Stop and download"): { set(msg: string): vo
 }
 
 /** Files "Sync this event" saves: only under Downloads/hackrecon/sync/<stamp>/, plain names, no "..". */
-export const SYNC_FILE = /^hackrecon\/sync\/[0-9TZ-]+\/(?:(?:captures|slack-dom)\/)?[A-Za-z0-9][\w.-]*$/;
+export const SYNC_FILE = /^hackrecon\/sync\/[0-9TZ-]+\/(?:(?:captures|slack-dom|pull)\/)?[A-Za-z0-9][\w.-]*$/;
 
 /** Under GURL's 2 MB URL limit once base64-encoded (4/3) into a data: URL. */
 export const PART_BYTES = 1_200_000;
@@ -34,7 +34,7 @@ export function splitParts(name: string, bytes: Uint8Array, max = PART_BYTES): {
   return Array.from({ length: n }, (_, i) => ({ name: `${name}.part-${i + 1}-of-${n}`, bytes: bytes.subarray(i * max, (i + 1) * max) }));
 }
 
-function base64(bytes: Uint8Array): string {
+export function base64(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);

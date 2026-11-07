@@ -8,7 +8,7 @@ import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
 import Anthropic from "@anthropic-ai/sdk";
 import { captureFiles, loadCapture, threadCaptureFiles, type LoadedCapture } from "./captures.ts";
-import { CostGuard, CostRefused, guardClient, plannedCall } from "./costguard.ts";
+import { CostGuard, CostRefused, describeCalls, guardClient, plannedCall } from "./costguard.ts";
 import {
   classifyOne,
   MAX_TOKENS,
@@ -21,12 +21,14 @@ import {
   toItems,
   writeJsonFile,
   type Cache,
+  classifyPlan,
   type ClassifyError,
   type ClassifyInput,
   type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
 import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
+import { apiKeys, captureFromApi, compareKeys, exportKeys, type ApiChannelFile, type ApiUser, type KeyCompare } from "./apiconvert.ts";
 import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
 import { durationText, shipList, type ShipItem, type ShipList } from "./shiplist.ts";
@@ -72,6 +74,7 @@ import {
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
+import type { ExportUser } from "./export.ts";
 import {
   BOARD_DATA_PATH,
   CACHE_PATH,
@@ -83,6 +86,7 @@ import {
   CANON_STORE_PATH,
   CAPTURES_DIR,
   DISCOVERED_PATH,
+  DISCOVERY_PATH,
   FIT_CACHE_PATH,
   GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH, REP_SIGNALS_PATH,
   SHIP_GAPS_PATH,
@@ -155,11 +159,12 @@ import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from 
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
 import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type PlanTrack, type StackItem } from "./plan.ts";
+import { devpostQuery, eventDraft, organizersFrom, organizerTag, slackDeadlines, workspaceSubdomain, type DiscoveredUser } from "./autoconfig.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import type { Entity, Message, PageSnapshot } from "./schema.ts";
-import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parseAuthorsCaptureFile, parsePageSnapshot, parseThreadCaptureFile, type AuthorsCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
+import { PAGE_ACCESS, SCHEMA_VERSION, pageFileName, parseAuthorsCaptureFile, parsePageSnapshot, parseThreadCaptureFile, threadCaptureName, type AuthorsCaptureFile, type Item, type PageAccess, type ThreadCaptureFile } from "./schema.ts";
 import { snapshotPage } from "../extension/src/page.ts";
 
 /** slackdump export finished 2026-10-27 03:17 America/Los_Angeles (design doc, D2). */
@@ -223,6 +228,8 @@ const USAGE = `usage:
       P1b: drafts Plan's description, stack and used-fors from a public repo, each with the lines it came from.
       Prints drafts only; nothing is saved to a project until the user confirms each one.
   bun run hr sync-ingest [~/Downloads/hackrecon/sync/<stamp>]
+      (A background API pull's bundle has a pull/ folder: it is kept as pulled and converted into the same
+      capture files.)
       Brings in a "Sync this event" bundle (the newest by default): captures to ${CAPTURES_DIR}/sync-<stamp>/,
       thread pane samples (scrubbed again) to ${SLACK_DOM_FIXTURES_DIR}/, and prints what the sync did.
       Then: bun run hr compare ${CAPTURES_DIR}/sync-<stamp>
@@ -251,6 +258,17 @@ const USAGE = `usage:
       into ${PAGES_DIR}, and drafts sponsors.json and organizers. It never calls a model: changed canon pages are
       listed, and re-read only with --canon (hr canon --judge, under the spend guard). Config you wrote wins
       over a draft; drafts and the run report go to ${DISCOVERED_PATH}. --offline skips the network.
+      With no ${EVENT_PATH} yet, it runs hr discover first.
+  bun run hr discover [--export DIR] [--workspace-name NAME] [--offline] [--against CONFIG_DIR]
+      Zero setup: writes ${EVENT_PATH}, ${SPONSORS_PATH} and ${ORGANIZERS_PATH} from the workspace (permalink
+      subdomain, searched on Devpost), canon (tracks, deadlines, timezone), the last sync's sidebar (sponsor
+      channels) and organizer posts. No model. A file is written only when missing or unchanged since discover
+      wrote it; everything goes to ${DISCOVERY_PATH}. --export: users.json for admin and owner flags.
+      --against: compares the drafts with a hand-written config directory. The newest API pull supplies the
+      workspace's name, its channel list and users.list's admin flags when there's no --export.
+  bun run hr compare-api [captures/sync-<stamp>/pull …] [--export DIR]
+      The API pull's acceptance check: every config channel's posts and replies, by ts, against the Slack export
+      (default: every ingested pull). Exit 0 only when no channel is missing anything.
   bun run hr preview
       Receipt preview from the current data, to pick the board headline: distinct credit offers, priced per
       person, the $ total, offers with a deadline or claim window, sponsors covered, rep candidates. Not the
@@ -270,12 +288,14 @@ const USAGE = `usage:
       name alone. Writes ${PERSON_LINKS_PATH} (ids and hashed evidence).
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
       CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
-  bun run hr classify [--labeled-only] [--dry-run] [--yes] [--limit N] [--concurrency N] [--show MESSAGE_ID]
+  bun run hr classify [--new] [--labeled-only] [--dry-run] [--yes] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       Classifies captured messages with ${MODEL} (redacted text only). --labeled-only: just the messages
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
-      --dry-run builds every request and prints one, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
+      --new: only posts never classified under any prompt (a sync's new posts); the rest keep their newest
+      answer, even after event.json changed the prompt. --dry-run builds every request and prints one and the
+      estimate, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
 
-const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "discover", "compare-api", "plan", "ship", "prefill", "prefill-eval"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -303,6 +323,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "sync-ingest") return syncIngest(rest);
   if (cmd === "rebuild-threads") return rebuildThreads(rest);
   if (cmd === "sync") return sync(rest);
+  if (cmd === "discover") return discover(rest);
+  if (cmd === "compare-api") return compareApi(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -370,7 +392,7 @@ function syncIngest(args: string[]): number {
   mkdirSync(SLACK_DOM_FIXTURES_DIR, { recursive: true });
   const read = (sub: string, parts: string[]) => Buffer.concat(parts.map((p) => readFileSync(join(dir, sub, p))));
   let bad = 0;
-  for (const sub of ["captures", "slack-dom"]) {
+  for (const sub of ["captures", "slack-dom", "pull"]) {
     if (!existsSync(join(dir, sub))) continue;
     for (const f of wholeFiles(readdirSync(join(dir, sub)))) {
       if (f.missing) {
@@ -379,6 +401,14 @@ function syncIngest(args: string[]): number {
         continue;
       }
       const text = read(sub, f.parts).toString("utf8");
+      if (sub === "pull") {
+        // The API pull's raw files: kept as pulled (tokens scrubbed again), converted below.
+        mkdirSync(join(out, "pull"), { recursive: true });
+        const { html, found } = scrubTokens(text);
+        if (total(found)) console.log(`pull/${f.name}: stripped ${total(found)} token${total(found) === 1 ? "" : "s"}`);
+        writeFileSync(join(out, "pull", f.name), html);
+        continue;
+      }
       if (sub === "slack-dom") {
         const { html, found } = scrubTokens(text);
         writeFileSync(join(SLACK_DOM_FIXTURES_DIR, f.name), html);
@@ -397,6 +427,7 @@ function syncIngest(args: string[]): number {
       }
     }
   }
+  if (existsSync(join(out, "pull"))) bad += convertApiBundle(join(out, "pull"), out, `api-${stamp}`);
   for (const f of captureFiles([out])) {
     try {
       loadCapture(f);
@@ -406,7 +437,10 @@ function syncIngest(args: string[]): number {
     }
   }
   const logPath = join(dir, "sync.json");
-  if (existsSync(logPath)) {
+  if (existsSync(join(out, "pull"))) {
+    const pl = readJsonFile<{ channels?: unknown[]; calls?: number; retries?: number; full?: boolean } | null>(join(out, "pull", "pull.json"), null);
+    console.log(pl ? `API pull: ${pl.full ? "full" : "incremental"}, ${pl.channels?.length ?? 0} channels, ${pl.calls} calls, ${pl.retries} retries` : "API pull: no pull.json (stopped early?)");
+  } else if (existsSync(logPath)) {
     writeFileSync(join(out, "sync.json"), readFileSync(logPath));
     for (const l of summarizeSync(JSON.parse(readFileSync(logPath, "utf8")) as SyncLogLite)) console.log(l);
   } else console.log("no sync.json in the bundle (the sync may still be running, or stopped before its first channel)");
@@ -1347,6 +1381,12 @@ async function canon(args: string[]): Promise<number> {
 async function sync(args: string[]): Promise<number> {
   // --canon: re-read changed pages with the model (hr canon --judge); never without it (user 2026-11-07).
   const { values } = parseArgs({ args, options: { canon: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
+  // Zero setup: a new event's first sync writes its config from the workspace and Devpost (hr discover, no model).
+  if (!existsSync(EVENT_PATH)) {
+    console.log(`no ${EVENT_PATH} yet: discovering it`);
+    const code = await discover(values.offline ? ["--offline"] : []);
+    if (code) return code;
+  }
   const event = readEvent();
   const messages = readMessages();
   const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
@@ -2143,6 +2183,7 @@ async function classify(args: string[]): Promise<number> {
     args,
     options: {
       "labeled-only": { type: "boolean", default: false },
+      new: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
       yes: { type: "boolean", default: false },
       limit: { type: "string" },
@@ -2175,11 +2216,11 @@ async function classify(args: string[]): Promise<number> {
   const inputById = new Map(allInputs.map((i) => [i.message.id, i]));
   const inputs = selected.map((m) => inputById.get(m.id)!);
   const cache = readJsonFile<Cache>(CACHE_PATH, {});
-  const todo = inputs.filter((i) => !cache[i.key]);
+  const { todo, answer } = classifyPlan(inputs, cache, values.new!);
   const roles: Record<string, number> = {};
   for (const i of inputs) roles[i.role] = (roles[i.role] ?? 0) + 1;
   console.log(
-    `${inputs.length} messages, ${inputs.length - todo.length} cached, ${todo.length} to classify; model ${MODEL}, prompt ${hash}; ` +
+    `${inputs.length} messages, ${inputs.length - todo.length} cached${values.new ? " (under any prompt)" : ""}, ${todo.length} to classify; model ${MODEL}, prompt ${hash}; ` +
       `poster_role ${Object.entries(roles).map(([k, v]) => `${k} ${v}`).join(", ")}; ` +
       `${inputs.reduce((n, i) => n + i.redactions, 0)} redactions (${inputs.filter((i) => i.redactions).length} messages)`,
   );
@@ -2190,7 +2231,8 @@ async function classify(args: string[]): Promise<number> {
       console.log(`\n--- system prompt (${system.length} chars) ---\n${system}`);
       console.log(`\n--- request for ${sample.message.id} (${sample.message.permalink}) ---\n${sample.user}`);
     }
-    console.log("\ndry run: no API call, nothing written");
+    console.log(`\nclassify: ${describeCalls(todo.map((i) => plannedCall(MODEL, system, i.user, OUTPUT_SCHEMA, MAX_TOKENS)))}`);
+    console.log("dry run: no API call, nothing written");
     return 0;
   }
 
@@ -2215,10 +2257,12 @@ async function classify(args: string[]): Promise<number> {
   writeJsonFile(CACHE_PATH, cache);
   writeJsonFile(ERRORS_PATH, errors);
 
-  // Every captured message cached under the current prompt and input, not only this run's selection.
+  // Every captured message cached under the current prompt and input, not only this run's selection; with --new, a
+  // message with no answer under this prompt keeps its newest answer under an earlier one.
   // Counts only: what the classifier said is shown by `hr gate`, and only for labeled rows.
-  const classified = allInputs.filter((i) => cache[i.key]);
-  writeJsonFile(ITEMS_PATH, classified.flatMap((i) => toItems(cache[i.key]!, sponsors)));
+  const classified = allInputs.filter((i) => answer(i));
+  const earlier = classified.filter((i) => !cache[i.key]).length;
+  writeJsonFile(ITEMS_PATH, classified.flatMap((i) => toItems(answer(i)!, sponsors)));
   const run: ClassifyRun = {
     prompt_hash: hash,
     model: MODEL,
@@ -2227,15 +2271,224 @@ async function classify(args: string[]): Promise<number> {
     errors: errors.map((e) => e.message_id),
     usage: sumUsage(usages),
     cost_usd: Number(costUsd(sumUsage(usages), MODEL).toFixed(4)),
+    ...(earlier ? { earlier_prompts: earlier } : {}),
   };
   writeJsonFile(RUN_PATH, run);
   console.log(
-    `wrote ${ITEMS_PATH} and ${RUN_PATH}: ${classified.length} of ${messages.length} captured messages classified under prompt ${hash}; ` +
+    `wrote ${ITEMS_PATH} and ${RUN_PATH}: ${classified.length} of ${messages.length} captured messages classified, ` +
+      `${classified.length - earlier} under prompt ${hash}${earlier ? ` and ${earlier} under earlier prompts (--new)` : ""}; ` +
       `${errors.length} errors` + (errors.length ? ` (see ${ERRORS_PATH})` : ""),
   );
   for (const e of errors) console.log(`  error ${e.message_id}: ${e.reason}`);
   console.log(formatUsage(usages.length, run.usage!, MODEL));
   return errors.length ? 1 : 0;
+}
+
+/** Zero setup (user 2026-11-07): event.json, sponsors.json and organizers.json from the workspace and Devpost
+ *  (autoconfig.ts). Each is written when missing, or when it is still exactly what discover last wrote; a file someone
+ *  edited is never overwritten: its draft goes to data/discovery.json and the differences are printed. No model call:
+ *  tracks, deadlines and the timezone come from canon, so a new event runs `hr canon` (estimated first) and then
+ *  discover again. --against DIR compares the drafts with a hand-written config directory. */
+async function discover(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { export: { type: "string" }, offline: { type: "boolean", default: false }, against: { type: "string" }, "workspace-name": { type: "string" } } });
+  const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
+  const messages = existsSync(MESSAGES_PATH) ? readMessages() : caps.flatMap((c) => c.messages);
+  if (!messages.length) {
+    console.error(`no captured posts in ${CAPTURES_DIR} or ${MESSAGES_PATH}: run "Sync this event" in the extension first`);
+    return 2;
+  }
+  const sub = workspaceSubdomain(messages.map((m) => m.permalink));
+  // The newest API pull (extension/src/apipull.ts) brings the workspace's display name and users.list's admin and
+  // owner flags; without one, the subdomain's words search Devpost and flags come from --export.
+  const pulls = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => existsSync(join(CAPTURES_DIR, d, "pull", "users.json"))).sort() : [];
+  const pullDir = pulls.length ? join(CAPTURES_DIR, pulls.at(-1)!, "pull") : null;
+  const workspaceName = values["workspace-name"] ?? (pullDir ? readJsonFile<{ workspace?: { name?: string } }>(join(pullDir, "pull.json"), {}).workspace?.name : undefined) ?? null;
+  const query = devpostQuery(workspaceName, sub);
+  console.log(`workspace: ${sub ? `${sub}.slack.com` : "unknown"}; Devpost search: "${query ?? "nothing to search for"}"`);
+
+  // The sidebar the extension saw on its newest sync (never its targets: those come from config), plus every captured
+  // channel. Announcement channels, as hr sync decides them: Slack's restricted-posting flag, else names.
+  const logs = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => d.startsWith("sync-") && existsSync(join(CAPTURES_DIR, d, "sync.json"))).sort() : [];
+  const pulled = pullDir ? readJsonFile<{ name: string }[]>(join(pullDir, "channels.json"), []) : [];
+  const sidebar = pulled.length ? pulled : logs.length ? readJsonFile<{ sidebar?: { name: string }[] }>(join(CAPTURES_DIR, logs.at(-1)!, "sync.json"), {}).sidebar ?? [] : [];
+  console.log(`channels: ${pulled.length ? `${pulled.length} from the API pull's conversations.list` : sidebar.length ? `${sidebar.length} from the sidebar in ${CAPTURES_DIR}/${logs.at(-1)}/sync.json` : "no sync log; captured channels only"}`);
+  const channels = [...new Set([...sidebar.map((c) => c.name), ...caps.map((c) => c.channel_name), ...messages.map((m) => m.channel_name)])].sort();
+  const flagged = [...new Set(caps.filter((c) => c.posting_restricted === true).map((c) => c.channel_name))];
+  const announcement = new Set(flagged.length ? flagged : channels.filter((c) => /announce/i.test(c)));
+  const authority = flagged.length ? null : { channels: [...announcement], source: `channels named *announce* (no capture carries Slack's restricted-posting flag)` };
+
+  // Devpost: search by the workspace; an announcement link is the cross-check, and the fallback offline.
+  const linked = discoverUrls(messages, announcement).devpost;
+  let hit: DevpostHit | null = null;
+  let why = "";
+  if (!values.offline && query) {
+    const r = await new PoliteFetcher().get(`https://devpost.com/api/hackathons?search=${encodeURIComponent(query)}`, "json");
+    if (r.status === "fetched" && r.html) ({ hit, why } = pickDevpostHit(query, (JSON.parse(r.html) as { hackathons?: DevpostHit[] }).hackathons ?? []));
+    else why = `Devpost search failed: ${r.detail}`;
+  }
+  const root = hit ? new URL(hit.url).origin + "/" : (linked?.url ?? null);
+  if (!root) {
+    console.error(`no Devpost page: ${why || "offline"}; and no Devpost link in ${[...announcement].join(", ") || "any announcement channel"}`);
+    return 1;
+  }
+  if (hit && linked && pageKey(linked.url) !== pageKey(root)) console.log(`note: announcements link ${linked.url}, search found ${root}; using the search`);
+  console.log(`devpost: ${root} (${hit ? why : `linked in announcements: ${linked!.why}`})`);
+  const title = hit?.title ?? query!;
+
+  const entities = readJsonFile<CanonPage[]>(CANON_PATH, []).filter((p) => pageKey(p.url).startsWith(pageKey(root))).flatMap((p) => p.entities);
+  if (!entities.length) console.log(`no canon for ${root} yet: tracks, deadlines, the timezone and sponsor names need it. Next: bun run hr canon (it prints its estimated cost first), then bun run hr discover again`);
+
+  // Organizers: admin and owner flags (the export's users.json until the extension reads them), the name tag, and
+  // everyone posting where Slack restricts posting.
+  const expDir = values.export ? fromCaller(values.export) : pullDir;
+  const users: DiscoveredUser[] = expDir
+    ? readJsonFile<ExportUser[]>(join(expDir, "users.json"), []).map((u) => {
+        const x = u as ExportUser & { is_admin?: boolean; is_owner?: boolean; deleted?: boolean; is_bot?: boolean; profile?: { title?: string } };
+        return { id: x.id, is_admin: x.is_admin, is_owner: x.is_owner, deleted: x.deleted, is_bot: x.is_bot, title: x.profile?.title, names: [x.profile?.display_name, x.profile?.real_name, x.real_name].filter(Boolean).join(" ") };
+      })
+    : [];
+  // Authority only from signals a hacker can't set (D19): admin/owner flags and restricted-posting channels. Posters
+  // in channels picked by name, name tags and titles are proposals, listed for the user and never written.
+  const posters = organizersFromRestricted(messages, announcement).map((p) => p.id);
+  const { organizers: orgs, proposals } = organizersFrom(users, organizerTag(title), flagged.length ? posters : [], flagged.length ? [] : posters);
+  console.log(
+    `organizers: ${orgs.length} (${expDir ? `admin/owner flags from ${expDir}/users.json${expDir === pullDir ? " (the API pull's users.list)" : ""}` : "no users list with admin flags yet"}; ` +
+      `${flagged.length ? posters.length : 0} restricted-posting posters); ${proposals.length} proposed, not written (name tag, title, or posting in a channel named like announcements)`,
+  );
+
+  const items = readJsonFile<Item[]>(ITEMS_PATH, []);
+  const slackSchedule = slackDeadlines(items, messages, announcement, new Set(orgs.map((o) => o.id)));
+  const oldest = messages.reduce((n, m) => Math.min(n, Number(m.ts)), Infinity);
+  const ev = eventDraft({ title, root, why: hit ? why : `Devpost link in announcements; the name is the workspace's (no Devpost search${values.offline ? ", --offline" : ""})`, entities, slackSchedule, oldestTs: Number.isFinite(oldest) ? oldest : null, authority });
+  const sp = sponsorsDraft(entities, channels, announcement);
+
+  // Write what's missing or still discover's own; keep anything edited by hand.
+  const record = readJsonFile<{ written?: Record<string, string> }>(DISCOVERY_PATH, {});
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const written: Record<string, string> = { ...(record.written ?? {}) };
+  for (const [path, value] of [[EVENT_PATH, ev.config], [SPONSORS_PATH, sp.sponsors], [ORGANIZERS_PATH, orgs]] as const) {
+    const text = JSON.stringify(value, null, 2) + "\n";
+    const cur = existsSync(path) ? readFileSync(path, "utf8") : null;
+    if (cur === null || sha(cur) === written[path]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+      written[path] = sha(text);
+      console.log(`${cur === null ? "wrote" : "updated"} ${path}`);
+    } else console.log(`kept ${path} (edited since discover wrote it, or written by hand); its draft is in ${DISCOVERY_PATH}`);
+  }
+  for (const [k, v] of Object.entries(ev.sources)) console.log(`  ${k}: ${v}`);
+  console.log(`  sponsors: ${Object.keys(sp.sponsors).length} channels; Devpost tags with no channel: ${sp.tags_without_channel.join(", ") || "none"}; channels with no Devpost tag (named from the channel): ${sp.channels_without_tag.join(", ") || "none"}`);
+  for (const u of ev.config.unconfirmed) console.log(`  check: ${u}`);
+
+  const against = values.against ? compareConfig(fromCaller(values.against), ev.config, sp.sponsors, orgs) : null;
+  writeJsonFile(DISCOVERY_PATH, { discovered_at: new Date().toISOString(), workspace: sub, query, devpost: { root, why }, written, event: ev, sponsors: sp, organizers: orgs, organizer_proposals: proposals, against });
+  console.log(`wrote ${DISCOVERY_PATH}`);
+  return 0;
+}
+
+/** How close discovery came to a hand-written config: per field, per channel, and whether the classifier's prompt
+ *  (built from event.json) would stay the same, so cached classifications survive. */
+function compareConfig(dir: string, ev: EventConfig, sponsors: Sponsors, orgs: { id: string }[]) {
+  const hand = readJsonFile<EventConfig & Record<string, unknown>>(join(dir, "event.json"), null as never);
+  const handSp = readJsonFile<Sponsors>(join(dir, "sponsors.json"), {});
+  const handOrgs = readJsonFile<{ id: string }[]>(join(dir, "organizers.json"), []);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const fields = ["event", "timezone", "hacking_start", "hacking_end", "oldest_message", "canon_pages", "schedule_pages", "authority_channels", "hacker_only_channels", "event_level_prizes", "tool_gated_prizes"].map((k) => ({
+    field: k,
+    match: same((ev as unknown as Record<string, unknown>)[k], hand[k]),
+    hand: hand[k] ?? null,
+    discovered: (ev as unknown as Record<string, unknown>)[k] ?? null,
+  }));
+  // One to one, by time and superseded state; an entry whose start matches but whose end time is missing or differs
+  // is "start only". Time alone can pair two different events at the same minute: the labels are printed side by side.
+  const taken = new Set<number>();
+  const schedule = hand.schedule.map((h) => {
+    const i = ev.schedule.findIndex((x, j) => !taken.has(j) && Date.parse(x.at) === Date.parse(h.at) && !!x.superseded_by === !!h.superseded_by);
+    if (i >= 0) taken.add(i);
+    const d = i >= 0 ? ev.schedule[i] : undefined;
+    const full = !!d && (d.until ? Date.parse(d.until) : null) === (h.until ? Date.parse(h.until) : null);
+    return { hand: `${h.what} @ ${h.at}${h.until ? `–${h.until}` : ""}${h.superseded_by ? " (superseded)" : ""}`, discovered: d ? `${d.what} @ ${d.at}${d.until ? `–${d.until}` : ""}${d.superseded_by ? " (superseded)" : ""}` : null, full };
+  });
+  const sp = compareSponsors(sponsors, handSp);
+  const aliases = Object.entries(handSp).filter(([ch, h]) => h.aliases.length && !(sponsors[ch]?.aliases ?? []).length).map(([ch, h]) => `${ch}: ${h.aliases.join(", ")}`);
+  const ids = new Set(orgs.map((o) => o.id)), handIds = new Set(handOrgs.map((o) => o.id));
+  const rules = readRules();
+  const prompt = { hand: promptHash(systemPrompt(hand, rules)), discovered: promptHash(systemPrompt(ev, rules)) };
+  const report = {
+    fields,
+    schedule: { matched: schedule.filter((s) => s.full).length, start_only: schedule.filter((s) => s.discovered && !s.full).length, hand: hand.schedule.length, discovered: ev.schedule.length, rows: schedule },
+    sponsors: { matched: sp.matched, hand: sp.n, discovered: Object.keys(sponsors).length, mismatched: sp.rows.filter((r) => !r.match), extra: sp.extra, aliases_not_derived: aliases },
+    organizers: { hand: handIds.size, discovered: ids.size, both: [...ids].filter((i) => handIds.has(i)).length, only_hand: [...handIds].filter((i) => !ids.has(i)).length, only_discovered: [...ids].filter((i) => !handIds.has(i)).length },
+    classify_prompt: { ...prompt, same: prompt.hand === prompt.discovered },
+  };
+  console.log(`\nagainst ${dir}:`);
+  for (const f of fields) console.log(`  ${f.match ? "same" : "DIFF"} ${f.field}${f.match ? "" : `: hand ${JSON.stringify(f.hand)}, discovered ${JSON.stringify(f.discovered)}`}`);
+  console.log(`  schedule: ${report.schedule.matched}/${report.schedule.hand} hand entries found by time, ${report.schedule.start_only} more by start time only (discovered ${report.schedule.discovered})`);
+  for (const r of schedule) console.log(`    ${r.full ? "found " : r.discovered ? "start " : "MISSED"} ${r.hand}${r.discovered ? `  ← ${r.discovered}` : ""}`);
+  console.log(`  sponsors: ${sp.matched}/${sp.n} channels same sponsor and kind; ${sp.extra.length} discovered channels not in the hand file${sp.extra.length ? ` (${sp.extra.join(", ")})` : ""}`);
+  for (const r of report.sponsors.mismatched) console.log(`    DIFF ${r.channel}: hand ${r.hand}, discovered ${r.draft}`);
+  console.log(`  aliases: ${aliases.length} hand channels have aliases discovery doesn't derive`);
+  console.log(`  organizers: ${report.organizers.both} in both, ${report.organizers.only_hand} only hand, ${report.organizers.only_discovered} only discovered (hand ${handIds.size}, discovered ${ids.size})`);
+  console.log(`  classifier prompt: ${report.classify_prompt.same ? "same as the hand config's: cached classifications stay valid" : `differs (hand ${prompt.hand}, discovered ${prompt.discovered}): installing it would make every cached classification stale; classify --new keeps them`}`);
+  return report;
+}
+
+/** An API pull's raw channel files → the DOM sync's capture files in `out`, so record-run reads one format. */
+function convertApiBundle(apiDir: string, out: string, runId: string): number {
+  const users = new Map(readJsonFile<ApiUser[]>(join(apiDir, "users.json"), []).map((u) => [u.id, u]));
+  const channels = new Map(readJsonFile<{ id: string; name: string }[]>(join(apiDir, "channels.json"), []).map((c) => [c.id, c.name]));
+  // A pull that stopped early wrote no pull.json: take the workspace origin from another ingested pull's.
+  const originOf = (d: string) => readJsonFile<{ workspace?: { origin?: string } }>(join(d, "pull.json"), {}).workspace?.origin ?? "";
+  const siblings = existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).map((d) => join(CAPTURES_DIR, d, "pull")).filter((d) => existsSync(join(d, "pull.json"))) : [];
+  const origin = originOf(apiDir) || siblings.map(originOf).find(Boolean) || "";
+  let bad = 0;
+  for (const f of readdirSync(apiDir).filter((f) => /^[CG][A-Z0-9]+\.json$/.test(f)).sort()) {
+    try {
+      const raw = JSON.parse(readFileSync(join(apiDir, f), "utf8")) as ApiChannelFile;
+      if (raw.kind !== "api-channel") throw new Error("not an API channel file");
+      const { channel, threads } = captureFromApi(raw, { origin, runId, users, channels });
+      parseThreadCaptureFile(JSON.parse(JSON.stringify(threads)), f);
+      writeFileSync(join(out, f), JSON.stringify(channel, null, 2));
+      if (threads.threads.length) writeFileSync(join(out, threadCaptureName(raw.channel_id)), JSON.stringify(threads, null, 2));
+      console.log(`${raw.channel_name}: ${channel.messages.length} posts, ${threads.threads.length} threads, ${threads.threads.reduce((n, t) => n + t.replies.length, 0)} replies${raw.oldest ? ` (since ${raw.oldest})` : ""}`);
+    } catch (e) {
+      console.error(`pull/${f}: ${(e as Error).message}; skipped`);
+      bad++;
+    }
+  }
+  return bad;
+}
+
+/** The user's acceptance check for the API pull (2026-11-07): every config channel's posts and replies, by ts,
+ *  against the Slack export. */
+function compareApi(args: string[]): number {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const dirs = positionals.length ? positionals.map(fromCaller) : existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => existsSync(join(CAPTURES_DIR, d, "pull"))).sort().map((d) => join(CAPTURES_DIR, d, "pull")) : [];
+  if (!dirs.length) {
+    console.error(`no API pull in ${CAPTURES_DIR}/sync-*/pull/: run hr sync-ingest after a pull`);
+    return 2;
+  }
+  const files = dirs.flatMap((d) => readdirSync(d).filter((f) => /^[CG][A-Z0-9]+\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), "utf8")) as ApiChannelFile));
+  const api = apiKeys(files);
+  const exp = loadExport(fromCaller(values.export!));
+  const sponsors = readSponsors(SPONSORS_PATH);
+  const channels = [...new Set([...Object.keys(sponsors), ...(readEvent().authority_channels ?? [])])];
+  const locked = new Set(Object.entries(sponsors).filter(([, s]) => !s.stretch).map(([c]) => c));
+  const rows = channels.filter((c) => existsSync(join(exp.dir, c))).map((c) => compareKeys(c, api.get(c), exportKeys(readChannel(exp, c))));
+  const sum = (rs: KeyCompare[], k: "posts" | "replies") => rs.reduce((a, r) => ({ e: a.e + r[k].export, m: a.m + r[k].matched, x: a.x + r[k].extra }), { e: 0, m: 0, x: 0 });
+  console.log(`API pull (${dirs.length} bundle${dirs.length === 1 ? "" : "s"}) against ${exp.dir}, ${rows.length} config channels:`);
+  for (const r of rows) {
+    const ok = !r.posts.missing.length && !r.replies.missing.length;
+    console.log(`  ${ok ? "same   " : "MISSING"} ${r.channel}: posts ${r.posts.matched}/${r.posts.export}${r.posts.extra ? ` +${r.posts.extra}` : ""}, replies ${r.replies.matched}/${r.replies.export}${r.replies.extra ? ` +${r.replies.extra}` : ""}${api.has(r.channel) ? "" : " (not pulled)"}`);
+    for (const t of [...r.posts.missing.slice(0, 3), ...r.replies.missing.slice(0, 3)]) console.log(`      missing ${t}`);
+  }
+  const all = { posts: sum(rows, "posts"), replies: sum(rows, "replies") };
+  const lockedReplies = sum(rows.filter((r) => locked.has(r.channel)), "replies");
+  const exact = rows.filter((r) => !r.posts.missing.length && !r.replies.missing.length).length;
+  console.log(`\n  ${exact}/${rows.length} channels with nothing missing`);
+  console.log(`  posts ${all.posts.m}/${all.posts.e} (+${all.posts.x} only in the pull); replies ${all.replies.m}/${all.replies.e} (+${all.replies.x}); the locked ${locked.size}: replies ${lockedReplies.m}/${lockedReplies.e}`);
+  console.log(`  "only in the pull" is posted after the export, or rows the export left out; "missing" is deleted since, or not read`);
+  return exact === rows.length ? 0 : 1;
 }
 
 function printLabelProblems(rows: ReturnType<typeof readLabels>): number {

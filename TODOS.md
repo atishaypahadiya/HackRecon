@@ -18,6 +18,24 @@
 **Priority:** P2
 **Depends on:** the demo, and the MLH follow-up feedback
 
+### Background API pull: the live check (2026-11-07)
+
+Built and verified offline (design doc, Zero setup). First live pull (2026-11-07 13:08): requests carried the session (0-announcements and 2-opportunities saved), then the service worker was stopped in the third channel. Chrome ends a worker after 30 s with no extension API call, and fetch does not count; fixed with a call before every Slack request and in every wait, and a 2-minute heartbeat lock. Resumed pull (13:23–13:41, 18 min 13 s, 387 calls, 0 retries, 0 channel errors, 56 channels): `hr compare-api` gives 54/54 channels, posts 1177/1177, replies 585/585, the locked 25 494/494; the 30 posts and 7 replies only in the pull are all newer than the export. Every pull now also writes `~/Downloads/hackrecon/pull-status.json`, so one that finds nothing new leaves a record. Session hand-off (0.4.0): a Slack tab of a workspace the user synced once hands its session to the worker on load (injected into open tabs after an install or reload), so pulls resume with no click. Verified live: the user clicked Sync at 13:51, reloaded the extension at about 14:05 (which clears the in-memory session) and did not click again; the 14:21:45 timer pull ran with a session (256 s, 72 calls, 0 retries, 0 errors). `handoff-status.json` (aefc221) gets confirmed on the next reload. Incremental pull from the popup (13:47, 4 min 15 s): 72 calls, 0 retries, 0 channel errors, 2 posts read again inside the 48-hour lookback (spons-cartesia, spons-fetch-ai), no new rows against the earlier pulls; compare-api still 54/54 and 494/494. Open: one live pull on Cal Hacks, then `hr sync-ingest` and `hr compare-api`, which should report 54/54 channels and 494/494 locked replies. That run also confirms the service worker's requests carry the session cookie. An old thread (past the 48 h lookback) that gets a new reply isn't re-read (D17). After a browser restart the session is gone until the next Sync from the popup; the popup shows the last pull's status.
+
+### Quiet pulls: ask Slack which channels moved (user 2026-11-07, after the v2 → main PR)
+
+An incremental pull now reads every channel's history: the quiet pull at 13:47 took 72 calls and 4 min 15 s to find 2 posts it already had. Instead, ask Slack once which channels have activity newer than our cursor, using the call the web client makes for its unread counts (it returns each channel's latest ts), then read history and replies only for those channels.
+
+- Find the method in the web client's own traffic first; don't assume its name.
+- Add it to `READ_METHODS` only after confirming it marks nothing read: call it, then check that the channel's read position (`last_read`) and its unread badge in Slack haven't changed. Record the check here.
+- The allowlist test grows by exactly that one method, and the source scan still refuses everything that writes or marks read.
+- Fall back to the full per-channel walk if the call fails or a channel is missing from its answer.
+- Target: a quiet pull in under 15 s and under 5 calls. Measure it live against the 13:47 baseline (72 calls, 255 s).
+
+### Zero setup leftovers (2026-11-07)
+
+`hr discover` can't derive: hacking start and end, event-level prizes, sponsor aliases, event channels with no prefix (Cal Hacks' 2-opportunities), schedule end times. Admin and owner flags come from the export until the API pull reads `users.list`. Name tags and titles are only proposed (self-asserted). The extension doesn't record the workspace's display name; the subdomain searched well on Devpost.
+
 ### Capture is frozen for Cal Hacks (user 2026-11-07)
 
 No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders). The no-action-URL rule (`pipeline/urlsafety.ts`) guards the fetcher and the extension's page capture.
