@@ -77,7 +77,10 @@ export function safeHop(l: DraftLink, _slug: string): URL | null {
 }
 
 const submissionPath = (slug: string) => new RegExp(`^/submit-to/\\d+-${slug}/manage/submissions(?:/\\d+[\\w-]*(?:/[\\w-]+)?)?/?$`);
-const projectPath = /^\/software\/[a-z0-9-]+\/?$/;
+/** A project page. Not Devpost's "Add a new project" (/software/add, loaded by the 2026-11-07 sync) or other
+ *  /software/<word> pages that aren't projects. */
+const projectPath = /^\/software\/(?!(?:add|new|search|built-with)\/?$)[a-z0-9-]+\/?$/;
+const NEW_PROJECT_TEXT = /\b(add|new|create)\b.*\bproject\b/i;
 
 export function startDraft(eventRoot: string): DraftState | null {
   const slug = eventSlug(eventRoot);
@@ -117,7 +120,7 @@ export function draftStep(s: DraftState, page: DraftPage): { state: DraftState; 
     return p ? go(p.u.href, "portfolio", `"${p.l.text.trim()}" link`) : stop("no My projects link (not signed in to Devpost?)");
   }
   if (s.stage === "portfolio") {
-    st.projects = [...new Set(hops.filter((x) => projectPath.test(x.u.pathname) && !x.u.search && fresh(x.u)).map((x) => x.u.href))];
+    st.projects = [...new Set(hops.filter((x) => projectPath.test(x.u.pathname) && !NEW_PROJECT_TEXT.test(x.l.text) && !x.u.search && fresh(x.u)).map((x) => x.u.href))];
     const next = st.projects.shift();
     return next ? go(next, "project", "a project in My projects") : stop("no projects in My projects");
   }

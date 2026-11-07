@@ -17,6 +17,8 @@ export type RawRow =
       nonPost?: NonPost;
       /** The reply bar under a parent post: "N replies" and the newest reply's ts. */
       replies?: Replies;
+      /** Slack's loading placeholder where the author goes (SEL.unknownSender): name and often text not in yet. */
+      loading?: true;
     }
   /** Day/unread dividers: Slack always renders an author header after one. */
   | { kind: "divider" }
@@ -62,6 +64,8 @@ interface Seen {
   mentions?: Mention[];
   permalink: string;
   replies?: Replies;
+  /** Every rendering so far was Slack's loading placeholder. */
+  loading: boolean;
 }
 
 /**
@@ -80,6 +84,11 @@ export class Accumulator {
     let n = 0;
     for (const r of this.rows.values()) if (r.kind === "message") n++;
     return n;
+  }
+
+  /** Posts only ever seen as Slack's loading placeholder (sync 2026-11-07: 70 posts read before they filled in). */
+  get loading(): Ts[] {
+    return [...this.rows].filter(([, r]) => r.kind === "message" && r.loading).map(([ts]) => ts);
   }
 
   ingest(batch: RawRow[]): void {
@@ -101,13 +110,15 @@ export class Accumulator {
         kind,
         threadTs: row.threadTs ?? old?.threadTs,
         nonPost: kind === "system" ? (row.nonPost ?? old?.nonPost) : undefined,
-        header: row.sender ?? old?.header ?? null,
+        // A named header is never replaced by a re-render that's still loading.
+        header: row.sender?.name || !old?.header?.name ? (row.sender ?? old?.header ?? null) : old.header,
         // Re-renders can arrive before images/unfurls settle; keep the fullest text seen.
         text: old && old.text.length > row.text.length ? old.text : row.text,
         links: old && old.links.length > row.links.length ? old.links : row.links,
         mentions: old?.mentions && old.mentions.length > (row.mentions?.length ?? 0) ? old.mentions : (row.mentions ?? old?.mentions),
         permalink: row.permalink || old?.permalink || "",
         replies: row.replies ?? old?.replies,
+        loading: !!row.loading && (old?.loading ?? true),
       });
       if (above !== null && !row.sender) this.prev.set(row.ts, above);
       above = row.ts;
@@ -159,6 +170,9 @@ export class Accumulator {
 }
 
 export const NO_NEW_KEYS_STEPS = 5;
+/** How many STEP_WAIT_MS waits a channel or thread gives Slack's loading placeholders to fill in before it moves on
+ *  (sync 2026-11-07: rows read at the channel's start and in short threads were still placeholders). */
+export const LOADING_WAITS = 6;
 export const STEP_WAIT_MS = 1500;
 
 /**

@@ -34,7 +34,7 @@ export interface SyncLogLite {
   stopped_by_user: boolean;
   targets: string[];
   config?: { event: string | null; channels: number; missing: string[]; discovered: string[]; authors_only?: string[] };
-  channels: { name: string; mode?: "authors"; authors?: number; self_ids?: number; opened: boolean; error?: string; messages?: number; threads?: { stop: string; replies: number; pane_how?: string; close?: string; note?: string }[] }[];
+  channels: { name: string; mode?: "authors"; authors?: number; self_ids?: number; opened: boolean; error?: string; messages?: number; threads?: { stop: string; replies: number; pane_how?: string; close?: string; loading_left?: number; note?: string }[] }[];
   samples: { file: string; why: string }[];
   save_errors: string[];
 }
@@ -50,6 +50,8 @@ export function summarizeSync(log: SyncLogLite): string[] {
     `pane found by: ${tally(threads.filter((t) => t.stop !== "not_opened").map((t) => t.pane_how)) || "never"}`,
     `pane closed by: ${tally(threads.filter((t) => t.stop !== "not_opened").map((t) => t.close)) || "not logged"}`,
   ];
+  const left = threads.filter((t) => t.loading_left);
+  if (left.length) lines.push(`replies Slack never loaded: ${left.reduce((n, t) => n + t.loading_left!, 0)} in ${left.length} threads (saved as blanks)`);
   if (log.config) {
     lines.unshift(`selection: ${log.config.channels} config channels${log.config.missing.length ? `; not in the sidebar: ${log.config.missing.join(", ")}` : ""}${log.config.discovered.length ? `; found by prefix, not in config: ${log.config.discovered.join(", ")}` : ""}`);
   } else lines.unshift("selection: prefixes only (no sync-config.json; rebuild with bun run build:ext)");

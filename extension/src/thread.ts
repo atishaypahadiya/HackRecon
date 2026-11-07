@@ -83,8 +83,10 @@ export interface ThreadRaw {
 export class ThreadRecorder {
   readonly batches: string[][] = [];
   readonly rows: Record<string, string> = {};
+  /** Keys only ever seen as Slack's loading placeholder (SEL.unknownSender); the sync waits for these. */
+  readonly loading = new Set<string>();
 
-  /** Records the rendered rows; returns how many keys were new. */
+  /** Records the rendered rows; returns how many keys were new. A loaded rendering always replaces a loading one. */
   record(rows: Element[]): number {
     const keys: string[] = [];
     let fresh = 0;
@@ -92,8 +94,11 @@ export class ThreadRecorder {
       const k = rowKey(r);
       if (!k) continue;
       const html = cleanHtml(r.outerHTML, { dropSvg: true });
-      if (!(k in this.rows)) fresh++;
-      if (!(k in this.rows) || html.length > this.rows[k]!.length) this.rows[k] = html;
+      const known = k in this.rows, was = this.loading.has(k), now = !!r.querySelector(SEL.unknownSender);
+      if (!known) fresh++;
+      if (!known || (was && !now) || (was === now && html.length > this.rows[k]!.length)) this.rows[k] = html;
+      if (now && (!known || was)) this.loading.add(k);
+      else this.loading.delete(k);
       keys.push(k);
     }
     if (keys.length) this.batches.push(keys);

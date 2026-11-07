@@ -13,7 +13,7 @@
 // UNVERIFIED in Chrome until the first run: sidebar clicks, the thread pane, its scroller and close button.
 import { countAuthors, selfIdFlags } from "../../pipeline/hackerchannels.ts";
 import { SCHEMA_VERSION, authorsFileName, type AuthorsCaptureFile, type Message, type ThreadCaptureFile, type ThreadStopReason, type Ts } from "../../pipeline/schema.ts";
-import { STEP_WAIT_MS, NO_NEW_KEYS_STEPS } from "./accumulate.ts";
+import { LOADING_WAITS, STEP_WAIT_MS, NO_NEW_KEYS_STEPS } from "./accumulate.ts";
 import { autoPageTargets } from "./autopages.ts";
 import { captureChannelFile, channelIdFromUrl, sleep } from "./channel.ts";
 import { replyButton } from "./parse.ts";
@@ -67,6 +67,8 @@ interface ThreadLog {
   more_clicks: number;
   /** The SEL.threadClose candidate that closed the pane, or "escape" (user 2026-11-06: log it). */
   close?: string;
+  /** Rows still Slack's loading placeholder when the pane closed (after the waits). */
+  loading_left?: number;
   note?: string;
 }
 
@@ -365,6 +367,22 @@ async function sync(): Promise<void> {
       ui.set(`HackRecon: #${ch.name} · thread ${parent.ts} · ${replies()}/${want} replies · step ${tl.steps}`);
       await sleep(STEP_WAIT_MS);
     }
+    // Slack's loading placeholders: wait, then read the pane again from the top, until they fill in (bounded).
+    for (let w = 0; rec.loading.size && w < LOADING_WAITS && !stopped; w++) {
+      ui.set(`HackRecon: #${ch.name} · thread ${parent.ts} · waiting for Slack to load ${rec.loading.size} replies`);
+      await sleep(STEP_WAIT_MS);
+      rec.record(paneRows(root()));
+      scroller = paneScroller(root()) ?? scroller;
+      if (!rec.loading.size || !scroller || scroller.scrollHeight <= scroller.clientHeight + 2) continue;
+      scroller.scrollTop = 0;
+      for (let i = 0; i < 40 && rec.loading.size; i++) {
+        await sleep(STEP_WAIT_MS);
+        rec.record(paneRows(root()));
+        if (atBottom(scroller)) break;
+        scroller.scrollTop += scroller.clientHeight * 0.8;
+      }
+    }
+    if (rec.loading.size) tl.loading_left = rec.loading.size;
     raw.stop_reason = stop;
     raw.batches = rec.batches;
     raw.rows = rec.rows;

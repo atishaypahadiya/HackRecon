@@ -152,6 +152,42 @@ describe("headers whose author name Slack hadn't loaded (2026-11-06 sync)", () =
     expect(out.unresolvedAuthors).toEqual(["1792954221.441149", "1792954250.000100"]);
   });
 
+  // Sync 2026-11-07: 70 posts and 59 replies were read while Slack still showed this placeholder (no name, no text).
+  const LOADING = '<span class="c-missing_text c-missing_text--unknown"></span>';
+  const row2 = (ts: string, head: string, text: string) =>
+    `<div class="c-virtual_list__item" data-item-key="${ts}"><div data-qa="message_container" data-msg-ts="${ts}"><div data-qa="message_content">${head}<a class="c-timestamp" data-ts="${ts}" href="https://w.slack.com/archives/C1/p${ts.replace(".", "")}">t</a>${text ? `<div data-qa="message-text">${text}</div>` : ""}</div></div></div>`;
+  const NAMED = '<span data-qa="message_sender"><button data-qa="message_sender_name">Toby Clark</button></span>';
+  const rowsOf = (html: string) => parseRows(parseHTML(`<html><body><div data-qa="message_pane">${html}</div></body></html>`).document as unknown as Document, "https://app.slack.com/");
+  test("a placeholder post is loading until a later rendering fills it in; the filled one wins", () => {
+    const acc = new Accumulator();
+    acc.ingest(rowsOf(row2("1791253193.612529", LOADING, "")));
+    expect(acc.loading).toEqual(["1791253193.612529"]);
+    acc.ingest(rowsOf(row2("1791253193.612529", NAMED, "SpacetimeDB office hours")));
+    expect(acc.loading).toEqual([]);
+    expect(acc.finalize().messages.map((m) => [m.sender.name, m.text])).toEqual([["Toby Clark", "SpacetimeDB office hours"]]);
+  });
+  test("a named header is never replaced by a later rendering that's still loading", () => {
+    const acc = new Accumulator();
+    acc.ingest(rowsOf(row2("1791253193.612529", NAMED, "SpacetimeDB office hours")));
+    acc.ingest(rowsOf(row2("1791253193.612529", LOADING, "")));
+    expect(acc.loading).toEqual([]);
+    expect(acc.finalize().messages.map((m) => [m.sender.name, m.text])).toEqual([["Toby Clark", "SpacetimeDB office hours"]]);
+  });
+  test("the thread recorder replaces a placeholder with the loaded row, even a shorter one, and tracks what's still loading", async () => {
+    const { ThreadRecorder } = await import("./thread.ts");
+    const els = (html: string) => [...(parseHTML(`<div id="r">${html}</div>`).document.getElementById("r") as unknown as Element).children];
+    const rec = new ThreadRecorder();
+    const pad = `<span data-pad="${"x".repeat(400)}"></span>`;
+    rec.record(els(row2("1792883875.617919", LOADING + pad, "") + row2("1792897979.050679", NAMED, "ok")));
+    expect([...rec.loading]).toEqual(["1792883875.617919"]);
+    rec.record(els(row2("1792883875.617919", NAMED, "the reply")));
+    expect([...rec.loading]).toEqual([]);
+    expect(rec.rows["1792883875.617919"]).toContain("the reply");
+    rec.record(els(row2("1792883875.617919", LOADING + pad, "")));
+    expect([...rec.loading]).toEqual([]);
+    expect(rec.rows["1792883875.617919"]).toContain("the reply");
+  });
+
   test("a deleted parent with replies is kept as a thread to open, not a post", async () => {
     const { parseHTML } = await import("linkedom");
     const { Accumulator } = await import("./accumulate.ts");

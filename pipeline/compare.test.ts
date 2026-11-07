@@ -148,6 +148,12 @@ describe("compareChannel (synthetic export)", () => {
     expect(unmarked.extras.map((x) => x.why)).toEqual(["broadcast_unmarked"]);
   });
 
+  test("a post found by ts but read with no text (Slack's loading placeholder) is counted as no_text, not hidden in recall", () => {
+    expect(r.no_text).toEqual([]);
+    const blank = compareChannel(cap([msg("1792400000.000001", "", ""), msg("1792400000.000002", "[Figma] Bob")]), exp, CUTOFF);
+    expect(blank.matched_real).toBe(2);
+    expect(blank.no_text).toEqual(["1792400000.000001"]);
+  });
   test("time over 2 minutes is flagged but separate", () => {
     expect(compareChannel(cap([], 150), exp, CUTOFF).pass.time).toBe(false);
   });
