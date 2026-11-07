@@ -40,6 +40,8 @@ export const ITEMS_PATH = "data/items.json";
 export const RUN_PATH = "data/classify_run.json";
 export const RUNS_PATH = "data/runs.json";
 export const MESSAGES_PATH = "data/messages.json";
+/** What `hr discover` found and wrote (autoconfig.ts), with the hash of each config file it wrote. */
+export const DISCOVERY_PATH = "data/discovery.json";
 export const BOARD_DATA_PATH = "data/board.json";
 export const LABELS_PATH = "review/labels.csv";
 export const POOL_META_PATH = "review/pool.json";
