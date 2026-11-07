@@ -1639,7 +1639,7 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
       - Reverting needs no API call: run 3's extraction is still in data/canon_extractions.json under the old prompt hash.
       - Decision for the user: where requirement sentences come from (Slack sponsor posts in step 1, sponsor pages the prize blocks link), or how tracks with none appear in Plan.
 
-  - **Tiered evidence (user 2026-11-06), on v2.** The strict version is kept on `exp/strict-quotes` (9dc4efa), not merged.
+  - **Tiered evidence (user 2026-11-06), on v2.** The strict version (9dc4efa, never merged) is recorded here only: its branch was deleted 2026-11-07 because v2 carries its entry steps and eligibility lint, and its strict-quote rule is the part that failed.
     - **Tiers**, computed in `trackCards` from canon, never by the model:
       - (1) **stated**: a requirement or criterion sentence. Quote + reason.
       - (2) **title**: no such sentence, but the block says more than an amount. The title is the evidence, Plan labels it "requirements not stated", and Booths asks the rep "What does ‘<track>’ reward?".
