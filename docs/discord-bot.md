@@ -89,8 +89,11 @@ Anyone can find a bot and message it; HackRecon only reads and answers your own 
 everything else unread. It calls four Bot API methods and nothing else (`pipeline/telegram.test.ts`).
 
 Answers: each question is one `claude-haiku-5-5` call over your Plan, the schedule, alerts so far, and organizer and
-classified posts. They go through the cost guard: a watch session stops answering at $1 and tells you so; it also
-answers at most 20 an hour. `bun run hr ask "..."` gives the same answer in the terminal.
+classified posts. Two spend limits, and the chat tells you when one is reached: the cost guard's $1 per watch
+session, and $3 a day per event (set `chat_daily_usd` in the event's `config/event.json`; the day's total is kept in
+`data/chat_spend.json`, so restarting watch doesn't reset it). It also answers at most 20 an hour. Whether a post
+counts as from the organizers is decided in code from where it came from (the followed feed, or a channel you listed
+by id), never from what the post says. `bun run hr ask "..."` gives the same answer in the terminal.
 
 The channel is pluggable (`HACKRECON_CHANNEL` in `.env`, default `telegram`): `sms` uses Twilio one-way (the four
 `TWILIO_*`/`HACKRECON_SMS_TO` keys, and US carrier registration); iMessage and WhatsApp aren't built yet.

@@ -9,9 +9,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { ALERT_SKEW_MS, type PlanFacts } from "./alerts.ts";
 import type { Inbound, MessageChannel } from "./channels.ts";
 import { readEvent, readJsonFile, scheduleLines, type EventConfig } from "./classify.ts";
-import { COST_LIMIT_USD, CostRefused } from "./costguard.ts";
+import { callOf, COST_LIMIT_USD, CostRefused, estimateUsd, type CostGuard } from "./costguard.ts";
+import { writeJsonFile } from "./classify.ts";
 import { sourceLine } from "./discord.ts";
-import { ALERTS_LOG_PATH, CHAT_LOG_PATH, DISCORD_STATE_PATH, EVENT_PATH, ITEMS_PATH, MESSAGES_PATH, PLAN_PATH, SPONSORS_PATH } from "./event.ts";
+import { ALERTS_LOG_PATH, CHAT_LOG_PATH, CHAT_SPEND_PATH, DISCORD_STATE_PATH, EVENT_PATH, ITEMS_PATH, MESSAGES_PATH, PLAN_PATH, SPONSORS_PATH } from "./event.ts";
 import { readSponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
 import { readMessages } from "./runs.ts";
@@ -27,6 +28,9 @@ export const CHAT_MAX_PER_HOUR = 20;
 export const CHAT_STALE_MS = 15 * 60_000;
 /** The context's size cap: newest posts first until it's reached. */
 export const CONTEXT_MAX_CHARS = 60_000;
+/** Chat spend per event per day (user 2026-11-08), on top of the cost guard's $1 per watch session; event.json
+ *  chat_daily_usd overrides it. Days are the event's (its timezone), and the total survives restarts. */
+export const CHAT_DAILY_USD = 3;
 /** Earlier exchanges sent with a question, for follow-ups ("and after that?"). */
 export const HISTORY_TURNS = 6;
 
@@ -126,10 +130,18 @@ export function chatSystem(eventName: string, tz: string): string {
   ].join("\n");
 }
 
-/** One answer: a model call with no tools. Throws CostRefused when the guard refuses it. */
-export async function answer(client: Anthropic, o: { question: string; history: ChatTurn[]; context: string; eventName: string; tz: string }): Promise<{ text: string } | { error: string }> {
+export interface ChatRequest {
+  question: string;
+  history: ChatTurn[];
+  context: string;
+  eventName: string;
+  tz: string;
+}
+
+/** The request answer() sends, so a caller can estimate it first (costguard.ts callOf). */
+export function chatRequest(o: ChatRequest): Anthropic.Messages.MessageCreateParamsNonStreaming {
   const prior = o.history.filter((t) => t.status === "answered").slice(-HISTORY_TURNS);
-  const res = await client.messages.create({
+  return {
     model: CHAT_MODEL,
     max_tokens: CHAT_MAX_TOKENS,
     system: [
@@ -138,15 +150,62 @@ export async function answer(client: Anthropic, o: { question: string; history: 
     ],
     output_config: { effort: CHAT_EFFORT },
     messages: [...prior.flatMap((t) => [{ role: "user" as const, content: t.q }, { role: "assistant" as const, content: t.a }]), { role: "user", content: o.question }],
-  });
+  };
+}
+
+/** One answer: a model call with no tools. Throws CostRefused when the guard refuses it. */
+export async function answer(client: Anthropic, o: ChatRequest): Promise<{ text: string } | { error: string }> {
+  const res = await client.messages.create(chatRequest(o));
   if (res.stop_reason === "refusal") return { error: "the model declined to answer that" };
   const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
   if (!text) return { error: res.stop_reason === "max_tokens" ? "the answer ran past its length limit" : "the model returned no text" };
   return { text };
 }
 
+/** answer() inside both limits: the daily cap is checked against the request's estimate first (throws
+ *  DailyCapReached), the session guard on the call itself (CostRefused); what the call cost is added to the day. */
+export async function budgetedAnswer(client: Anthropic, guard: CostGuard, b: ChatBudget, req: ChatRequest, now: () => number = Date.now) {
+  b.check(now(), estimateUsd([callOf(chatRequest(req))]));
+  const before = guard.spentUsd;
+  try {
+    return await answer(client, req);
+  } finally {
+    b.record(now(), guard.spentUsd - before);
+  }
+}
+
 export const HELP =
   "HackRecon here. Ask me anything about the event: what's next on the schedule, deadlines, rooms, workshops or credits that fit your stack, which tracks your Plan fits, what organizers posted. I answer from your Plan and the event's posts, and I send alerts here when something relevant lands.";
+
+export class DailyCapReached extends Error {}
+
+/** The event's chat spend by day (data/chat_spend.json), read and written on every answer so restarts keep it. */
+export class ChatBudget {
+  constructor(
+    readonly capUsd: number,
+    readonly tz: string,
+    private readonly path = CHAT_SPEND_PATH,
+  ) {}
+  day(nowMs: number): string {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: this.tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(nowMs));
+  }
+  spent(nowMs: number): number {
+    return readJsonFile<Record<string, number>>(this.path, {})[this.day(nowMs)] ?? 0;
+  }
+  /** Throws DailyCapReached when today's spend plus this answer's estimate would pass the cap. */
+  check(nowMs: number, estimateUsd: number): void {
+    const spent = this.spent(nowMs);
+    if (spent + estimateUsd > this.capUsd) throw new DailyCapReached(`chat: today's spend $${spent.toFixed(4)} plus this answer's estimate $${estimateUsd.toFixed(4)} would pass the $${this.capUsd.toFixed(2)} daily cap`);
+  }
+  record(nowMs: number, usd: number): void {
+    if (!(usd > 0)) return;
+    const all = readJsonFile<Record<string, number>>(this.path, {});
+    all[this.day(nowMs)] = (all[this.day(nowMs)] ?? 0) + usd;
+    writeJsonFile(this.path, all);
+  }
+}
+
+export const dailyCapReply = (capUsd: number, tz: string) => `Today's budget for answers ($${capUsd.toFixed(2)} a day for this event) is used up, so I've stopped answering until midnight (${tz}). Alerts still come through.`;
 
 export const budgetReply = () => `This hr watch session has used its $${COST_LIMIT_USD.toFixed(2)} budget for answers, so I've stopped answering. Restarting hr watch allows another $${COST_LIMIT_USD.toFixed(2)}. Alerts still come through.`;
 
@@ -159,6 +218,8 @@ export async function handleInbound(o: {
   tz: string;
   history: ChatTurn[];
   ask: (question: string, history: ChatTurn[]) => Promise<{ text: string } | { error: string }>;
+  /** For the daily-cap reply. */
+  dailyCapUsd?: number;
   log?: (line: string) => void;
 }): Promise<{ turns: ChatTurn[]; stale: number }> {
   const log = o.log ?? console.log;
@@ -183,7 +244,10 @@ export async function handleInbound(o: {
         const r = await o.ask(q, all);
         turn = "text" in r ? { at: m.at, q, a: r.text, status: "answered" } : { at: m.at, q, a: `I couldn't answer that: ${r.error}.`, status: "error" };
       } catch (e) {
-        if (e instanceof CostRefused) {
+        if (e instanceof DailyCapReached) {
+          log(e.message);
+          turn = { at: m.at, q, a: dailyCapReply(o.dailyCapUsd ?? CHAT_DAILY_USD, o.tz), status: "budget" };
+        } else if (e instanceof CostRefused) {
           log(`chat: ${e.message}`);
           turn = { at: m.at, q, a: budgetReply(), status: "budget" };
         } else {

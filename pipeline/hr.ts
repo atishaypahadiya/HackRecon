@@ -73,7 +73,7 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { answer, buildContext, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
+import { budgetedAnswer, buildContext, CHAT_DAILY_USD, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
 import { ingestDiscord, runAlerts } from "./watch.ts";
@@ -117,6 +117,7 @@ import {
   OUTBOX_PATH,
   CHAT_LOG_PATH,
   CHANNEL_STATE_PATH,
+  CHAT_SPEND_PATH,
   ORGANIZERS_PATH,
   PAGE_FIXTURES_DIR,
   PAGES_DIR,
@@ -319,7 +320,8 @@ const USAGE = `usage:
       discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
       the posts wait; watch never passes --yes), then alerts, every --every. On a two-way channel (Telegram) it
       also answers your messages from your Plan and the event's data, with claude-haiku-5-5, up to $1 of
-      answers per watch session (the cost guard) and 20 an hour; questions and answers go to ${CHAT_LOG_PATH}.
+      answers per watch session (the cost guard), $3 a day per event (event.json chat_daily_usd; kept in
+      ${CHAT_SPEND_PATH} across restarts), and 20 an hour; questions and answers go to ${CHAT_LOG_PATH}.
   bun run hr ask [--at ISO] [--yes] "QUESTION"
       The same answer the chat would give, printed here: for checking the agent without a channel.
   bun run hr telegram-chat-id
@@ -491,12 +493,13 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
       channel,
       inbound: r.messages,
       nowMs: Date.now(),
-      tz: existsSync(EVENT_PATH) ? readEvent().timezone : "America/Los_Angeles",
+      tz: budget().tz,
       history: readChatLog(),
+      dailyCapUsd: budget().capUsd,
       ask: async (question, history) => {
         if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
         const d = readAgentData(Date.now());
-        return answer(client, { question, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz });
+        return budgetedAnswer(client, guard, budget(), { question, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz });
       },
     });
     for (const t of turns) {
@@ -512,6 +515,12 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
   }
 }
 
+/** The event's daily chat budget, from event.json (read per question, so an edit applies at once). */
+function budget(): ChatBudget {
+  const e = existsSync(EVENT_PATH) ? readEvent() : null;
+  return new ChatBudget(e?.chat_daily_usd ?? CHAT_DAILY_USD, e?.timezone ?? "America/Los_Angeles");
+}
+
 async function ask(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { at: { type: "string" }, yes: { type: "boolean", default: false } } });
   const question = positionals.join(" ").trim();
@@ -524,17 +533,20 @@ async function ask(args: string[]): Promise<number> {
     console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
     return 2;
   }
-  const client = anthropicClient(new CostGuard("ask", values.yes!));
+  const guard = new CostGuard("ask", values.yes!);
+  const client = anthropicClient(guard);
   if (!client) return 1;
   const d = readAgentData(nowMs);
   const context = buildContext(d);
   console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"})`);
   try {
-    const r = await answer(client, { question, history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz });
+    const b = budget();
+    const r = await budgetedAnswer(client, guard, b, { question, history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz });
+    console.log(`ask: today's chat spend $${b.spent(Date.now()).toFixed(4)} of $${b.capUsd.toFixed(2)}`);
     console.log("text" in r ? r.text : `no answer: ${r.error}`);
     return "text" in r ? 0 : 1;
   } catch (e) {
-    console.error((e as Error).message);
+    console.error(e instanceof DailyCapReached ? `${(e as Error).message} (event.json chat_daily_usd sets it)` : (e as Error).message);
     return 1;
   }
 }

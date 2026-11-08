@@ -42,7 +42,9 @@ export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | n
       if (file.kind !== "discord-dom" || !Array.isArray(file.posts) || !Array.isArray(file.unread)) throw new Error("not a Discord file from the extension");
       mkdirSync(join(CAPTURES_DIR, "discord"), { recursive: true });
       copyFileSync(join(o.dir!, f), join(CAPTURES_DIR, "discord", f));
-      posts.push(...file.posts.map((post) => ({ post, at: file.captured_at })));
+      // A file only ever holds what a tab showed: whatever it says, its posts are "dom", never the bot's crossposts,
+      // so a file can't claim the followed feed's organizer authority (D19).
+      posts.push(...file.posts.map((post) => ({ post: { ...post, via: "dom" as const }, at: file.captured_at })));
       unread.push(...file.unread.map((u) => ({ ...u, guild_id: file.guild_id, guild_name: file.guild_name })));
       st.files.push(f);
       files++;

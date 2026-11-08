@@ -54,6 +54,8 @@ export const OUTBOX_PATH = "data/outbox.jsonl";
 export const CHAT_LOG_PATH = "data/chat.jsonl";
 /** Where each two-way channel left off reading (Telegram's update offset). */
 export const CHANNEL_STATE_PATH = "data/channel_state.json";
+/** Chat answers' spend per event day (agent.ts ChatBudget). */
+export const CHAT_SPEND_PATH = "data/chat_spend.json";
 export const BOARD_DATA_PATH = "data/board.json";
 export const LABELS_PATH = "review/labels.csv";
 export const POOL_META_PATH = "review/pool.json";
