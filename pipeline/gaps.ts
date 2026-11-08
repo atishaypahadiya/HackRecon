@@ -10,7 +10,7 @@ import { ELIGIBILITY, FIT_EFFORT, FIT_MODEL } from "./fit.ts";
 import { callChecked } from "./model.ts";
 import { trackDetail, type PlanInput, type PlanTrack } from "./plan.ts";
 import type { Entity } from "./schema.ts";
-import { repSource, type RepNote } from "./told.ts";
+import { repSource, type RepNote, type Teammate } from "./told.ts";
 import type { Usage } from "./usage.ts";
 
 export const GAP_MAX_TOKENS = 8000;
@@ -33,8 +33,8 @@ export interface GapRequirement {
 
 export interface ProjectFact {
   id: string;
-  /** "description", "stack", or "repo". */
-  kind: "description" | "stack" | "repo";
+  /** "description", "stack", or "repo"; "team" is what someone on the team can do (slice 4), never what the project does. */
+  kind: "description" | "stack" | "repo" | "team";
   /** Where it's from, for display: "your description", "your stack: Apify", or a repo path:line. */
   source: string;
   /** A link for repo lines (blob at the checked-out commit), else null. */
@@ -55,11 +55,15 @@ export interface Gap {
   question: string;
   requirement: { kind: GapRequirement["kind"]; quote: string; source_url: string; told_by?: string };
   project: { quote: string; source: string; url: string | null }[];
+  /** Slice 4, only when a team is told: who lists a skill that covers the requirement ("we haven't done it yet"),
+   *  or nobody (empty: "nobody on the team lists a skill for this"). */
+  team?: { who: string; skill: string }[];
 }
 
 interface RawGap {
   requirement_id: string;
   facts: { fact_id: string; quote: string }[];
+  skills?: { fact_id: string; quote: string }[];
   gap: string;
   instead: string;
   question: string;
@@ -89,6 +93,13 @@ export const GAP_SCHEMA = {
       },
     },
   },
+} as const;
+
+const CITE = { type: "array", items: { type: "object", additionalProperties: false, required: ["fact_id", "quote"], properties: { fact_id: { type: "string" }, quote: { type: "string" } } } } as const;
+/** With a team told: each gap also says which team skills cover it. */
+export const GAP_SCHEMA_TEAM = {
+  ...GAP_SCHEMA,
+  properties: { gaps: { type: "array", items: { ...GAP_SCHEMA.properties.gaps.items, required: [...GAP_SCHEMA.properties.gaps.items.required, "skills"], properties: { ...GAP_SCHEMA.properties.gaps.items.properties, skills: CITE } } } },
 } as const;
 
 /** "[Apify] Best Actor sponsored by Apify" → "Best Actor". */
@@ -151,6 +162,21 @@ export const GAP_SYSTEM = [
   "Never judge eligibility, outcome or compliance: no \"qualifies\", \"eligible\", \"counts\", \"meets\", \"fails\", \"can't enter\". No advice. Return an empty list when nothing differs.",
 ].join("\n\n");
 
+export const GAP_SYSTEM_TEAM = [
+  GAP_SYSTEM,
+  "Some PROJECT FACTS are TEAM facts (source ends in \"skills\"): what a person on the team can do, as they told it, not what the project does. Never cite a team fact in facts, and never report a gap because of one. For each gap, skills: the team facts that show someone on the team lists a skill that covers what the requirement asks for, each a fact_id and a quote copied exactly from it naming that one skill. Empty when no listed skill covers it.",
+].join("\n\n");
+
+/** How a gap reads for the team: "we haven't done it yet: Priya lists React" or "nobody on the team lists a skill for this". */
+export function teamGapLine(team: { who: string; skill: string }[]): string {
+  return team.length ? `we haven't done it yet; ${team.map((t) => `${t.who === "you" ? "you list" : `${t.who} lists`} ${t.skill}`).join(", ")}` : "nobody on the team lists a skill for this";
+}
+
+/** One fact per person who lists skills: "your skills: Rust, CUDA", "Priya's skills: React, Figma". */
+export function teamFacts(team: Teammate[]): ProjectFact[] {
+  return team.filter((t) => t.skills.length).map((t) => ({ id: "", kind: "team" as const, source: t.name ? `${t.name}'s skills` : "your skills", url: null, text: t.skills.map((s) => s.name).join(", ") }));
+}
+
 export function gapRequest(reqs: GapRequirement[], facts: ProjectFact[]): string {
   return [
     "REQUIREMENTS",
@@ -161,8 +187,8 @@ export function gapRequest(reqs: GapRequirement[], facts: ProjectFact[]): string
   ].join("\n");
 }
 
-export function gapHash(request: string): string {
-  return createHash("sha256").update(JSON.stringify([FIT_MODEL, FIT_EFFORT, GAP_SCHEMA, GAP_SYSTEM, request])).digest("hex").slice(0, 16);
+export function gapHash(request: string, team = false): string {
+  return createHash("sha256").update(JSON.stringify(team ? [FIT_MODEL, FIT_EFFORT, GAP_SCHEMA_TEAM, GAP_SYSTEM_TEAM, request] : [FIT_MODEL, FIT_EFFORT, GAP_SCHEMA, GAP_SYSTEM, request])).digest("hex").slice(0, 16);
 }
 
 /** Every id exists, every project quote is in its fact, each gap cites a project fact, and the sentence passes
@@ -173,6 +199,7 @@ export function checkGaps(parsed: unknown, reqs: GapRequirement[], facts: Projec
   const reqOf = new Map(reqs.map((r) => [r.id, r]));
   const factOf = new Map(facts.map((f) => [f.id, f]));
   const out: Gap[] = [];
+  const teamTold = facts.some((f) => f.kind === "team");
   for (const g of raw) {
     const r = reqOf.get(g.requirement_id);
     if (!r) return { error: `${g.requirement_id} is not a requirement id` };
@@ -181,10 +208,24 @@ export function checkGaps(parsed: unknown, reqs: GapRequirement[], facts: Projec
     for (const f of g.facts) {
       const fact = factOf.get(f.fact_id);
       if (!fact) return { error: `${f.fact_id} is not a project fact id` };
+      if (fact.kind === "team") return { error: `${f.fact_id} is a team fact: it says what someone can do, not what the project does; cite it in skills, not facts` };
       const q = norm(f.quote);
       if (q.length < 4 || !norm(fact.text).toLowerCase().includes(q.toLowerCase())) return { error: `the quote "${f.quote}" is not in ${f.fact_id}'s text; copy it exactly` };
       project.push({ quote: q, source: fact.source, url: fact.url });
     }
+    // Who on the team could close it: each cited skill must be one whole skill from a team fact, as told.
+    let team: Gap["team"];
+    if (teamTold) {
+      team = [];
+      for (const s of g.skills ?? []) {
+        const fact = factOf.get(s.fact_id);
+        if (fact?.kind !== "team") return { error: `${s.fact_id} is not a team fact` };
+        const skill = fact.text.split(", ").find((x) => x.toLowerCase() === norm(s.quote).toLowerCase());
+        if (!skill) return { error: `"${s.quote}" is not one of the skills in ${s.fact_id}; quote one skill exactly` };
+        const who = fact.source.replace(/'s skills$|^your skills$/, (m) => (m === "your skills" ? "you" : ""));
+        if (!team.some((x) => x.who === who && x.skill === skill)) team.push({ who, skill });
+      }
+    } else if (g.skills?.length) return { error: "there are no team facts to cite" };
     const gap = norm(g.gap);
     if (!gap || gap.length > 320) return { error: `${g.requirement_id}: the gap must be one sentence under 320 characters` };
     if (ELIGIBILITY.test(gap) || VERDICT.test(gap)) return { error: `${g.requirement_id}: "${gap}" judges eligibility or gives advice; state both sides as facts only` };
@@ -196,7 +237,7 @@ export function checkGaps(parsed: unknown, reqs: GapRequirement[], facts: Projec
     if (!question.toLowerCase().includes(r.short.toLowerCase())) return { error: `${g.requirement_id}: the question must name the track as "${r.short}"` };
     if (copies(question, r.text)) return { error: `${g.requirement_id}: ask in the team's own words; the Devpost sentence belongs in the evidence, not the question` };
     if (ELIGIBILITY.test(question) || VERDICT.test(question) || /\bcounts?\b/i.test(question)) return { error: `${g.requirement_id}: "${question}" judges eligibility or gives advice; ask what the requirement needs` };
-    out.push({ track_id: r.track_id, track: r.track, gap, instead, question, requirement: { kind: r.kind, quote: r.text, source_url: r.source_url, ...(r.told_by ? { told_by: r.told_by } : {}) }, project });
+    out.push({ track_id: r.track_id, track: r.track, gap, instead, question, requirement: { kind: r.kind, quote: r.text, source_url: r.source_url, ...(r.told_by ? { told_by: r.told_by } : {}) }, project, ...(team ? { team } : {}) });
   }
   return out;
 }
@@ -213,16 +254,16 @@ export interface GapResult {
   usage: Usage | null;
 }
 
-export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely", notes: RepNote[] = []): Promise<GapResult | { error: string }> {
+export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely", notes: RepNote[] = [], team: Teammate[] = []): Promise<GapResult | { error: string }> {
   const t0 = now();
   const reqs = gapRequirements(tracks, entities, scope, notes);
-  const own = inputFacts(input);
-  const facts = [...own, ...repoFacts.map((f, k) => ({ ...f, id: `F${own.length + k + 1}` }))];
-  const counts = { description: 0, stack: 0, repo: 0 };
+  const facts = [...inputFacts(input), ...teamFacts(team), ...repoFacts].map((f, k) => ({ ...f, id: `F${k + 1}` }));
+  const teamTold = facts.some((f) => f.kind === "team");
+  const counts = { description: 0, stack: 0, repo: 0, team: 0 };
   for (const f of facts) counts[f.kind]++;
   if (!reqs.length) return { gaps: [], checked: 0, facts: counts, from: "none", ms: 0, usage: null };
   const request = gapRequest(reqs, facts);
-  const hash = gapHash(request);
+  const hash = gapHash(request, teamTold);
   // The request names repo lines by path:line, not commit, so a new commit with the same lines hits the cache;
   // links are re-pointed at the commit just read.
   const urlOf = new Map(facts.map((f) => [f.source, f.url]));
@@ -230,7 +271,7 @@ export async function planGaps(client: Anthropic | null, tracks: GapTrack[], ent
   const hit = cache[hash];
   if (hit) return { gaps: relink(hit.gaps), checked: reqs.length, facts: counts, from: "cache", ms: Math.round(now() - t0), usage: null };
   if (!client) return { error: "no API key, and these requirements haven't been checked before" };
-  const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: GAP_MAX_TOKENS, system: GAP_SYSTEM, schema: GAP_SCHEMA, request, check: (p) => checkGaps(p, reqs, facts) });
+  const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: GAP_MAX_TOKENS, system: teamTold ? GAP_SYSTEM_TEAM : GAP_SYSTEM, schema: teamTold ? GAP_SCHEMA_TEAM : GAP_SCHEMA, request, check: (p) => checkGaps(p, reqs, facts) });
   if ("error" in r) return { error: r.error };
   cache[hash] = { gaps: r.value, usage: r.usage, calls: r.calls };
   return { gaps: r.value, checked: reqs.length, facts: counts, from: "model", ms: Math.round(now() - t0), usage: r.usage };

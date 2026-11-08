@@ -87,6 +87,9 @@ describe("Plan tracks", () => {
   test("the ranker sees used_for only when given; a plain stack renders as before, so eval cache keys hold", () => {
     expect(stackForRanker(parseStack("Apify, Claude API"))).toEqual(["Apify", "Claude API"]);
     expect(fitRequest("x", stackForRanker(parseStack("Apify, Claude API")))).toBe(fitRequest("x", ["Apify", "Claude API"]));
+    // Slice 4: a team adds its skills to the request; no team leaves the request (and its cached ranking) as it was.
+    expect(fitRequest("x", ["Apify"], [])).toBe("<idea>x</idea>\n<stack>Apify</stack>");
+    expect(fitRequest("x", ["Apify"], ["you: Rust", "Priya: React, Figma"]).endsWith("\nyou: Rust\nPriya: React, Figma</team>")).toBe(true);
     expect(stackForRanker(parseStack("Apify: pull course catalogs"))).toEqual(["Apify (used for: pull course catalogs)"]);
   });
   test("label rule: a title-only 'likely' stays only when the user names a product the title names (user 2026-11-06)", () => {
@@ -119,7 +122,7 @@ describe("Plan tracks", () => {
         messages: {
           stream: (p: { system: { text: string }[]; messages: { content: string }[] }) => ({
             finalMessage: async () => {
-              const rr = /<rerank>[^:]*: ([^<]*)<\/rerank>/.exec(p.messages[0]!.content)?.[1];
+              const rr = /<rerank>.*: ([^<:]*)<\/rerank>/s.exec(p.messages[0]!.content)?.[1];
               const ids = rr ? rr.split(", ") : ["t1", "t2", "t3"].filter((id) => p.system[0]!.text.includes(`id="${id}"`));
               asked.push(ids);
               const q = (id: string) => ({ t1: "must use Acme", t2: "judged on design", t3: "[Gamma] Best Use of Gamma" })[id]!;
@@ -164,6 +167,26 @@ describe("Plan tracks", () => {
       // The board's own run afterwards reads the same notes, so it hits the cached merge.
       const again = await planTracks(null, before, three, e, cache, {}, undefined, undefined, [note]);
       expect("error" in again ? again.error : again.from).toBe("cache");
+    });
+    test("a teammate joining re-judges every ranked track plus any their skill names, with the team in the request; none drops off", async () => {
+      const cache = seeded(), asked: string[][] = [];
+      const team = ["Priya: Gamma Flows, React"];
+      const r = await planTracks(fake(asked), before, three, e, cache, {}, undefined, { before, changed: ["Gamma Flows", "React"], tracks: ["t1", "t2"], beforeTeam: [] }, [], team);
+      if ("error" in r) throw new Error(r.error);
+      expect(asked.map((a) => [...a].sort())).toEqual([["t1", "t2", "t3"]]);
+      expect(r.items.map((t) => t.reason)).toEqual(["new t1", "new t2", "new t3"]);
+      const again = await planTracks(null, before, three, e, cache, {}, undefined, undefined, [], team);
+      expect("error" in again ? again.error : again.from).toBe("cache");
+    });
+    test("skills only added: a track the ranker leaves out or rates lower keeps its last judgment; taken away: none rises", async () => {
+      // The fake ranks t1 and t2 "likely" and t3 "possible"; t2 was "possible" before, t1 "likely".
+      const lower = (asked: string[][]) =>
+        ({ messages: { stream: () => ({ finalMessage: async () => (asked.push(["t2"]), { stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: "text", text: JSON.stringify({ ranked: [{ track_id: "t2", fit: "likely", reason: "new t2", quote: "judged on design" }] }) }] }) }) } }) as never;
+      const team = ["Priya: React"];
+      const up = await planTracks(lower([]), before, three, e, seeded(), {}, undefined, { before, changed: ["React"], tracks: ["t1", "t2"], beforeTeam: [], monotone: "up" }, [], team);
+      expect("error" in up ? up.error : up.items.map((t) => [t.track_id, t.fit, t.reason])).toEqual([["t1", "likely", "your stack lists Acme"], ["t2", "likely", "new t2"]]);
+      const down = await planTracks(lower([]), before, three, e, seeded(), {}, undefined, { before, changed: ["React"], tracks: ["t1", "t2"], beforeTeam: [], monotone: "down" }, [], team);
+      expect("error" in down ? down.error : down.items.map((t) => [t.track_id, t.fit, t.reason])).toEqual([["t2", "possible", "a designed UI could suit it"]]);
     });
     test("a new idea, or no last ranking to start from, ranks everything", async () => {
       const asked: string[][] = [];

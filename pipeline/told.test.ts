@@ -10,7 +10,7 @@ import { parsePlanBody } from "./plan.ts";
 import type { Entity } from "./schema.ts";
 import { localHost } from "./board.ts";
 import type { ShipList } from "./shiplist.ts";
-import { applyStackUpdate, makeWrites, readRepNotes, messageNames, namesItem, namesTrack, NO, pageCredits, quoteInMessage, stackWriteLine, YES, type ClaimableCredit, type Told } from "./told.ts";
+import { applyStackUpdate, makeWrites, readRepNotes, readTeam, messageNames, namesItem, namesTrack, NO, pageCredits, quoteInMessage, stackWriteLine, YES, type ClaimableCredit, type Told } from "./told.ts";
 
 const URL_ = "https://luma.com/abc";
 const src = (quote: string) => ({ kind: "page" as const, url: URL_, quote, captured_at: "2026-11-08T16:00:00.000Z", block: 0 });
@@ -388,6 +388,86 @@ describe("slice 3: what a rep told you", () => {
       const other = "the judging rules say the project has to use Sandboxes";
       expect(await w.exec("record_rep_note", { ...base, quote: other, text: "the project has to use Sandboxes" }, { text: other, at })).toEqual({ error: "your message doesn't name that track" });
       expect([readRepNotes(), existsSync("data/writes.jsonl")]).toEqual([[], false]);
+    });
+  });
+});
+
+describe("slice 4: teammates and their skills", () => {
+  const at = "2026-11-14T19:00:00.000Z";
+  const inEvent = async (f: () => Promise<void>) => {
+    const root = mkdtempSync(join(tmpdir(), "hr-slice4-"));
+    mkdirSync(join(root, "data"), { recursive: true });
+    const was = process.cwd();
+    process.chdir(root);
+    try {
+      writeFileSync("data/plan.json", JSON.stringify({ input: { idea: "AI research labs", stack: null }, counts: { gaps: 0, booths: 2 }, tracks: [{ track_id: "t", name: "Best Use of Modal", fit: "possible" }] }));
+      await f();
+    } finally {
+      process.chdir(was);
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const writes = (seen: unknown[] = []) =>
+    makeWrites({
+      rerun: async (input, rerank) => {
+        seen.push([input, rerank]);
+        const p = JSON.parse(readFileSync("data/plan.json", "utf8"));
+        writeFileSync("data/plan.json", JSON.stringify({ ...p, counts: { gaps: 2, booths: 3, gaps_nobody: 1 }, tracks: [{ ...p.tracks[0], fit: "likely" }] }));
+        return null;
+      },
+      credits: () => [],
+      tracks: () => [],
+      ship: () => ({ deadline: null, required: [], tracks: [], choices: [], judging: [] }),
+      pageLines: () => [],
+    });
+
+  test("someone joined: recorded with each skill's provenance; every track re-ranked and gaps re-checked; the line splits the gaps", async () => {
+    await inEvent(async () => {
+      const seen: unknown[] = [];
+      const q = "Priya joined the team, she does React and Figma";
+      expect(await writes(seen).exec("set_teammate", { quote: q, name: "Priya", skills: ["React", "Figma"] }, { text: q, at })).toEqual({
+        line: "Priya joined the team: React, Figma. Team skills: Priya: React, Figma. Tracks: Best Use of Modal possible → likely; gaps 0 → 2 (1 nobody on the team lists a skill for), booth questions 2 → 3.",
+      });
+      const told = { source: "chat" as const, at, quote: q };
+      expect(readTeam()).toEqual([{ id: "priya", name: "Priya", skills: [{ name: "React", told }, { name: "Figma", told }], told }]);
+      // Every track on the Plan is judged again with the team's skills, plus any a new skill names.
+      const input = { idea: "AI research labs", stack: null };
+      expect(seen).toEqual([[input, { before: input, changed: ["React", "Figma"], tracks: ["t"], beforeTeam: [], monotone: "up" }]]);
+    });
+  });
+  test("my own skills, then a skill added to a teammate", async () => {
+    await inEvent(async () => {
+      const w = writes();
+      const q = "I know Rust and CUDA";
+      const r = await w.exec("set_teammate", { quote: q, name: "me", skills: ["Rust", "CUDA"] }, { text: q, at });
+      expect("line" in r && r.line.startsWith("Your skills: Rust, CUDA. Team skills: you: Rust, CUDA.")).toBe(true);
+      await w.exec("set_teammate", { quote: "Priya joined the team, she does React", name: "Priya", skills: ["React"] }, { text: "Priya joined the team, she does React", at });
+      const q2 = "Priya also knows Postgres";
+      const r2 = await w.exec("set_teammate", { quote: q2, name: "Priya", skills: ["Postgres"] }, { text: q2, at });
+      expect("line" in r2 && r2.line.startsWith("Priya's skills: Postgres. Team skills: you: Rust, CUDA; Priya: React, Postgres.")).toBe(true);
+    });
+  });
+  test("someone leaving is asked first; yes takes them and their skills off", async () => {
+    await inEvent(async () => {
+      const w = writes();
+      await w.exec("set_teammate", { quote: "Priya joined the team, she does React", name: "Priya", skills: ["React"] }, { text: "Priya joined the team, she does React", at });
+      const q = "Priya left the team to go home";
+      expect(await w.exec("set_teammate", { quote: q, name: "Priya", left: true }, { text: q, at })).toEqual({ confirm: "That takes Priya off your team, with their skills (React), and re-ranks your Plan without them. Reply yes within 10 minutes to do it; anything else cancels." });
+      expect(readTeam().length).toBe(1);
+      expect((await w.confirm("yes", "2026-11-14T19:01:00.000Z"))?.startsWith("Priya left the team. Team skills: none listed.")).toBe(true);
+      expect(readTeam()).toEqual([]);
+    });
+  });
+  test("the teammate and each skill must be in the message; otherwise nothing is written", async () => {
+    await inEvent(async () => {
+      const w = writes();
+      const q = "someone new joined who does React";
+      expect(await w.exec("set_teammate", { quote: q, name: "Priya", skills: ["React"] }, { text: q, at })).toEqual({ error: "your message doesn't name that teammate" });
+      const q2 = "Priya joined the team today";
+      expect(await w.exec("set_teammate", { quote: q2, name: "Priya", skills: ["React"] }, { text: q2, at })).toEqual({ error: "your message doesn't name each of those skills" });
+      const q3 = "the team wants to know about React";
+      expect(await w.exec("set_teammate", { quote: q3, name: "me", skills: ["React"] }, { text: q3, at })).toEqual({ error: "your message doesn't name that teammate" });
+      expect([readTeam(), existsSync("data/writes.jsonl")]).toEqual([[], false]);
     });
   });
 });

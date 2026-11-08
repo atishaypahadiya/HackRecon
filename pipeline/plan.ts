@@ -308,6 +308,12 @@ export interface StackRerank {
   changed: string[];
   beforeNotes?: RepNote[];
   tracks?: string[];
+  /** Slice 4: the team's skill lines before a team change, to find the last ranking. */
+  beforeTeam?: string[];
+  /** Slice 4: "up" when the change only adds skills (a fit can't go down, a track can't drop off), "down" when it only
+   *  takes them away (a fit can't go up). A move the other way is the ranker's run-to-run noise, so the last
+   *  judgment stands. */
+  monotone?: "up" | "down";
 }
 
 /** Rep notes ride on their track's card as context: the ranker reads them but can never quote them, so the page
@@ -335,7 +341,7 @@ export function affectedTracks(cards: TrackCard[], prior: Ranked[], changed: str
 /** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). With
  *  `rerank`, only the tracks the stack change affects go to the model, and the merged ranking is cached under the new
  *  input, so a later full plan of the same input (the board's refresh) is a cache hit. */
-export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now(), rerank?: StackRerank, notes: RepNote[] = []): Promise<PlanSection<PlanTrack> | { error: string }> {
+export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now(), rerank?: StackRerank, notes: RepNote[] = [], team: string[] = []): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
   const base = trackCards(entities, e, aliases);
   const cards = withRepNotes(base, notes);
@@ -343,13 +349,13 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   const overall = overallTracks(entities, e);
   if (!cards.length) return { items: [], overall, from: "none", ms: Math.round(now() - t0), usage: null };
   const system = fitSystemPrompt(e, cards);
-  const request = fitRequest(input.idea, stackForRanker(input.stack));
+  const request = fitRequest(input.idea, stackForRanker(input.stack), team);
   const hash = fitHash(system, request);
   let ranked = cache[hash]?.ranked;
   let usage: Usage | null = null;
   let from: "cache" | "model" | "partial" = ranked ? "cache" : "model";
   const priorSystem = rerank?.beforeNotes ? fitSystemPrompt(e, withRepNotes(base, rerank.beforeNotes)) : system;
-  const prior = !ranked && rerank && rerank.before.idea === input.idea ? cache[fitHash(priorSystem, fitRequest(rerank.before.idea, stackForRanker(rerank.before.stack)))]?.ranked : undefined;
+  const prior = !ranked && rerank && rerank.before.idea === input.idea ? cache[fitHash(priorSystem, fitRequest(rerank.before.idea, stackForRanker(rerank.before.stack), rerank.beforeTeam ?? team))]?.ranked : undefined;
   if (prior) {
     const hit = new Set([...affectedTracks(cards, prior, rerank!.changed), ...(rerank!.tracks ?? []).filter((id) => cards.some((c) => c.id === id))]);
     let fresh: Ranked[] = [];
@@ -358,8 +364,8 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
       // The whole event's tracks stay in the prompt (the same cached system prompt as a full ranking, so the judgment
       // has the same context); the request asks for only the affected ones.
       const sub = cards.filter((c) => hit.has(c.id));
-      const only = `${request}\n<rerank>The hacker's stack just changed. Return only these tracks, each judged as you would in a full ranking: ${sub.map((c) => c.id).join(", ")}</rerank>`;
-      const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request: only, check: (p) => checkFit(p, sub) });
+      const only = `${request}\n<rerank>Something the hacker told you just changed. Return only these tracks, each judged as you would in a full ranking. The five-track limit doesn't apply here: return every one that still fits at least as "possible", and leave out only one that no longer fits at all: ${sub.map((c) => c.id).join(", ")}</rerank>`;
+      const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request: only, check: (p) => checkFit(p, sub, true) });
       if ("error" in r) return { error: r.error };
       fresh = r.value;
       usage = r.usage;
@@ -368,7 +374,15 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
     // out), then affected tracks the last ranking didn't have. The list can pass FIT_TOP when an added item brings
     // tracks in; a full re-rank (a new idea, or hr plan --fresh) chooses the top again.
     const byId = new Map(fresh.map((x) => [x.track_id, x]));
-    ranked = [...prior.map((x) => byId.get(x.track_id) ?? (hit.has(x.track_id) ? null : x)).filter((x): x is Ranked => !!x), ...fresh.filter((x) => !prior.some((p) => p.track_id === x.track_id))];
+    const rank = { possible: 0, likely: 1 } as const;
+    const m = rerank!.monotone;
+    const keep = (was: Ranked, now: Ranked | undefined): Ranked | null => {
+      if (!hit.has(was.track_id)) return was;
+      if (!now) return m === "up" ? was : null;
+      if ((m === "up" && rank[now.fit] < rank[was.fit]) || (m === "down" && rank[now.fit] > rank[was.fit])) return was;
+      return now;
+    };
+    ranked = [...prior.map((x) => keep(x, byId.get(x.track_id))).filter((x): x is Ranked => !!x), ...fresh.filter((x) => !prior.some((p) => p.track_id === x.track_id))];
     cache[hash] = { ranked, usage: usage ?? NO_USAGE, calls: hit.size ? 1 : 0 };
     from = "partial";
   }

@@ -96,6 +96,18 @@ No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for
 **Priority:** P2
 **Depends on:** the locked 25 captured and saved
 
+### A rep's note that contradicts the page: suggest confirming it in the event channel (user, 2026-11-08)
+
+**What:** When a rep's note told to Donna (slice 3, `data/rep_notes.json`) contradicts the page's requirement or criterion for the same track, Donna's reply and the board's "What a rep told you" section should suggest asking the rep to confirm it in the event channel. A draft of that question, in the hacker's words, is ready to copy (the hacker sends it; Donna never posts).
+
+**Why:** An organizer post is canon and can override the page; a booth conversation isn't and never can. Once the rep confirms in the channel, the next sync reads the post and the Plan uses it with the same weight as any organizer post.
+
+**Context:** Today the reply quotes the page's lines beside the note and says the page wins, but it doesn't tell a contradiction from an addition. Telling them apart needs a judgment (a small model call, or the gap check's existing comparison against requirements). A sponsor's rep posting in their own channel counts only if role signals mark them as the sponsor's rep or an organizer (D19), so the suggestion should name the channel where their post would count.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** slice 3 (built)
+
 ## Pages
 
 ### ~~`hr init`~~ Superseded in v2
