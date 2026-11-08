@@ -101,11 +101,12 @@ personal site). It's used only for their own profile, never for other people's.
 6. Iterate as the current event: the Plan saved from the idea alone, tracks empty until announced.
 
 **Next (proposed order)**
-1. Iterate, Nov 14: quiet hours (the event runs through the night of Nov 14), the Discord reader checked on the real
-   server, the announcement channel followed into the Donna server, and `hr watch` through the event.
+1. Iterate, Nov 14: the Discord reader checked on the real server, the announcement channel followed into the Donna
+   server, and `hr watch` through the event, every alert sent all night (the hacker is awake for it).
 2. The consent gate as one function, with its test.
-3. Quiet pulls: ask Slack which channels moved and read only those (TODOS).
-4. The dashboard behind a login.
-5. Hand-added profile sources.
-6. iMessage, then WhatsApp, as channel adapters.
-7. The multi-user question (consent at scale, the MLH conversation) before anything that serves more than one hacker.
+3. Quiet hours, after Iterate.
+4. Quiet pulls: ask Slack which channels moved and read only those (TODOS).
+5. The dashboard behind a login.
+6. Hand-added profile sources.
+7. iMessage, then WhatsApp, as channel adapters.
+8. The multi-user question (consent at scale, the MLH conversation) before anything that serves more than one hacker.
