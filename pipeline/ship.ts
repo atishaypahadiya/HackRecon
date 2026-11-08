@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { EventConfig } from "./classify.ts";
 import { trackCards, type SponsorAliases } from "./fit.ts";
+import { readRepNotes } from "./told.ts";
 import { planGaps, type Gap, type GapCache } from "./gaps.ts";
 import { entrySteps, type PlanInput, type PlanStep } from "./plan.ts";
 import { checkoutRepo, remoteHead, repoFacts, type Repo } from "./repo.ts";
@@ -83,7 +84,9 @@ export async function recheckGaps(
   const now = opts.now ?? (() => new Date());
   const git = opts.git ?? realGit;
   const ids = tracks.map((t) => t.track_id);
-  const key = shipKey(input.repo, ids, input);
+  // Slice 3: a rep's requirement for an entered track is checked too, and a new one means a new check.
+  const notes = readRepNotes().filter((n) => ids.includes(n.track_id));
+  const key = shipKey(input.repo, ids, input) + (notes.length ? `|told:${notes.map((n) => n.id).join(",")}` : "");
   const head = git.remoteHead(input.repo);
   if (typeof head !== "string") return head;
   const latest_at = now().toISOString();
@@ -92,7 +95,7 @@ export async function recheckGaps(
   const repo = git.checkout(input.repo);
   if ("error" in repo) return repo;
   const lines = repoFacts(repo, tracks.flatMap((t) => t.product_names));
-  const g = await planGaps(client, tracks, entities, input, lines, gapCache, undefined, "all");
+  const g = await planGaps(client, tracks, entities, input, lines, gapCache, undefined, "all", notes);
   if ("error" in g) return g;
   const record: ShipGapRecord = { repo: repo.url, commit: repo.sha, checked_at: now().toISOString(), tracks: ids, gaps: g.gaps, checked: g.checked, repo_lines: lines.length };
   store[key] = record;

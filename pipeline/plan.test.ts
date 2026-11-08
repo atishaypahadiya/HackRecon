@@ -150,6 +150,21 @@ describe("Plan tracks", () => {
       const r = await planTracks(fake(asked), { idea: "an app", stack: parseStack("Acme, PyTorch") }, three, e, seeded(), {}, undefined, { before, changed: ["PyTorch"] });
       expect([asked, "error" in r ? r.error : [r.from, r.usage]]).toEqual([[], ["partial", null]]);
     });
+    test("a rep's note re-ranks its own track with the note as context, never a quotable line; the others keep their ranking", async () => {
+      const { withRepNotes } = await import("./plan.ts");
+      const told = { source: "chat" as const, at: "2026-11-14T19:00:00.000Z", quote: "Sam at Gamma said it has to use Gamma Flows" };
+      const note = { id: "rep:t2#1", track_id: "t2", kind: "requirement" as const, text: "it has to use Gamma Flows", rep: "Sam", told };
+      const card = withRepNotes(trackCards(three, e), [note]).find((c) => c.id === "t2")!;
+      expect([card.lines.some((l) => l.includes("Gamma Flows")), card.context.at(-1)]).toEqual([false, 'a rep told the hacker (not on the page; the page wins where they differ), requirement: "it has to use Gamma Flows"']);
+      const cache = seeded(), asked: string[][] = [];
+      const r = await planTracks(fake(asked), before, three, e, cache, {}, undefined, { before, changed: [], beforeNotes: [], tracks: ["t2"] }, [note]);
+      if ("error" in r) throw new Error(r.error);
+      expect(asked).toEqual([["t2"]]);
+      expect(r.items.map((t) => [t.track_id, t.reason])).toEqual([["t1", "your stack lists Acme"], ["t2", "new t2"]]);
+      // The board's own run afterwards reads the same notes, so it hits the cached merge.
+      const again = await planTracks(null, before, three, e, cache, {}, undefined, undefined, [note]);
+      expect("error" in again ? again.error : again.from).toBe("cache");
+    });
     test("a new idea, or no last ranking to start from, ranks everything", async () => {
       const asked: string[][] = [];
       await planTracks(fake(asked), { idea: "a different app", stack: parseStack("Acme, Gamma") }, three, e, seeded(), {}, undefined, { before, changed: ["Gamma"] });

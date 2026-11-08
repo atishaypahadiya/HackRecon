@@ -31,6 +31,17 @@ describe("Plan gaps", () => {
   test("Ship's scope checks every entered track, possible ones too", () => {
     expect(gapRequirements(tracks, [actor, { ...actor, id: "other" }], "all").map((r) => r.track_id)).toEqual(["actor", "actor", "other", "other"]);
   });
+  test("a rep's requirement is checked on its track whatever its fit, after the page's lines, labeled as told", () => {
+    const note = { id: "rep:other#1", track_id: "other", kind: "requirement" as const, text: "the Actor has to be published on the Store", rep: "Sam at the Apify booth", told: { source: "chat" as const, at: "2026-11-14T19:00:00.000Z", quote: "x" } };
+    const crit = { ...note, id: "rep:other#2", kind: "criterion" as const, text: "judged on how many runs it gets" };
+    expect(gapRequirements(tracks, [actor, { ...actor, id: "other" }], "likely", [note, crit]).map((r) => [r.track_id, r.kind, r.text, r.told_by ?? null])).toEqual([
+      ["actor", "requirement", "We have a Best Actor award for building an actor for this event.", null],
+      ["actor", "requirement", "Project must be using Apify in a meaningful way.", null],
+      ["other", "requirement", "We have a Best Actor award for building an actor for this event.", null],
+      ["other", "requirement", "Project must be using Apify in a meaningful way.", null],
+      ["other", "told", "the Actor has to be published on the Store", "told to Donna by Sam at the Apify booth"],
+    ]);
+  });
   test("requirements: likely tracks only, each sentence once (an entry step repeating a requirement isn't asked twice)", () => {
     expect(gapRequirements(tracks, [actor]).map((r) => [r.id, r.kind, r.text])).toEqual([
       ["R1", "requirement", "We have a Best Actor award for building an actor for this event."],

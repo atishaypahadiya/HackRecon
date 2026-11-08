@@ -14,8 +14,10 @@ export interface ShipItem {
   label: string;
   /** The verbatim line, when the label isn't it. */
   quote?: string;
-  /** "page": canon; "slack": a post (`channel` says where); "standing": HackRecon's own item, no source. */
-  from: "page" | "slack" | "standing";
+  /** "page": canon; "slack": a post (`channel` says where); "standing": HackRecon's own item, no source; "told": a
+   *  rep's requirement told to Donna (`told_by` says who), the weakest tier. */
+  from: "page" | "slack" | "standing" | "told";
+  told_by?: string;
   source_url: string;
   channel?: string;
   /** When it happens, for schedule items (ISO). */
