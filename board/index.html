@@ -1048,7 +1048,7 @@ function paintInput(editing) {
     // The summary is one line and truncates, so what was told to Donna gets its own line beneath it.
     const told = (P.input.stack || []).filter((x) => x.told?.source === "chat");
     const toldLine = told.length ? `<p class="cap told">Told to Donna: ${esc(told.map((x) => x.name).join(", "))}, ${esc(pfmt(Date.parse(told.at(-1).told.at), { weekday: "short", hour: "numeric", minute: "2-digit" }))}</p>` : "";
-    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>${toldLine}`;
+    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>${toldLine}${teamLine()}`;
     $("pi-edit").onclick = () => { paintInput(true); $("pi-idea").focus(); };
     return;
   }
@@ -1255,7 +1255,10 @@ function applyTold(m) {
   // Slice 3: a rep's note told to Donna re-ran the Plan server-side; fetch it (a cache hit) and Ship's items.
   const notesMoved = (m.rep_notes || []).map((n) => n.id).join() !== (P.meta.rep_notes || []).map((n) => n.id).join();
   P.meta.rep_notes = m.rep_notes || [];
-  if (notesMoved && P.input) { runPlan(); if (S.list) { S.gaps = null; loadShip(); } }
+  // Slice 4: a team change re-ran the Plan with everyone's skills; fetch it (a cache hit) and Ship's gaps.
+  const teamMoved = JSON.stringify(m.team || []) !== JSON.stringify(P.meta.team || []);
+  P.meta.team = m.team || [];
+  if ((notesMoved || teamMoved) && P.input) { if (teamMoved && !$("pf")) paintInput(false); runPlan(); if (S.list) { S.gaps = null; loadShip(); } }
   if (m.told_at && m.told_at !== P.toldAt && m.input?.idea) {
     P.toldAt = m.told_at;
     P.input = m.input;
@@ -1329,6 +1332,12 @@ function liveMark(key) {
 }
 const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}${P.steps.has(s.id) ? toldMark(P.meta?.ticks?.[s.id]) : ""}</span></label>`;
 const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
+// Slice 4: the team as told to Donna, under the summary; and how each gap reads for the team.
+const teamLine = () => {
+  const t = (P.meta?.team || []).map((m) => `${m.name || "You"}${m.skills.length ? ` (${m.skills.map((s) => s.name).join(", ")})` : ""}`);
+  return t.length ? `<p class="cap told">Team, told to Donna: ${esc(t.join(" · "))}</p>` : "";
+};
+const teamGap = (g) => (!g.team ? "" : g.team.length ? `Not done yet: ${g.team.map((t) => `${t.who === "you" ? "you list" : `${t.who} lists`} ${t.skill}`).join(", ")}.` : "Nobody on the team lists a skill for this.");
 const repNotes = (id) => (P.meta?.rep_notes || []).filter((n) => n.track_id === id);
 // "The page's requirement" or "A rep's requirement, told to Donna by Sam": a told line never reads as the page's.
 const reqSource = (r) => (r.kind === "told" ? `A rep's requirement, ${r.told_by || "told to Donna"}` : `The page's ${r.kind === "entry_step" ? "entry step" : "requirement"}`);
@@ -1338,7 +1347,7 @@ function trackRow(t) {
   const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label, notes ? `${notes === 1 ? "a rep's note" : `${notes} rep notes`}, told to Donna` : ""].filter(Boolean).map(esc).join(" · ");
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
   const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
-  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}</span>`).join("");
+  const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}${g.team ? ` ${esc(teamGap(g))}` : ""}</span>`).join("");
   return `<li class="prow"><button type="button" class="pmain" data-track="${esc(t.track_id)}"><span class="pn">${esc(t.name)}</span><span class="pr">${esc(t.reason)}</span>${gaps}</button>${steps}<div class="pmeta m">${liveMark(`tracks:${t.track_id}`)}${meta}${srcLink(t.source_url) ? ` · ${srcLink(t.source_url)}` : ""}</div></li>`;
 }
 function paintResults() {
@@ -1447,7 +1456,7 @@ function openTrack(id, from) {
     changedPart(`tracks:${t.track_id}`, { cur: t, list: [["Fit", (x) => x.fit], ["Why", (x) => x.reason], ["Entry steps", (x) => (x.steps || []).map((s) => s.label).join("; ")]] }),
     `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
     gapsOf(t.track_id).length
-      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">${esc(reqSource(g.requirement))}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
+      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p>${g.team ? `<p><b>${esc(teamGap(g))}</b></p>` : ""}<p class="note">${esc(reqSource(g.requirement))}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
       : t.fit === "likely" && t.evidence === "stated" && P.gaps && !P.gaps.error ? `<h3>Gaps</h3><div class="item"><p class="note">None found: nothing in your description, stack${P.input.repo ? " or repo" : ""} differs from this track's stated requirements. That doesn't say they're met.</p></div>` : "",
     t.steps.length ? `<h3>Entry steps</h3><div class="item">${t.steps.map((s) => `${stepBox(s)}<q>${esc(s.quote)}</q>`).join("")}</div>` : "",
     d.requirements.length ? `<h3>Requirements</h3><div class="item">${list(d.requirements.map(esc))}</div>` : "",
@@ -1560,7 +1569,7 @@ function paintGaps() {
     : g?.error ? `<span class="cap">${esc(g.error)}</span>`
     : g ? `<span class="m">${esc(g.repo.replace(/^https:\/\/github\.com\//, ""))} @ ${esc(g.commit.slice(0, 7))}, latest as of ${esc(shipFmt(g.latest_at))}; checked ${esc(pfmt(g.checked_at, { hour: "numeric", minute: "2-digit" }))}</span>` : "";
   const res = !g || g.error ? ""
-    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p><p class="note">${esc(reqSource(x.requirement))}${x.requirement.kind === "told" ? "" : ` · ${srcLink(x.requirement.source_url)}`}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
+    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p>${x.team ? `<p><b>${esc(teamGap(x))}</b></p>` : ""}<p class="note">${esc(reqSource(x.requirement))}${x.requirement.kind === "told" ? "" : ` · ${srcLink(x.requirement.source_url)}`}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
     : `<p class="note">${g.checked ? "No open gaps found. That doesn't say the requirements are met." : "Nothing to check: none of these tracks states a requirement or entry step on the pages read."}${g.from === "reused" ? " The commit hasn't changed since the last check." : ""}</p>`;
   body.innerHTML = `<div class="go-row">${btn}${why}</div>${res}`;
 }

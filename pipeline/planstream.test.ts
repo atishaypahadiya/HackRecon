@@ -28,7 +28,7 @@ function clock() {
 
 const track = (id: string, fit: "likely" | "possible" = "likely") => ({ track_id: id, fit, product_names: ["Apify"] }) as unknown as PlanTrack;
 const tracksOk = (from: "cache" | "model"): PlanSection<PlanTrack> => ({ items: [track("t1"), track("t2", "possible")], from, ms: 0, usage: null });
-const gapsOk = (repo: number): GapResult => ({ gaps: [], checked: 3, facts: { description: 1, stack: 2, repo }, from: "model", ms: 0, usage: null });
+const gapsOk = (repo: number): GapResult => ({ gaps: [], checked: 3, facts: { description: 1, stack: 2, repo, team: 0 }, from: "model", ms: 0, usage: null });
 const repo: Repo = { url: "https://github.com/a/b", dir: "/x", sha: "abc1234" };
 
 async function collect(steps: PlanSteps, c: ReturnType<typeof clock>): Promise<PlanEvent[]> {

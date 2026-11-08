@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 import type { BoardOffer } from "./board.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
 import type { PlanFacts } from "./alerts.ts";
-import { CLAIMS_PATH, ENTERED_PATH, PENDING_WRITE_PATH, PLAN_PATH, REP_NOTES_PATH, SHIP_TICKS_PATH, WRITES_LOG_PATH } from "./event.ts";
+import { CLAIMS_PATH, ENTERED_PATH, PENDING_WRITE_PATH, PLAN_PATH, REP_NOTES_PATH, SHIP_TICKS_PATH, TEAM_PATH, WRITES_LOG_PATH } from "./event.ts";
 import type { ShipItem, ShipList } from "./shiplist.ts";
 import type { PlanInput, StackItem, StackRerank } from "./plan.ts";
 import type { Entity } from "./schema.ts";
@@ -122,6 +122,8 @@ export interface PlanSnapshot {
   tracks: { track_id: string; name: string; fit: string }[];
   gaps: number | null;
   booths: number | null;
+  /** Of the gaps, how many no one on the team lists a skill for (null when no team is told). */
+  nobody?: number | null;
 }
 
 /** One line: what the stack write changed, then what the re-run changed. */
@@ -141,7 +143,8 @@ export function planChangeLine(before: PlanSnapshot | null, after: PlanSnapshot 
     ...(before?.tracks ?? []).filter((t) => !now.has(t.track_id)).map((t) => `${t.name} ${t.fit} → unranked`),
   ];
   const count = (label: string, a: number | null | undefined, b: number | null) => (b === null ? "" : a === b || a === undefined || a === null ? `${label} ${b}` : `${label} ${a} → ${b}`);
-  const counts = [count("gaps", before?.gaps, after.gaps), count("booth questions", before?.booths, after.booths)].filter(Boolean).join(", ");
+  const nobody = after.nobody == null ? "" : ` (${after.nobody} nobody on the team lists a skill for)`;
+  const counts = [count("gaps", before?.gaps, after.gaps) + (after.gaps ? nobody : ""), count("booth questions", before?.booths, after.booths)].filter(Boolean).join(", ");
   return ` Tracks: ${moved.length ? moved.join("; ") : "no change"}${counts ? `; ${counts}` : ""}.`;
 }
 
@@ -230,6 +233,36 @@ export function addRepNote(n: Omit<RepNote, "id">): RepNote {
 /** How a note reads wherever it's shown: "told to Donna by Sam at the Modal booth" / "told to Donna by a rep". */
 export const repSource = (n: Pick<RepNote, "rep">) => `told to Donna by ${n.rep ?? "a rep"}`;
 
+// Slice 4: the team. "me" is the hacker; everyone else by the name they were told by. Each skill keeps the words
+// that added it. Skills count toward tracks (the ranker's request) and gaps (who could close one).
+export interface Teammate {
+  id: string;
+  /** null for the hacker themself. */
+  name: string | null;
+  skills: { name: string; told: Told }[];
+  told: Told;
+}
+export const readTeam = (): Teammate[] => readJsonFile<Teammate[]>(TEAM_PATH, []);
+export const who = (t: Pick<Teammate, "name">) => t.name ?? "you";
+/** The team as the ranker and Donna read it: "you: Rust, CUDA", "Priya: React, Figma". Members with no skills are left out. */
+export const teamLines = (team: Teammate[]): string[] => team.filter((t) => t.skills.length).map((t) => `${who(t)}: ${t.skills.map((s) => s.name).join(", ")}`);
+const ME = /\b(i|i'm|im|i've|my|me|myself)\b/i;
+export interface TeamUpdate {
+  name: string | null;
+  skills: string[];
+  drop: string[];
+  left: boolean;
+}
+export function teamUpdateOf(input: Record<string, unknown>): TeamUpdate | { error: string } {
+  const raw = typeof input.name === "string" ? input.name.trim() : "";
+  if (!raw || raw.length > 40) return { error: "name the teammate (or \"me\" for you)" };
+  const name = /^(me|i|myself|you)$/i.test(raw) ? null : raw;
+  const list = (v: unknown) => (Array.isArray(v) ? v : []).filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean);
+  const skills = list(input.skills), drop = list(input.drop_skills);
+  if (skills.length > 12 || [...skills, ...drop].some((s) => s.length > 40)) return { error: "up to 12 skills, each a few words" };
+  return { name, skills, drop, left: input.left === true };
+}
+
 export interface WriteRecord {
   at: string;
   source: Told["source"];
@@ -245,7 +278,7 @@ export function logWrite(r: WriteRecord): void {
 
 /** A destructive write waiting for "yes" (10 minutes). */
 export const CONFIRM_MS = 10 * 60_000;
-export type PendingWrite = PendingBase & ({ op: "update_stack"; input: StackUpdate } | { op: "set_entered"; input: EnteredUpdate });
+export type PendingWrite = PendingBase & ({ op: "update_stack"; input: StackUpdate } | { op: "set_entered"; input: EnteredUpdate } | { op: "set_teammate"; input: TeamUpdate });
 interface PendingBase {
   told: Told;
   /** What Donna asked, for the log. */
@@ -268,7 +301,7 @@ export type WriteResult = { line: string } | { confirm: string } | { error: stri
  *  `rerun` re-runs the Plan on a new input (ranking, gaps, booths), saving it to plan.json; `credits` lists what can
  *  be claimed. A stack write saves the input first, so a failed re-run still keeps what the hacker said. */
 export function makeWrites(deps: {
-  rerun: (input: PlanInput, rerank: StackRerank) => Promise<{ error: string } | null>;
+  rerun: (input: PlanInput, rerank?: StackRerank) => Promise<{ error: string } | null>;
   credits: () => ClaimableCredit[];
   /** The event's tracks (canon), and its Ship checklist for a set of entered track ids. */
   tracks: () => TrackRef[];
@@ -276,7 +309,7 @@ export function makeWrites(deps: {
   /** The page's own requirement and criterion lines for a track, shown beside a rep's note (never replaced by it). */
   pageLines: (track_id: string) => string[];
 }) {
-  const snapshot = (p: PlanFacts | null): PlanSnapshot | null => (p ? { tracks: (p.tracks ?? []).map((t) => ({ track_id: t.track_id ?? t.name, name: t.name, fit: t.fit })), gaps: p.counts?.gaps ?? null, booths: p.counts?.booths ?? null } : null);
+  const snapshot = (p: PlanFacts | null): PlanSnapshot | null => (p ? { tracks: (p.tracks ?? []).map((t) => ({ track_id: t.track_id ?? t.name, name: t.name, fit: t.fit })), gaps: p.counts?.gaps ?? null, booths: p.counts?.booths ?? null, nobody: p.counts?.gaps_nobody ?? null } : null);
   const applyStack = async (u: StackUpdate, told: Told, op: string): Promise<WriteResult> => {
     const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
     if (!plan) return { error: "there's no Plan yet to change (make one on the board or with hr plan)" };
@@ -374,6 +407,22 @@ export function makeWrites(deps: {
       logWrite({ at: told.at, source: "chat", quote: told.quote, op: "record_rep_note", input: { track_id: t.track_id, kind, text: note.text, rep }, result: line });
       return { line };
     }
+    if (name === "set_teammate") {
+      const u = teamUpdateOf(input);
+      if ("error" in u) return u;
+      if (u.name === null ? !ME.test(msg.text) : !messageNames(msg.text, [u.name])) return { error: "your message doesn't name that teammate" };
+      if (!messageNames(msg.text, [...u.skills, ...u.drop])) return { error: "your message doesn't name each of those skills" };
+      const team = readTeam();
+      const id = u.name === null ? "me" : slug(u.name);
+      if (u.left) {
+        const t = team.find((x) => x.id === id);
+        if (!t || t.id === "me") return { error: t ? "you can't leave your own team" : `${u.name} isn't on your team` };
+        const asked = `That takes ${t.name} off your team, with their skills (${t.skills.map((s) => s.name).join(", ") || "none listed"}), and re-ranks your Plan without them. Reply yes within 10 minutes to do it; anything else cancels.`;
+        savePending({ op: "set_teammate", input: u, told, asked, expires_at: new Date(Date.parse(msg.at) + CONFIRM_MS).toISOString() });
+        return { confirm: asked };
+      }
+      return applyTeam(u, told);
+    }
     if (name === "tick_ship_item") {
       const items = shipItems(deps.ship(deps.tracks().map((t) => t.track_id)));
       const it = items.find((x) => x.id === input.item_id);
@@ -416,17 +465,65 @@ export function makeWrites(deps: {
 
   /** A message that settles a pending write: "yes" applies it, "no" cancels it with a reply, anything else (or a reply
    *  after it expired) cancels it and is answered as usual (null). */
+  const applyTeam = async (u: TeamUpdate, told: Told): Promise<WriteResult> => {
+    const team = readTeam();
+    const id = u.name === null ? "me" : slug(u.name);
+    const at = team.findIndex((x) => x.id === id);
+    const was = at >= 0 ? team[at]! : null;
+    const beforeTeam = teamLines(team);
+    let monotone: "up" | "down" | undefined = "down";
+    let changed: string[];
+    let what: string;
+    if (u.left) {
+      changed = was!.skills.map((s) => s.name);
+      team.splice(at, 1);
+      what = `${was!.name} left the team.`;
+    } else {
+      const have = new Set((was?.skills ?? []).map((s) => s.name.toLowerCase()));
+      const dropped = new Set(u.drop.map((d) => d.toLowerCase()));
+      const added = u.skills.filter((s) => !have.has(s.toLowerCase()));
+      const skills = [...(was?.skills ?? []).filter((s) => !dropped.has(s.name.toLowerCase())), ...added.map((name) => ({ name, told }))];
+      const gone = (was?.skills ?? []).filter((s) => dropped.has(s.name.toLowerCase())).map((s) => s.name);
+      changed = [...added, ...gone];
+      monotone = gone.length ? (added.length ? undefined : "down") : "up";
+      if (!added.length && !gone.length && was) return { line: `Nothing changed: ${who(was)} already ${was.name ? "lists" : "list"} ${u.skills.join(", ") || "those skills"}.` };
+      const t: Teammate = { id, name: u.name, skills, told: was?.told ?? told };
+      if (was) team[at] = t;
+      else team.push(t);
+      const parts = [added.length ? `${added.join(", ")}` : "", gone.length ? `dropped ${gone.join(", ")}` : ""].filter(Boolean).join("; ");
+      what = !was && u.name ? `${u.name} joined the team${parts ? `: ${parts}` : ""}.` : `${u.name ? `${u.name}'s` : "Your"} skills: ${parts}.`;
+    }
+    writeJsonFile(TEAM_PATH, team);
+    const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+    let change = "";
+    if (plan) {
+      // A team change re-judges every track already on the Plan, plus any a changed skill names, with everyone's
+      // skills, then re-checks gaps. A full ranking would cut the list back to its top five and could drop a
+      // likely track only because the list was longer.
+      try {
+        const input: PlanInput = { idea: plan.input.idea, stack: plan.input.stack, ...(plan.input.repo ? { repo: plan.input.repo } : {}) };
+        const failed = await deps.rerun(input, { before: input, changed, tracks: (plan.tracks ?? []).map((t) => t.track_id).filter((x): x is string => !!x), beforeTeam, ...(monotone ? { monotone } : {}) });
+        change = planChangeLine(snapshot(plan), failed ? null : snapshot(readJsonFile<PlanFacts | null>(PLAN_PATH, null)), failed?.error ?? null);
+      } catch (e) {
+        change = planChangeLine(null, null, (e as Error).message);
+      }
+    }
+    const lines = teamLines(team);
+    const line = `${what} Team skills: ${lines.length ? lines.join("; ") : "none listed"}.${change}`;
+    logWrite({ at: told.at, source: "chat", quote: told.quote, op: "set_teammate", input: u, result: line });
+    return { line };
+  };
   const confirm = async (text: string, at: string): Promise<string | null> => {
     const p = readPending();
     if (!p) return null;
     clearPending();
     if (Date.parse(at) > Date.parse(p.expires_at)) return null;
     if (YES.test(text)) {
-      const r = p.op === "set_entered" ? applyEntered(p.input, { ...p.told, at }) : await applyStack(p.input, { ...p.told, at }, p.op);
+      const r = p.op === "set_entered" ? applyEntered(p.input, { ...p.told, at }) : p.op === "set_teammate" ? await applyTeam(p.input, { ...p.told, at }) : await applyStack(p.input, { ...p.told, at }, p.op);
       return "line" in r ? r.line : `I didn't change anything: ${"error" in r ? r.error : ""}.`;
     }
     logWrite({ at, source: "chat", quote: text, op: `${p.op} cancelled`, input: p.input, result: "cancelled" });
-    return NO.test(text) ? (p.op === "set_entered" ? "Cancelled: you're still entering the same tracks." : "Cancelled: your stack is unchanged.") : null;
+    return NO.test(text) ? (p.op === "set_entered" ? "Cancelled: you're still entering the same tracks." : p.op === "set_teammate" ? "Cancelled: your team is unchanged." : "Cancelled: your stack is unchanged.") : null;
   };
   return { exec, confirm };
 }

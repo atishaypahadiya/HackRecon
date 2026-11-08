@@ -73,7 +73,7 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNotes, repSource, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
+import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNotes, readTeam, repSource, teamLines, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
 import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
@@ -170,7 +170,7 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked, type SponsorAliases } from "./fit.ts";
 import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
-import { planGaps, type GapCache, type ProjectFact } from "./gaps.ts";
+import { planGaps, teamGapLine, type Gap, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
 import { planStream, type PlanEvent, type PlanSteps } from "./planstream.ts";
 import { PREFILL_MAX_TOKENS, PREFILL_SCHEMA, PREFILL_SYSTEM, prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
@@ -1429,7 +1429,7 @@ async function board(args: string[]): Promise<number> {
         if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
         // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
         const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
-        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks(), rep_notes: readRepNotes() });
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks(), rep_notes: readRepNotes(), team: readTeam() });
       }
       if (path === "/")
         return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
@@ -1949,12 +1949,14 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
   const client = anthropicClient(opts.guard);
   // Slice 3: what reps told the hacker, from this event's store, on every plan path (board, CLI, watch, chat).
   const notes = readRepNotes();
+  // Slice 4: the team's combined skills count toward every track and gap.
+  const team = readTeam();
   const events: PlanEvent[] = [];
   for await (const e of planStream({
-    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank, notes),
+    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank, notes, teamLines(team)),
     repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
     repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
-    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache, undefined, "likely", notes),
+    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache, undefined, "likely", notes, team),
     booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
     joins: planJoins(input, ctx, opts.nowMs ?? Date.now()),
     log: (l) => console.error(l),
@@ -1970,11 +1972,15 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
     const e = events.find((x) => x.section === k && !("error" in x)) as { gaps?: unknown[]; booths?: unknown[] } | undefined;
     return e ? ((k === "gaps" ? e.gaps : e.booths)?.length ?? 0) : null;
   };
+  const nobodyCount = () => {
+    const e = events.find((x) => x.section === "gaps" && !("error" in x)) as { gaps?: Gap[] } | undefined;
+    return e?.gaps && team.some((t) => t.skills.length) ? e.gaps.filter((g) => g.team?.length === 0).length : null;
+  };
   if (ranked)
     writeJsonFile(PLAN_PATH, {
       saved_at: new Date().toISOString(),
       input: { idea: input.idea, stack: input.stack, ...(input.repo ? { repo: input.repo } : {}) },
-      counts: { gaps: countOf("gaps"), booths: countOf("booths") },
+      counts: { gaps: countOf("gaps"), booths: countOf("booths"), gaps_nobody: nobodyCount() },
       tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names })),
       overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
@@ -2058,6 +2064,7 @@ async function planCli(args: string[]): Promise<number> {
     for (const x of g.gaps.filter((x) => x.track_id === t.track_id)) {
       out(`    Gap: ${x.gap}`);
       out(x.requirement.kind === "told" ? `      ${x.requirement.told_by ?? "told to Donna"}: "${x.requirement.quote}"` : `      page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
+      if (x.team) out(`      team: ${teamGapLine(x.team)}`);
       for (const p of x.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
     }
     if (t.fit === "likely" && t.evidence === "stated" && !g.gaps.some((x) => x.track_id === t.track_id)) out(`    Gaps: none found. That says nothing about whether the requirements are met.`);
@@ -2197,6 +2204,7 @@ async function shipCli(args: string[]): Promise<number> {
     for (const g of r.gaps) {
       out(`  ${g.track}\n    ${g.gap}`);
       out(g.requirement.kind === "told" ? `      ${g.requirement.told_by ?? "told to Donna"}: "${g.requirement.quote}"` : `      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
+      if (g.team) out(`      team: ${teamGapLine(g.team)}`);
       for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
     }
   }

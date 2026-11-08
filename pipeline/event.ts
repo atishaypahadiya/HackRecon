@@ -63,6 +63,8 @@ export const ENTERED_PATH = "data/entered.json";
 export const SHIP_TICKS_PATH = "data/ship_ticks.json";
 /** Slice 3: requirements and judging criteria a rep told the hacker at a booth, per track. Never canon. */
 export const REP_NOTES_PATH = "data/rep_notes.json";
+/** Slice 4: the hacker's team and each person's skills, as told to Donna. */
+export const TEAM_PATH = "data/team.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";
