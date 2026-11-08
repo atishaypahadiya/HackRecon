@@ -308,7 +308,7 @@ const USAGE = `usage:
       estimate, with no API call. Needs ANTHROPIC_API_KEY (.env).
   bun run hr discord-ingest [DIR]
       Discord (read-only): what the extension saved from your open Discord tabs (DIR, default
-      ~/Downloads/hackrecon/discord), and, with DISCORD_BOT_TOKEN in .env, the crossposts the HackRecon bot reads
+      ~/Downloads/hackrecon/discord), and, with DISCORD_BOT_TOKEN in .env, the crossposts the Donna bot reads
       in your own server (docs/discord-bot.md). New posts go to ${MESSAGES_PATH}; unread badges to ${DISCORD_UNREAD_PATH}.
   bun run hr alerts [--dry-run] [--at ISO] [--list]
       Alerts for fresh posts: tracks or judging posted, a deadline or room change, a workshop or sponsor offer

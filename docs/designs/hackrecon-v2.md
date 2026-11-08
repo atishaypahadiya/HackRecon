@@ -89,7 +89,7 @@ Changes, organizer deadlines, tracks and judging go out at once. Workshops and o
 - The bot against Discord's API.
 - A real Twilio send.
 
-**Donna (user, 2026-11-08).** The agent is named Donna: the Telegram bot's display name, chat and alert text, the help text, the agent's prompt, and the extension's name and status lines. The repo, the `hr` CLI, file paths and the crawler's User-Agent stay hackrecon.
+**Donna (user, 2026-11-08).** The agent is named Donna: the Telegram bot's display name, chat and alert text, the help text, the agent's prompt, and the extension's name and status lines. The Discord bot and the user's private server are named Donna too. The repo, the `hr` CLI, file paths and the crawler's User-Agent stay hackrecon.
 
 **Telegram instead of SMS, and two-way (user, 2026-11-07).** For Nov 14 the alerts go to a Telegram bot chat only the user uses: no carrier registration. The channel is pluggable (`pipeline/channels.ts`, `HACKRECON_CHANNEL`): Telegram is built and two-way, SMS (Twilio) one-way, iMessage and WhatsApp planned. Telegram (`pipeline/telegram.ts`) calls four Bot API methods (getMe, getUpdates, sendMessage, sendChatAction), sends plain text to `TELEGRAM_CHAT_ID` only, reads replies by long polling with a saved offset, and drops anything not from that private chat unread. The token is scrubbed from every error.
 
