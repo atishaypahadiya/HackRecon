@@ -125,7 +125,7 @@ Verified (2026-11-07):
   - Told-to-Donna items are labeled.
 - **Slices.**
   1. Stack updates and claims, end to end (this change).
-  2. Entered tracks (confirm unset) and Ship ticks, both moved from localStorage to the store.
+  2. Entered tracks (confirm unset) and Ship ticks, both moved from localStorage to the store (built 2026-11-08).
   3. Rep requirements and criteria, at the weakest tier.
   4. Teammates and their skills.
 
@@ -147,6 +147,34 @@ Slice 1 built (2026-11-08):
   - No console errors, and no horizontal scroll at 390 px.
 - **Not yet:**
   - The Plan re-run a stack write triggers is under the Plan's own $1 guard. The chat budget ($3 a day) doesn't include it.
+- **Re-ranking only what a stack write affects (user, 2026-11-08: "re-rank only the tracks affected by the change, or coalesce writes that arrive within a minute").**
+  - Built the first option. Coalescing would turn the one-line reply into a second message a minute later.
+  - A stack write ranks only the tracks whose sponsor or products the changed item names, or whose last reason mentioned it (`plan.ts affectedTracks`). Every other track keeps its last ranking.
+  - The prompt still holds all the event's tracks, the same cached system prompt as a full ranking; the request names the tracks to return. Ranking a track alone, with "return the 5 best", came back "possible" where three full rankings said "likely". With full context, two trials matched the full ranking.
+  - The merged ranking is cached under the new input, so the board's own refresh afterwards costs nothing.
+  - The $0.16 shown before was the guard's ceiling (16,000 output tokens), not the spend. Measured spend per write, re-rank plus gap check (the chat reply on Haiku adds about $0.0005):
+
+    | Write | Iterate (2 tracks) | Cal Hacks copy (52 tracks) |
+    |---|---|---|
+    | Full re-rank, before this change | $0.0055 | $0.028 cold, $0.009 warm, plus gaps |
+    | Item no track names (PyTorch) | $0 re-rank, no gaps | $0 re-rank, $0.0037 gaps |
+    | Item one track names, cache cold | $0.0045 (Modal) | $0.0227 (Convex), $0.0036 gaps |
+    | Same, cache warm (a write in the last 5 min) | $0.0019 | $0.0046 (Elastic), $0.0038 gaps |
+
+  - The ranked list can now pass five when added items bring tracks in. A new idea re-ranks everything and picks the top five again.
+- **Slice 2, entered tracks and Ship ticks (user, 2026-11-08):**
+  - Both move from browser storage to `data/entered.json` and `data/ship_ticks.json`, with the same provenance. A browser that saved them before sends them to the store once.
+  - Donna's tools: `set_entered` (enter or leave, by track id) and `tick_ship_item` (by checklist item id).
+  - A track is named by its sponsor, or by its whole name for an event-level track. A checklist item is named when the message shares one of its content words by the first five letters ("submitted" names "Submit on Devpost"). Ticks are easy to undo, so this is looser than a stack item's name.
+  - Leaving a track is confirmed first, like emptying the stack.
+  - The board's boxes write the same files (`POST /entered`, `POST /ticks`). Its 60-second refresh picks up chat writes, and anything told to Donna is labeled beside its box.
+  - Live on a fresh copy of Iterate, with the board open on Ship:
+    - "I'm entering the Modal track" → "Entered Best Use of Modal: it states no entry steps or requirements. You're entering 1 track." The board ticked it ("told to Donna") 50 s later.
+    - "I submitted on Devpost just now" → 'Ticked: "Submit on Devpost, not just save a draft". Required to submit: 1 of 1 done.' The board ticked it 48 s later and read "1 of 1 done".
+    - "drop the Modal track for me" was asked first; "no" cancelled it.
+    - Unticking on the board wrote `{}` and a log line with source "board".
+    - No console or server errors.
+  - The "Submit on Devpost" item stays as it is until Iterate's submission platform is known (user, 2026-11-08). The Ship fold link that read "All 3 tracks on Devpost" now reads "on the event's page".
 - **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
   - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
   - On a fresh copy of Iterate with the board open:

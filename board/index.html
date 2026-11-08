@@ -868,6 +868,12 @@ function saveClaim(id, on) {
   fetch("/claims", { method: "POST", headers: { "Content-Type": "application/json", "x-hr-token": TOKEN }, body: JSON.stringify({ id, claimed: on }) })
     .then((r) => (r.ok ? r.json() : null)).then((r) => { if (r && P.meta) P.meta.claims = r.claims; }).catch(() => {});
 }
+function saveState(path, id, on) {
+  fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "x-hr-token": TOKEN }, body: JSON.stringify({ id, on }) })
+    .then((r) => (r.ok ? r.json() : null)).then((r) => { if (r && P.meta) { P.meta.entered = r.entered; P.meta.ticks = r.ticks; } }).catch(() => {});
+}
+// What was told to Donna says so beside its box; what the hacker ticked here doesn't need a label.
+const toldMark = (rec) => (rec?.source === "chat" ? ` <span class="cap">told to Donna</span>` : "");
 function mergeClaims() {
   if (!D || !P.meta?.claims) return;
   let moved = false;
@@ -1238,6 +1244,13 @@ function applyTold(m) {
   const claimsMoved = JSON.stringify(m.claims || {}) !== JSON.stringify(P.meta.claims || {});
   P.meta.claims = m.claims;
   P.meta.page_credits = m.page_credits;
+  // Slice 2: entered tracks and ticks told to Donna (or set in another tab).
+  const ent = Object.keys(m.entered || {}).sort(), tk = Object.keys(m.ticks || {}).sort();
+  const enteredMoved = JSON.stringify(ent) !== JSON.stringify([...S.entered].sort());
+  const ticksMoved = JSON.stringify(tk) !== JSON.stringify([...P.steps].sort()) || JSON.stringify(m.ticks || {}) !== JSON.stringify(P.meta.ticks || {}) || JSON.stringify(m.entered || {}) !== JSON.stringify(P.meta.entered || {});
+  P.meta.entered = m.entered; P.meta.ticks = m.ticks;
+  if (enteredMoved) { S.entered = ent; store.set(enterKey(), JSON.stringify(S.entered)); S.gaps = null; loadShip(); }
+  if (ticksMoved || enteredMoved) { P.steps = new Set(tk); store.set(stepKey(), JSON.stringify(tk)); if (P.input) paintResults(); if (S.list) paintShip(); }
   if (claimsMoved) { mergeClaims(); if (P.input) paintResults(); }
   if (m.told_at && m.told_at !== P.toldAt && m.input?.idea) {
     P.toldAt = m.told_at;
@@ -1310,7 +1323,7 @@ function liveMark(key) {
   if (tab === "plan") P.live.seen.add(key);
   return `<span class="new">${m}</span> · `;
 }
-const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}</span></label>`;
+const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}${P.steps.has(s.id) ? toldMark(P.meta?.ticks?.[s.id]) : ""}</span></label>`;
 const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
 function trackRow(t) {
   const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
@@ -1445,6 +1458,7 @@ document.addEventListener("change", (e) => {
   if (!box) return;
   if (box.checked) P.steps.add(box.dataset.step); else P.steps.delete(box.dataset.step);
   store.set(stepKey(), JSON.stringify([...P.steps]));
+  saveState("/ticks", box.dataset.step, box.checked);
   for (const o of document.querySelectorAll(`[data-step="${CSS.escape(box.dataset.step)}"]`)) o.checked = box.checked;
 });
 $("p-plan").addEventListener("click", async (e) => {
@@ -1488,7 +1502,7 @@ function countdown(ms) {
 function shipItem(x) {
   const src = x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? (safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">added in #${esc(x.channel)} ↗</a>` : `added in #${esc(x.channel)}`) : srcLink(x.source_url);
   const when = x.at ? `${shipFmt(x.at)}${x.until ? `–${pfmt(x.until, { hour: "numeric", minute: "2-digit" })}` : ""} · ` : "";
-  return `<li><label class="ck"><input type="checkbox" data-step="${esc(x.id)}"${P.steps.has(x.id) ? " checked" : ""}><span>${esc(x.label)}</span></label>${x.quote ? `<q>${esc(x.quote)}</q>` : ""}<div class="pmeta m">${when}${src}</div></li>`;
+  return `<li><label class="ck"><input type="checkbox" data-step="${esc(x.id)}"${P.steps.has(x.id) ? " checked" : ""}><span>${esc(x.label)}${P.steps.has(x.id) ? toldMark(P.meta?.ticks?.[x.id]) : ""}</span></label>${x.quote ? `<q>${esc(x.quote)}</q>` : ""}<div class="pmeta m">${when}${src}</div></li>`;
 }
 const doneOf = (xs) => (xs.length ? `${xs.filter((x) => P.steps.has(x.id)).length} of ${xs.length} done` : "none stated");
 // A group: its heading with "N of M done"; in the last hour, folded to that one line until opened.
@@ -1511,9 +1525,9 @@ function paintShip() {
   const required = lh ? L.required.filter((x) => !P.steps.has(x.id)) : L.required;
   // Every track on Devpost, never Plan's picks: only what you tick is entered. With some ticked, the full list folds.
   const all = L.choices || [], openAll = !S.entered.length || S.open.has("choices");
-  const box = (t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}</span></label>`;
+  const box = (t) => `<label class="ck"><input type="checkbox" data-enter="${esc(t.track_id)}"${S.entered.includes(t.track_id) ? " checked" : ""}><span>${esc(t.name)}${S.entered.includes(t.track_id) ? toldMark(P.meta?.entered?.[t.track_id]) : ""}</span></label>`;
   const chooser = all.length
-    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${(openAll ? all : all.filter((t) => S.entered.includes(t.track_id))).map(box).join("")}${S.entered.length ? `<button type="button" class="fold" data-fold="choices" aria-expanded="${openAll}">${openAll ? "Show only the ones you ticked" : `All ${all.length} tracks on Devpost`}</button>` : ""}</fieldset>`
+    ? `<fieldset class="enter"><legend>Tracks you're entering</legend>${(openAll ? all : all.filter((t) => S.entered.includes(t.track_id))).map(box).join("")}${S.entered.length ? `<button type="button" class="fold" data-fold="choices" aria-expanded="${openAll}">${openAll ? "Show only the ones you ticked" : `All ${all.length} tracks on the event's page`}</button>` : ""}</fieldset>`
     : `<p class="note">No tracks on the Devpost pages read.</p>`;
   const tracks = all;
   const trackItems = L.tracks.flatMap((t) => t.items);
@@ -1564,6 +1578,7 @@ $("p-ship").addEventListener("change", (e) => {
   if (en) {
     S.entered = en.checked ? [...S.entered, en.dataset.enter] : S.entered.filter((x) => x !== en.dataset.enter);
     store.set(enterKey(), JSON.stringify(S.entered));
+    saveState("/entered", en.dataset.enter, en.checked);
     S.gaps = null;
     loadShip();
     return;
@@ -1584,8 +1599,16 @@ setInterval(() => { if (tab === "ship") paintShip(); }, 30000);
 
 fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
   P.meta = m;
-  try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
-  try { const e = JSON.parse(store.get(enterKey()) || "[]"); S.entered = Array.isArray(e) ? e.filter((x) => typeof x === "string") : []; } catch { S.entered = []; }
+  // Slice 2: ticks and entered tracks live in the event's store (told.ts), shared with Donna. A browser that saved
+  // them before the store existed sends them there once.
+  let localSteps = [], localEntered = [];
+  try { localSteps = JSON.parse(store.get(stepKey()) || "[]"); } catch {}
+  try { localEntered = JSON.parse(store.get(enterKey()) || "[]"); } catch {}
+  const strs = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === "string") : []);
+  if (!Object.keys(m.ticks || {}).length) for (const id of strs(localSteps)) saveState("/ticks", id, true);
+  if (!Object.keys(m.entered || {}).length) for (const id of strs(localEntered)) saveState("/entered", id, true);
+  P.steps = new Set(Object.keys(m.ticks || {}).length ? Object.keys(m.ticks) : strs(localSteps));
+  S.entered = Object.keys(m.entered || {}).length ? Object.keys(m.entered) : strs(localEntered);
   // Chat writes (told.ts): the event's stored Plan input is the source; this browser's copy is only a fallback.
   if (m.input?.idea) { P.input = m.input; store.set(planKey(), JSON.stringify(P.input)); }
   else try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
