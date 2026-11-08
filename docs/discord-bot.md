@@ -1,6 +1,9 @@
-# Discord and Telegram: the HackRecon bot, your server, and your chat
+# Discord and Telegram: Donna's setup
 
-HackRecon reads an event's Discord two ways, both read-only:
+Donna is HackRecon's agent: Donna reads the event, sends you alerts and answers your questions. The repo and the `hr`
+command keep the name hackrecon.
+
+Donna reads an event's Discord two ways, both read-only:
 
 - **Your open tabs (the extension).** Every Discord channel you have open in a tab is read as Discord renders it. For
   announcement and sponsor channels you don't have open, the sidebar's unread badge sends a "new post in #channel"
@@ -62,7 +65,7 @@ Only channels of Discord's Announcement type have Follow. Discord also sends a p
 staff publish it. An announcement they don't publish shows up only in the event's server, so keep that channel open
 in a tab as well, and the extension reads it there.
 
-Tracks, judging and room-change alerts fire only for posts HackRecon knows came from the event's staff: the
+Tracks, judging and room-change alerts fire only for posts Donna knows came from the event's staff: the
 crossposts the bot reads in your own server, and channels you list by id under `discord_authority_channels` in the
 event's `config/event.json`. Ids, not names, so another server's `#announcements` never counts. A channel you can't
 post in is not proof on its own (some servers lock every channel until you verify), so `hr discord-ingest` only
@@ -72,20 +75,21 @@ suggests a read-only, announcement-named channel, with the entry to add if only 
 "discord_authority_channels": ["<server id>/<channel id>"]
 ```
 
-## 4. Telegram (your alerts and your questions)
+## 4. Telegram: Donna (your alerts and your questions)
 
-HackRecon sends alerts to a Telegram bot chat that only you use, and answers what you type there. No carrier
+Donna sends alerts to a Telegram bot chat that only you use, and answers what you type there. No carrier
 registration is involved: it's Telegram's own Bot API.
 
 1. In Telegram, open a chat with **@BotFather** (the one with the blue check) and send `/newbot`.
-2. Give it a display name (`HackRecon`), then a username that ends in `bot` and isn't easy to guess
-   (e.g. `hackrecon_<something>_bot`). BotFather replies with the token.
-3. Add the token to `.env`: `TELEGRAM_BOT_TOKEN=123456789:AA...`. If it ever leaks, send BotFather `/revoke`.
+2. Give it the display name `Donna`, then a username that ends in `bot` and isn't easy to guess
+   (e.g. `donna_<something>_bot`). BotFather replies with the token.
+3. BotFather calls it the HTTP API token. Add it to `.env` at the repo root (the same file as `ANTHROPIC_API_KEY`):
+   `TELEGRAM_BOT_TOKEN=123456789:AA...`. If it ever leaks, send BotFather `/revoke`.
 4. Send BotFather `/setjoingroups`, pick your bot, choose **Disable**, so nobody can add it to a group.
 5. Open your bot (the `t.me/<username>` link BotFather gave) and tap **Start**.
 6. Run `bun run hr telegram-chat-id`. It prints your chat ID; add it to `.env`: `TELEGRAM_CHAT_ID=...`.
 
-Anyone can find a bot and message it; HackRecon only reads and answers your own chat (`TELEGRAM_CHAT_ID`) and drops
+Anyone can find a bot and message it; Donna only reads and answers your own chat (`TELEGRAM_CHAT_ID`) and drops
 everything else unread. It calls four Bot API methods and nothing else (`pipeline/telegram.test.ts`).
 
 Answers: each question is one `claude-haiku-5-5` call over your Plan, the schedule, alerts so far, and organizer and

@@ -185,13 +185,13 @@ describe("replayed Discord event → texts", () => {
     expect(sent.map((s) => s.at)).toEqual(["2026-11-14T09:00:00-08:00", "2026-11-14T10:15:00-08:00", "2026-11-14T10:40:00-08:00", "2026-11-14T11:00:00-08:00", "2026-11-14T13:30:00-08:00", "2026-11-14T16:00:00-08:00"]);
     // 09:01 tracks went out; judging at 09:01:40 waited for the 10-minute gap and rode with the 10:16 workshop.
     expect(sent[0]!.body).toBe(
-      "HackRecon: Tracks posted\nTracks and prizes are live! See every track on Devpost: https://example-hacks.devpost.com/\nWhy: Check your Plan's likely tracks are there as you expect: Best Use of Modal\n#announcements, Example Hacks\nhttps://discord.com/channels/1300000000000000001/1300000000000000010/" +
+      "Donna: Tracks posted\nTracks and prizes are live! See every track on Devpost: https://example-hacks.devpost.com/\nWhy: Check your Plan's likely tracks are there as you expect: Best Use of Modal\n#announcements, Example Hacks\nhttps://discord.com/channels/1300000000000000001/1300000000000000010/" +
         idOf(replay.posts[0]!),
     );
-    expect(sent[1]!.body).toStartWith("HackRecon, 2 updates:\n\n1. Judging\n");
+    expect(sent[1]!.body).toStartWith("Donna, 2 updates:\n\n1. Judging\n");
     expect(sent[1]!.body).toContain("2. Workshop\nWorkshop: Build and deploy agents on Modal, today at 3:00 PM in Room 105.\nWhy: It's about Modal, in your stack (GPU inference for the planner); Your Plan's likely track: Best Use of Modal; Starts Sat 3:00 PM (in 5 h)");
     expect(sent[2]!.body).toContain("Sponsor offer\nModal: $50 in credits\nWhy: It's about Modal, in your stack");
-    expect(sent[3]!.body).toBe("HackRecon digest, 3 items:\n1. New post: New post in #sponsor-modal (#sponsor-modal, Example Hacks)\n2. New post: New post in #acme-booth (#acme-booth, Example Hacks)\n3. Sponsor offer: Acme is hiring summer interns. Stop by our booth or apply at https://acme.example/jobs (#acme-booth, Example Hacks)");
+    expect(sent[3]!.body).toBe("Donna's digest, 3 items:\n1. New post: New post in #sponsor-modal (#sponsor-modal, Example Hacks)\n2. New post: New post in #acme-booth (#acme-booth, Example Hacks)\n3. Sponsor offer: Acme is hiring summer interns. Stop by our booth or apply at https://acme.example/jobs (#acme-booth, Example Hacks)");
     expect(sent[4]!.body).toContain("Room or time change\nRoom change: the Modal workshop has moved to Room 210, same time.\nWhy: It's about Modal, in your stack");
     expect(sent[5]!.body).toContain("Deadline\nReminder: project submissions are due Sunday at 9:00 AM on Devpost. Late submissions won't be judged.\nWhy: Due Sun 9:00 AM (in 17 h)\n#announcements, Example Hacks\nhttps://discord.com/channels/1300000000000000001/1300000000000000010/1300000000000009001");
   });

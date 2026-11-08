@@ -2026,7 +2026,7 @@ async function shipCli(args: string[]): Promise<number> {
   const item = (x: ShipItem) => {
     out(`    [ ] ${x.label}${x.at ? `   (${at(x.at)}${x.until ? `–${new Date(x.until).toLocaleString("en-US", { timeZone: event.timezone, hour: "numeric", minute: "2-digit" })}` : ""})` : ""}`);
     if (x.quote) out(`        "${x.quote}"`);
-    out(`        ${x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? `added in #${x.channel}  ${x.source_url}` : x.source_url}`);
+    out(`        ${x.from === "standing" ? "Donna's standing item" : x.from === "slack" ? `added in #${x.channel}  ${x.source_url}` : x.source_url}`);
   };
   out(`\nRequired to submit (${list.required.length})`);
   list.required.forEach(item);

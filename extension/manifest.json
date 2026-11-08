@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "HackRecon capture",
+  "name": "Donna capture",
   "version": "0.5.0",
   "description": "Syncs an event's Slack channels and threads through read-only API methods in the background, or as rendered in the tab, and reads what open Discord tabs render. Never posts, reacts, messages or marks anything read.",
   "permissions": [
@@ -12,7 +12,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "HackRecon capture"
+    "default_title": "Donna capture"
   },
   "host_permissions": [
     "https://*.devpost.com/*",
