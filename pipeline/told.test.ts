@@ -56,6 +56,12 @@ test("messageNames: the message itself names each item or sponsor the write chan
   expect(messageNames("add Modal and PyTorch to my stack", ["Modal", "pytorch"])).toBe(true);
   expect(messageNames("add Modal to my stack", ["Modal", "Exa"])).toBe(false);
   expect(messageNames("add it to my stack", [""])).toBe(false);
+  // Whole words only: a name inside another word, or a one-letter name inside any word, isn't named.
+  expect(messageNames("for example, add the training runs to my stack", ["Exa"])).toBe(false);
+  expect(messageNames("add the training runs to my stack", ["R"])).toBe(false);
+  expect(messageNames("add R and Next.js to my stack", ["R", "next.js"])).toBe(true);
+  expect(messageNames("add Google Cloud to my stack", ["Google Cloud"])).toBe(true);
+  expect(messageNames("add Google and the Cloud to my stack", ["Google Cloud"])).toBe(false);
 });
 
 test("a confirmation is the whole message, never a reply that starts with yes", () => {
