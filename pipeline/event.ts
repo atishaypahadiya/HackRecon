@@ -65,6 +65,8 @@ export const SHIP_TICKS_PATH = "data/ship_ticks.json";
 export const REP_NOTES_PATH = "data/rep_notes.json";
 /** Slice 4: the hacker's team and each person's skills, as told to Donna. */
 export const TEAM_PATH = "data/team.json";
+/** Tracks the Plan's gap check has covered, so one that falls to "possible" stays checked (user, 2026-11-08). */
+export const GAP_CHECKED_PATH = "data/gap_checked.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";

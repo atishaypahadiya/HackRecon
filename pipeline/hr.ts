@@ -95,6 +95,7 @@ import {
   DISCOVERED_PATH,
   DISCOVERY_PATH,
   FIT_CACHE_PATH,
+  GAP_CHECKED_PATH,
   GAPS_CACHE_PATH, PERSON_LINKS_PATH, PLAN_TIMINGS_PATH, REP_SIGNALS_PATH,
   SHIP_GAPS_PATH,
   PREFILL_CACHE_PATH,
@@ -170,7 +171,7 @@ import { coverage, type CoverageReport } from "./coverage.ts";
 import { callChecked } from "./model.ts";
 import { checkFit, sponsorAliases, FIT_EFFORT, FIT_TOP, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, trackCards, type Ranked, type SponsorAliases } from "./fit.ts";
 import { fitGate, fmt, formatFitGate, formatFitReport, scoreFit, type EvalItem, type PairHit } from "./fiteval.ts";
-import { planGaps, teamGapLine, type Gap, type GapCache, type ProjectFact } from "./gaps.ts";
+import { gapChecked, planGaps, teamGapLine, type Gap, type GapCache, type ProjectFact } from "./gaps.ts";
 import { checkoutRepo, checkoutRepoAsync, repoFacts, repoTexts } from "./repo.ts";
 import { planStream, type PlanEvent, type PlanSteps } from "./planstream.ts";
 import { PREFILL_MAX_TOKENS, PREFILL_SCHEMA, PREFILL_SYSTEM, prefillDraft, prefillFacts, prefillHash, prefillRequest, type PrefillCache, type PrefillDraft, type Product } from "./prefill.ts";
@@ -1951,12 +1952,19 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
   const notes = readRepNotes();
   // Slice 4: the team's combined skills count toward every track and gap.
   const team = readTeam();
+  // Beyond likely tracks, the gap check covers entered tracks and tracks it covered before (now possible).
+  const checkedBefore = readJsonFile<string[]>(GAP_CHECKED_PATH, []);
+  const also = new Set([...Object.keys(readEntered()), ...checkedBefore]);
+  let inScope: string[] = [];
   const events: PlanEvent[] = [];
   for await (const e of planStream({
     tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank, notes, teamLines(team)),
     repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
     repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
-    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache, undefined, "likely", notes, team),
+    gaps: (tracks, lines) => {
+      inScope = tracks.filter((t) => gapChecked(t, "likely", notes, also)).map((t) => t.track_id);
+      return planGaps(client, tracks, ctx.entities, input, lines, gcache, undefined, "likely", notes, team, also);
+    },
     booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
     joins: planJoins(input, ctx, opts.nowMs ?? Date.now()),
     log: (l) => console.error(l),
@@ -1984,6 +1992,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
       tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names, reason: t.reason, quote: t.quote })),
       overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
+  if (of("gaps") && inScope.some((id) => !checkedBefore.includes(id))) writeJsonFile(GAP_CHECKED_PATH, [...new Set([...checkedBefore, ...inScope])]);
   if (!opts.fresh) {
     if (of("tracks")?.from === "model" || of("tracks")?.from === "partial") writeJsonFile(FIT_CACHE_PATH, fcache);
     if (of("gaps")?.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
@@ -2046,7 +2055,7 @@ async function planCli(args: string[]): Promise<number> {
   const width = cliWidth();
   const out = (line: string) => console.log(wrapText(line, width));
   out(r.from === "none" ? "Tracks to target: none yet; the event hasn't announced its tracks. Your Plan is saved, and tracks get ranked once they're on the event's pages." : `Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
-  out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
+  out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely, entered and earlier-checked tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
   for (const o of tr.overall) {
     out(`\n  ${o.name}   every team is in it; not ranked`);
     for (const d of o.descriptions) out(`    "${d}"`);
