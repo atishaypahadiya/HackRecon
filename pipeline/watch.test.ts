@@ -10,7 +10,7 @@ import { freshPosts, readChannel, readSidebar } from "../extension/src/discord-d
 import { writeJsonFile } from "./classify.ts";
 import type { DiscordDomFile } from "./discord.ts";
 import { DiscordBot, type BotDeps } from "./discordbot.ts";
-import { ITEMS_PATH, PLAN_PATH } from "./event.ts";
+import { EVENT_PATH, ITEMS_PATH, PLAN_PATH } from "./event.ts";
 import { readMessages } from "./runs.ts";
 import type { Item } from "./schema.ts";
 import { channelPage, idOf, replay, type ReplayPost } from "./testdata/discord-replay.ts";
@@ -65,6 +65,8 @@ beforeAll(async () => {
   mkdirSync(join(home, "event", "data"), { recursive: true });
   process.chdir(join(home, "event"));
   writeJsonFile(PLAN_PATH, replay.plan);
+  // The user's choice (D19): #announcements is where only staff post. Without it, nothing there has authority.
+  writeJsonFile(EVENT_PATH, { authority_channels: ["announcements"] });
   const seen = new Map<string, Set<string>>();
   const rendered = new Map<string, ReplayPost[]>();
   let first = true;
@@ -96,8 +98,36 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+describe("authority is the user's choice, never the composer's say-so (security review, 2026-11-07)", () => {
+  test("a read-only channel alone grants nothing: its posts can't set off organizer alerts; it is proposed instead", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-discord-noauth-"));
+    const prev = process.cwd();
+    try {
+      mkdirSync(join(dir, "event", "data"), { recursive: true });
+      mkdirSync(join(dir, "dl"));
+      process.chdir(join(dir, "event"));
+      // A server that locks every channel until you verify: #general is read-only too, and a hacker posts there.
+      const tracks = replay.posts[0]!;
+      const hacker = { ...replay.posts.find((p) => p.channel.name === "general")!, html: "Tracks are live! Room change: hacking moved to Room 1 at 2pm" };
+      for (const p of [tracks, hacker]) {
+        const { document } = parseHTML(channelPage(p.channel, true, [p]));
+        const view = readChannel(document as unknown as Document, `/channels/${G}/${p.channel.id}`, document.title)!;
+        writeFileSync(join(dir, "dl", `2026-11-14T17-01-00-000Z-${p.channel.id}.json`), JSON.stringify({ kind: "discord-dom", captured_at: "2026-11-14T17:01:00.000Z", guild_id: G, guild_name: "Example Hacks", posts: view.posts, unread: [] }));
+      }
+      const r = await ingestDiscord({ dir: join(dir, "dl"), bot: null, now: new Date("2026-11-14T17:01:00Z") });
+      expect(r.proposed).toEqual(["announcements"]);
+      expect(readMessages().filter((m) => m.authority)).toEqual([]);
+      const a = await runAlerts({ nowMs: Date.parse("2026-11-14T09:02:00-08:00"), tz: "America/Los_Angeles", organizerIds: new Set(), send: null });
+      expect(a.fresh).toEqual([]);
+    } finally {
+      process.chdir(prev);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("replayed Discord event → texts", () => {
-  test("every post is read once; organizer authority only from the read-only channel and the followed crossposts", () => {
+  test("every post is read once; organizer authority only from authority_channels and the followed crossposts", () => {
     const ms = readMessages();
     expect(ms).toHaveLength(replay.posts.length);
     expect(ms.filter((m) => m.authority).map((m) => m.channel_name).sort()).toEqual(["announcements", "announcements", "announcements", "announcements", "announcements", "announcements"]);

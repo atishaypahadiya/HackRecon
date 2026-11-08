@@ -80,7 +80,8 @@ export function readChannel(doc: Document, pathname: string, title: string): Cha
   if (!at) return null;
   const names = titleParts(title);
   const guild_name = names.guild_name || (doc.querySelector(DSEL.guildName)?.textContent ?? "").trim();
-  const read_only = [...doc.querySelectorAll(DSEL.composer)].some((f) => NO_POST.test(f.textContent ?? ""));
+  // The composer only: a form holding no message list. A post quoting the phrase never counts.
+  const read_only = [...doc.querySelectorAll(DSEL.composer)].some((f) => !f.querySelector(DSEL.message) && !f.closest(DSEL.message) && NO_POST.test(f.textContent ?? ""));
   const posts: DiscordPost[] = [];
   let author = "";
   let tag = "";

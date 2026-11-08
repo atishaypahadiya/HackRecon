@@ -20,7 +20,8 @@ export interface DiscordPost {
   author_kind: "user" | "bot";
   /** A post Discord relayed from a followed announcement channel: where it was first posted. */
   crosspost?: { guild_name: string; channel_name: string; guild_id?: string; channel_id?: string; message_id?: string };
-  /** The channel lets this user read but not post (the composer says so): only the event's staff post there. */
+  /** The composer says this user can't post here. An observation only, never authority: servers lock every channel
+   *  for a member who hasn't verified yet. A read-only announcement-named channel is proposed for authority_channels. */
   read_only_channel?: boolean;
   /** Message text, then each embed's title and description on their own lines; links as `label <href>`. */
   text: string;
@@ -75,9 +76,9 @@ export function crosspostSource(webhookName: string): { guild_name: string; chan
 export const permalink = (guild: string, channel: string, message: string) => `https://discord.com/channels/${guild}/${channel}/${message}`;
 
 /** As a Message: channel ids are prefixed so they never meet a Slack id; a crosspost is filed under its source
- *  channel's name (where it was posted), linked to its source when Discord gave one. Authority (D19) comes only from
- *  what hackers can't do: post in a followed announcement channel, or in a channel whose composer is read-only. */
-export function toMessage(p: DiscordPost, runId: string, capturedAt: string): Message {
+ *  channel's name (where it was posted), linked to its source when Discord gave one. Authority (D19) only from what
+ *  the user chose: a channel they followed into their own server, or one listed in event.json authority_channels. */
+export function toMessage(p: DiscordPost, runId: string, capturedAt: string, authorityChannels: ReadonlySet<string> = new Set()): Message {
   const channel_id = `discord-${p.channel_id}`;
   const ts = snowflakeTs(p.message_id);
   const src = p.crosspost;
@@ -89,7 +90,7 @@ export function toMessage(p: DiscordPost, runId: string, capturedAt: string): Me
     ts,
     author_name: src ? `${src.guild_name} #${src.channel_name}` : p.author_name,
     author_kind: p.author_kind,
-    ...(src || p.read_only_channel ? { authority: true as const } : {}),
+    ...(src || authorityChannels.has(p.channel_name) ? { authority: true as const } : {}),
     text: p.text,
     links: p.links,
     permalink: link,

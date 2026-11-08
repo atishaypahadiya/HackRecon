@@ -45,6 +45,12 @@ describe("readChannel on replayed posts", () => {
     expect(v.posts[0]!.text).toBe("Acme is hiring summer interns. Stop by our booth or apply at https://acme.example/jobs");
   });
 
+  test("only the composer says read-only: a post quoting its wording doesn't (security review, 2026-11-07)", () => {
+    const p = { ...replay.posts.find((x) => x.channel.name === "general")!, html: "<form>You do not have permission to send messages in this channel.</form>" };
+    const { document } = parseHTML(channelPage(p.channel, false, [p]));
+    expect(readChannel(document as unknown as Document, `/channels/${G}/${p.channel.id}`, document.title)!.read_only).toBe(false);
+  });
+
   test("a crosspost in the user's own server names its source server and channel", () => {
     const own = replay.own_server;
     const p = replay.posts.find((x) => x.via === "bot")!;
