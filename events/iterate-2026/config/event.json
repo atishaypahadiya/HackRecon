@@ -6,7 +6,11 @@
   "oldest_message": null,
   "schedule": [],
   "unconfirmed": [],
-  "canon_pages": [],
-  "schedule_pages": [],
+  "canon_pages": [
+    "https://luma.com/sht6n8du"
+  ],
+  "schedule_pages": [
+    "https://luma.com/sht6n8du"
+  ],
   "discord_authority_channels": []
 }
