@@ -73,7 +73,7 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { budgetedAnswer, buildContext, CHAT_DAILY_USD, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
+import { budgetedAnswer, buildContext, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
 import { canonTrackDiff, ingestDiscord, runAlerts } from "./watch.ts";
@@ -329,7 +329,8 @@ const USAGE = `usage:
       canon and schedule pages; a changed canon page is re-read (hr canon --unattended, under the same guard,
       retried next hour if refused), and new tracks or a canon_notes line gone from the page are re-ranked
       against your Plan and sent as an alert. On a two-way channel (Telegram) it
-      also answers your messages from your Plan and the event's data, with claude-haiku-5-5, up to $1 of
+      also answers your messages from your Plan, the event's data and your past events (read-only), with
+      ${CHAT_MODEL} for short factual questions and ${CHAT_DEEP_MODEL} for strategy and planning, up to $1 of
       answers per watch session (the cost guard), $3 a day per event (event.json chat_daily_usd; kept in
       ${CHAT_SPEND_PATH} across restarts), and 20 an hour; questions and answers go to ${CHAT_LOG_PATH}.
   bun run hr ask [--at ISO] [--yes] "QUESTION"
@@ -603,7 +604,8 @@ async function ask(args: string[]): Promise<number> {
   if (!client) return 1;
   const d = readAgentData(nowMs);
   const context = buildContext(d);
-  console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"})`);
+  const route = routeQuestion(question);
+  console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"}, ${d.past?.length ?? 0} past events); ${route} question, ${route === "deep" ? CHAT_DEEP_MODEL : CHAT_MODEL}`);
   try {
     const b = budget();
     const r = await budgetedAnswer(client, guard, b, { question, history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz });
