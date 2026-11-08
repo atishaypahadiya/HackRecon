@@ -41,3 +41,17 @@ test("hr plan on an event with no posts and no tracks saves the Plan with no mod
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("hr board builds on an event with no posts: an empty Claim tab, Plan and Ship from the event's pages", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hr-new-event-"));
+  try {
+    const ev = newEvent(dir);
+    const r = spawnSync("bun", [join(import.meta.dir, "hr.ts"), "board", "--build-only", "--event", ev], { cwd: dir, encoding: "utf8" });
+    expect(r.stderr).not.toContain("not found");
+    expect(r.status).toBe(0);
+    const data = JSON.parse(readFileSync(join(ev, "data/board.json"), "utf8"));
+    expect([data.offers.length, data.posts.length, data.frames.length]).toEqual([0, 0, 0]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

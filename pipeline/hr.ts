@@ -1217,18 +1217,21 @@ async function board(args: string[]): Promise<number> {
     options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
   const sponsors = readSponsors(values.sponsors!);
-  const grouped = readJsonFile<GroupResult | null>(GROUP_PATH, null);
-  if (!grouped || grouped.input_hash !== groupInput(sponsors).input_hash) {
+  // An event with no Slack or Discord posts yet (Iterate before it starts) gets the board from its pages alone: Plan
+  // and Ship from canon, an empty Claim tab.
+  const noPosts = !existsSync(MESSAGES_PATH);
+  const grouped = noPosts ? ({ offers: [], input_hash: "", model: "no posts yet", written_at: "" } as unknown as GroupResult) : readJsonFile<GroupResult | null>(GROUP_PATH, null);
+  if (!grouped || (!noPosts && grouped.input_hash !== groupInput(sponsors).input_hash)) {
     console.error(`${GROUP_PATH} is ${grouped ? "stale" : "missing"}: run \`bun run hr group\` first (the board shows only Opus-grouped offers)`);
     return 2;
   }
   const event = readEvent();
   const last = readRuns().at(-1);
-  const organizerIds = loadOrganizerIds();
+  const organizerIds = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
   const person = loadPersonKey();
   const reps = loadRepIndex(person);
-  const labels = readLabels();
-  const messages = readMessages();
+  const labels = noPosts ? [] : readLabels();
+  const messages = noPosts ? [] : readMessages();
   const data = boardData({
     event: event.event,
     timezone: event.timezone,
@@ -2098,9 +2101,9 @@ function canonTimeline(): { baseline: Entity[]; changes: PageChange[] } {
 
 function shipListAt(entities: Entity[], event: EventConfig, entered: string[], nowMs: number): ShipList {
   const sponsors = readSponsors(SPONSORS_PATH);
-  const messages = readMessages();
+  const messages = existsSync(MESSAGES_PATH) ? readMessages() : [];
   const person = loadPersonKey();
-  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, loadRepIndex(person).confirmed);
+  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), person, loadRepIndex(person).confirmed);
   // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
   const t = canonTimeline();
   return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
