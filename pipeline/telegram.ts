@@ -57,7 +57,7 @@ export class TelegramApi {
   }
 
   async call<T>(method: TelegramMethod, params: Record<string, unknown>): Promise<T> {
-    if (!(TELEGRAM_METHODS as readonly string[]).includes(method)) throw new TelegramRefused(`${method}: not a method HackRecon may call`);
+    if (!(TELEGRAM_METHODS as readonly string[]).includes(method)) throw new TelegramRefused(`${method}: not a method Donna may call`);
     for (let tries = 1; ; tries++) {
       let res: { status: number; json(): Promise<unknown> };
       try {

@@ -164,13 +164,13 @@ function cap(body: string): string {
 
 export function nowBody(alerts: Alert[], more: number): string {
   const one = (a: Alert) => [KIND_LABEL[a.kind], a.what, `Why: ${a.why}`, a.source, a.link].join("\n");
-  const head = alerts.length === 1 ? `HackRecon: ${one(alerts[0]!)}` : `HackRecon, ${alerts.length} updates:\n\n${alerts.map((a, i) => `${i + 1}. ${one(a)}`).join("\n\n")}`;
+  const head = alerts.length === 1 ? `Donna: ${one(alerts[0]!)}` : `Donna, ${alerts.length} updates:\n\n${alerts.map((a, i) => `${i + 1}. ${one(a)}`).join("\n\n")}`;
   return cap(head + (more ? `\n\n+${more} more in the next message` : ""));
 }
 
 export function digestBody(alerts: Alert[], more: number): string {
   const line = (a: Alert, i: number) => `${i + 1}. ${KIND_LABEL[a.kind]}: ${a.what} (${a.source})`;
-  return cap(`HackRecon digest, ${alerts.length + more} item${alerts.length + more === 1 ? "" : "s"}:\n${alerts.map(line).join("\n")}${more ? `\n+${more} more: bun run hr alerts --list` : ""}`);
+  return cap(`Donna's digest, ${alerts.length + more} item${alerts.length + more === 1 ? "" : "s"}:\n${alerts.map(line).join("\n")}${more ? `\n+${more} more: bun run hr alerts --list` : ""}`);
 }
 
 /** New alerts in, texts out. Pure: the caller sends them and saves the state. */

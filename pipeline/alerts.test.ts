@@ -91,7 +91,7 @@ describe("deliver", () => {
     expect(r.notices).toEqual([]);
     r = deliver(r.state, [], t0 + 2 * 3600_000);
     expect(r.notices.map((s) => [s.level, s.keys])).toEqual([["digest", ["j1", "j2"]]]);
-    expect(r.notices[0]!.body).toBe("HackRecon digest, 2 items:\n1. Tracks posted: post j1 (#announcements, Example Hacks)\n2. Tracks posted: post j2 (#announcements, Example Hacks)");
+    expect(r.notices[0]!.body).toBe("Donna's digest, 2 items:\n1. Tracks posted: post j1 (#announcements, Example Hacks)\n2. Tracks posted: post j2 (#announcements, Example Hacks)");
     r = deliver(r.state, [alert("j3", "digest")], t0 + 3 * 3600_000);
     expect(r.notices).toEqual([]);
   });

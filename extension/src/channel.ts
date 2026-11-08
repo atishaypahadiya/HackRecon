@@ -58,7 +58,7 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
   const observer = new MutationObserver(ingest);
   observer.observe(listEl, { childList: true, subtree: true });
 
-  status("HackRecon: jumping to the newest message…");
+  status("Donna: jumping to the newest message…");
   await scrollToNewest(scroller);
 
   let steps = 0;
@@ -67,7 +67,7 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
     ingest();
     stop = stopped() ? "user_stopped" : steps >= MAX_STEPS ? "max_steps" : rule.step(acc.size, acc.sawChannelStart);
     if (stop) break;
-    status(`HackRecon: ${nameHint ? `#${nameHint}: ` : ""}${acc.size} messages · step ${steps} · scrolling up…`);
+    status(`Donna: ${nameHint ? `#${nameHint}: ` : ""}${acc.size} messages · step ${steps} · scrolling up…`);
     scroller.scrollTop = Math.max(0, scroller.scrollTop - scroller.clientHeight * STEP_FRACTION);
     steps++;
     await sleep(STEP_WAIT_MS);
@@ -76,7 +76,7 @@ export async function captureChannelFile(status: (msg: string) => void, stopped:
   // the channel once more from the top down to the newest post, then wait again.
   const settle = async () => {
     for (let w = 0; acc.loading.length && w < LOADING_WAITS && !stopped(); w++) {
-      status(`HackRecon: ${nameHint ? `#${nameHint}: ` : ""}waiting for Slack to load ${acc.loading.length} posts…`);
+      status(`Donna: ${nameHint ? `#${nameHint}: ` : ""}waiting for Slack to load ${acc.loading.length} posts…`);
       await sleep(STEP_WAIT_MS);
       ingest();
     }
