@@ -1628,7 +1628,8 @@ async function sync(args: string[]): Promise<number> {
     if (code) return code;
   }
   const event = readEvent();
-  const messages = readMessages();
+  // A Discord-only or brand-new event has no Slack posts yet (Iterate, 2026-11-08): its pages still sync from event.json.
+  const messages = existsSync(MESSAGES_PATH) ? readMessages() : [];
   const caps = captureFiles([CAPTURES_DIR]).map((f) => loadCapture(f).capture);
   const channels = [...new Set([...caps.map((c) => c.channel_name), ...messages.map((m) => m.channel_name)])].sort();
   // Announcement channels: Slack's restricted-posting flag first (a signal hackers can't set, D19), then config, then names.
@@ -1655,7 +1656,8 @@ async function sync(args: string[]): Promise<number> {
   const fetcher = new PoliteFetcher();
   let devpostRoot = found.devpost?.url ?? null;
   let devpostWhy = found.devpost?.why ?? "";
-  if (!devpostRoot && !values.offline) {
+  // event.json's canon_pages win over any search, so a search would only cost a request.
+  if (!devpostRoot && !values.offline && !event.canon_pages?.length) {
     const r = await fetcher.get(`https://devpost.com/api/hackathons?search=${encodeURIComponent(event.event)}`, "json");
     if (r.status === "fetched" && r.html) {
       const pick = pickDevpostHit(event.event, ((JSON.parse(r.html) as { hackathons?: DevpostHit[] }).hackathons ?? []));
@@ -1675,8 +1677,12 @@ async function sync(args: string[]): Promise<number> {
   if (!values.offline) {
     const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
     const { parseHTML } = await import("linkedom");
+    const done = new Set<string>();
     for (const [role, list] of [["canon", canonPages], ["schedule", schedulePages]] as const)
       for (const url of list) {
+        // A page listed as both canon and schedule (a Luma event page) is one page: fetched, saved and counted once.
+        if (done.has(pageKey(url))) continue;
+        done.add(pageKey(url));
         const r: Fetched = { ...(await fetcher.get(url)), role };
         if (r.status === "fetched" && r.html) {
           const { document } = parseHTML(r.html);
