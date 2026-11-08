@@ -9,7 +9,9 @@ import type { Item, Message } from "./schema.ts";
 
 export interface PlanFacts {
   saved_at?: string;
-  input: { idea: string; stack: { name: string; used_for: string | null }[] | null };
+  input: { idea: string; stack: { name: string; used_for: string | null; told?: { source: "chat" | "board"; at: string; quote: string | null } }[] | null; repo?: string | null };
+  /** Gaps and booth questions in the last run (chat writes report the change). */
+  counts?: { gaps: number | null; booths: number | null };
   tracks: { track_id: string; name: string; sponsor: string; fit: "likely" | "possible"; product_names: string[] }[];
   /** The event's own unranked track(s), verbatim (plan.ts OverallTrack); absent in Plans saved before 2026-11-08. */
   overall?: { name: string; descriptions: string[]; prizes: string[]; source_url: string }[];

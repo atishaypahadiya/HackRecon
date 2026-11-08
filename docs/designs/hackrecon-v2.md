@@ -101,6 +101,54 @@ Verified (2026-11-07):
 - Live against Telegram with a made-up token: 401 explained, token absent from the output.
 - Not yet: a real bot, real chat ID, and a real round trip (user setup pending).
 
+**Chat writes (user, 2026-11-08).** Chat becomes a write path into the same store the dashboard reads: the hacker changes their Plan and event state by telling Donna. Writes requested: the project description or stack; a credit claimed; the tracks they're entering; a Ship checklist tick; a requirement or criterion learned from a rep at a booth; a teammate joining, with their skills. After each write, whatever depends on it re-runs (track ranking, gaps, booth questions) and Donna says in one line what changed.
+
+- **One store, in the event's `data/` (gitignored, D10).** The Plan input (idea, stack, repo) stays in `data/plan.json` `input`. Claims go in `data/claims.json`, keyed by credit id. Every write is appended to `data/writes.jsonl`: time, source, the hacker's words, the operation, and the one-line result. A write waiting for confirmation sits in `data/pending_write.json`. The board's per-browser storage becomes a cache: what it shows comes from these files. This changes DESIGN.md's "done state is per viewer, in this browser only" for claims and the Plan input, at the user's direction.
+- **Provenance on every write.** Each written fact carries `told: { source, at, quote }`. From chat: source `"chat"`, the message time, and the hacker's own words as the quote. A claim ticked on the board: source `"board"`, no quote. What the hacker types into the Plan form is their own entry and carries no `told`. A told item keeps its provenance through board edits that leave its name and use unchanged.
+- **The weakest tier.** A chat-sourced fact never overrides the event page or an organizer post. Stack and claims are the hacker's own facts, which no page states, so nothing conflicts. Requirements and criteria from a rep (slice 3) go in their own file, never into canon's fields. When the page or an organizer states the same field, theirs is shown, and the chat fact is shown as superseded. The Plan labels every chat-sourced fact "told to Donna".
+- **How Donna decides.** The chat call gets tools (`update_stack`, `mark_claimed`; more per slice). The model proposes and code decides:
+  - The quote must appear verbatim in the hacker's current message.
+  - A credit id must be one listed in her context.
+  - A removal must name an item that's in the stack.
+  - Posts stay data: a write needs a quote from the hacker's own message, so a post can't supply one.
+  - Writes only ever touch the current event's `data/`. Past events stay read-only (`readPastEvents` only reads).
+- **Confirm before destructive writes.** Clearing the stack, a removal that empties it, and (slice 2) unsetting entered tracks are asked first: "Reply yes within 10 minutes; anything else cancels." Everything else is done and reported.
+- **Re-runs.**
+  - A stack change re-runs the Plan stream (ranking, gaps, booths) under the Plan's spend guard. Donna reports the fit changes and the gap and booth counts in one line.
+  - A claim makes no model call. The Plan's Credits shows it.
+- **Claimable credits.** Two sources:
+  - The board's offers, by offer id.
+  - The per-hacker credits in canon's "every entrant" prizes, one per "$N in X credits" phrase, each with its quote and page. Iterate's Luma page gives four: Modal $250, Devin $200, Tinker $100, Exa $50.
+- **The board.**
+  - `/plan/meta` carries the stored Plan input and the claims. An open board picks a changed input up on its next 60-second tick and re-runs its plan, which comes from cache when nothing changed.
+  - Claims show as done. Ticking a claim on the board writes the same file.
+  - Told-to-Donna items are labeled.
+- **Slices.**
+  1. Stack updates and claims, end to end (this change).
+  2. Entered tracks (confirm unset) and Ship ticks, both moved from localStorage to the store.
+  3. Rep requirements and criteria, at the weakest tier.
+  4. Teammates and their skills.
+
+Slice 1 built (2026-11-08):
+- **Where it lives:**
+  - `pipeline/told.ts`: the store, `pageCredits`, `applyStackUpdate`, the one-line reports and `makeWrites`.
+  - `pipeline/agent.ts`: the two tools, the credits in the context, and the confirm hook in `handleInbound`.
+  - `pipeline/hr.ts`: the Telegram loop, `hr ask` (`hr ask yes` settles a pending write), `/plan/meta` and `POST /claims`.
+  - `board/index.html`.
+- **What counts as a claimable credit:** an every-entrant award counts only when it states credits. Cal Hacks' every-entrant prize is a raffle entry, so it isn't listed.
+- **Tests:** `pipeline/told.test.ts` covers credits parsing, the quote check, stack changes, report lines and the board's provenance pass-through. It also runs the end-to-end write path in a temp event: the fake model proposes a write, the files change, and a past event beside it stays unchanged. The confirm flow is tested too: yes, no, an unrelated reply, and a late reply.
+- **Live on a copy of Iterate (real Haiku):**
+  - "add Modal to my stack for the training runs, and PyTorch for the models" → "Stack: added Modal (training runs), added PyTorch (models). Tracks: Best Use of Modal possible → likely; gaps 0, booth questions 2." The Plan re-ran on Sonnet, estimated at most $0.16.
+  - "I claimed the Modal credits" → "Marked claimed: $250 in Modal credits (Modal). 1 of 4 per-hacker credits claimed."
+  - "clear my stack" was asked first; "no" cancelled it.
+- **Live on a copy of Cal Hacks, with the board open:**
+  - A stack item and an offer claimed through chat showed on the open board within one 60-second tick, with no reload.
+  - The stack shows a "Told to Donna: Modal" line under the summary, and the offer reads "claimed, told to Donna".
+  - No console errors, and no horizontal scroll at 390 px.
+- **Not yet:**
+  - `hr board` needs Slack-grouped offers to start, so it doesn't open on Iterate until Slack or Discord posts are grouped. Its per-hacker credits list is checked only through `/plan/meta`.
+  - The Plan re-run a stack write triggers is under the Plan's own $1 guard. The chat budget ($3 a day) doesn't include it.
+
 ## The brief (user, 2026-10-28, verbatim)
 
 > v1 is done (tag it v1). Starting v2: HackRecon becomes the hacker's operating system for a hackathon, with five views: Build (tracks + track stacker), Claim (v1 offers), Now (schedule + live changes), Meet (reps + booths + openers), Ship (submission checklist). Key architecture change: multi-source. Public pages are canon (Devpost: tracks, prizes, judging criteria, submission rules; event site: schedule), Slack is the live layer (changes, credits, reps, fixes). Merge rule: page is canon, Slack updates override with both shown. Also add thread capture to the extension. Per-event config so it runs at the next hackathon. Build order: sources → entities + Opus-judged eval → merge → views (Build, Ship, Now, Meet) → generalize.

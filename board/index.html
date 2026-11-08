@@ -268,6 +268,7 @@
   .sum { display: flex; align-items: center; gap: 16px; }
   .sum p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sum .stk { color: var(--muted); }
+  .told { margin: 4px 0 0; }
   #next { grid-column: 1 / -1; margin: 0; padding: 0 4px; font-size: 15px; font-weight: 650; }
   #pupd { grid-column: 1 / -1; margin: -8px 0 0; padding: 0 4px; }
   .upd { min-height: 44px; font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
@@ -860,7 +861,27 @@ function setDone(id, on) {
   on ? done.add(id) : done.delete(id);
   store.set(DONE_KEY, JSON.stringify([...done]));
   render(i);
+  saveClaim(id, on);
 }
+// Claims live in the event's store (told.ts), shared with Donna; this browser's done set mirrors them.
+function saveClaim(id, on) {
+  fetch("/claims", { method: "POST", headers: { "Content-Type": "application/json", "x-hr-token": TOKEN }, body: JSON.stringify({ id, claimed: on }) })
+    .then((r) => (r.ok ? r.json() : null)).then((r) => { if (r && P.meta) P.meta.claims = r.claims; }).catch(() => {});
+}
+function mergeClaims() {
+  if (!D || !P.meta?.claims) return;
+  let moved = false;
+  for (const o of D.offers) if (!!P.meta.claims[o.id] !== done.has(o.id)) { P.meta.claims[o.id] ? done.add(o.id) : done.delete(o.id); moved = true; }
+  if (moved) { store.set(DONE_KEY, JSON.stringify([...done])); if (tab === "claim") render(i); }
+}
+document.addEventListener("change", (e) => {
+  const c = e.target.closest?.("[data-claimed]");
+  if (!c) return;
+  if (P.meta) P.meta.claims = { ...(P.meta.claims || {}), ...(c.checked ? { [c.dataset.claimed]: { source: "board" } } : {}) };
+  if (!c.checked && P.meta?.claims) delete P.meta.claims[c.dataset.claimed];
+  saveClaim(c.dataset.claimed, c.checked);
+  paintResults();
+});
 
 /* ---------- input ---------- */
 document.addEventListener("click", async (e) => {
@@ -1018,7 +1039,10 @@ function paintInput(editing) {
   const box = $("pi-body");
   if (!editing && P.input) {
     const names = (P.input.stack || []).map((x) => x.name).join(", ");
-    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>`;
+    // The summary is one line and truncates, so what was told to Donna gets its own line beneath it.
+    const told = (P.input.stack || []).filter((x) => x.told?.source === "chat");
+    const toldLine = told.length ? `<p class="cap told">Told to Donna: ${esc(told.map((x) => x.name).join(", "))}, ${esc(pfmt(Date.parse(told.at(-1).told.at), { weekday: "short", hour: "numeric", minute: "2-digit" }))}</p>` : "";
+    box.innerHTML = `<div class="sum"><p><span>${esc(firstSentence(P.input.idea))}</span>${names ? ` <span class="stk">· ${esc(names)}</span>` : ""}${P.input.repo ? ` <span class="stk">· ${esc(P.input.repo.replace(/^https:\/\/github\.com\//, ""))}</span>` : ""}</p><button type="button" class="edit" id="pi-edit">Edit</button></div>${toldLine}`;
     $("pi-edit").onclick = () => { paintInput(true); $("pi-idea").focus(); };
     return;
   }
@@ -1094,7 +1118,8 @@ function paintInput(editing) {
     e.preventDefault();
     const idea = $("pi-idea").value.trim();
     if (!idea) { $("pi-cap").textContent = "Describe your project first."; $("pi-idea").focus(); return; }
-    const items = [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value.trim(), used_for: r.querySelector(".uf").value.trim() })).filter((x) => x.name);
+    const told = new Map((P.input?.stack || []).filter((x) => x.told).map((x) => [`${x.name}\n${x.used_for || ""}`, x.told]));
+    const items = [...$("pi-stack").children].map((r) => ({ name: r.querySelector(".nm").value.trim(), used_for: r.querySelector(".uf").value.trim() })).filter((x) => x.name).map((x) => (told.has(`${x.name}\n${x.used_for}`) ? { ...x, told: told.get(`${x.name}\n${x.used_for}`) } : x));
     const repo = $("pi-repo").value.trim();
     if (repo && !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) { $("pi-cap").textContent = "The repo link must be a public https://github.com/<owner>/<repo> link."; $("pi-repo").focus(); return; }
     P.input = { idea, stack: items.length ? items : null, ...(repo ? { repo } : {}) };
@@ -1206,11 +1231,27 @@ async function loadStaged(seq) {
   await readPlan(P.input, on, undefined, () => seq !== P.seq);
   return seq !== P.seq || failed || !res.tracks ? null : res;
 }
+/* Chat writes: a stack told to Donna replaces the input and re-runs the plan (from cache where nothing changed);
+   claims repaint Credits. Applied on every tick, not only when the event's data version moves. */
+function applyTold(m) {
+  if (!m || !P.meta) return;
+  const claimsMoved = JSON.stringify(m.claims || {}) !== JSON.stringify(P.meta.claims || {});
+  P.meta.claims = m.claims;
+  P.meta.page_credits = m.page_credits;
+  if (claimsMoved) { mergeClaims(); if (P.input) paintResults(); }
+  if (m.told_at && m.told_at !== P.toldAt && m.input?.idea) {
+    P.toldAt = m.told_at;
+    P.input = m.input;
+    store.set(planKey(), JSON.stringify(P.input));
+    if (!$("pf")) paintInput(false);
+    runPlan();
+  }
+}
 async function liveTick() {
   const seq = P.seq;
   const r = await HRLive.check({
     meta: P.meta,
-    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()),
+    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()).then((m) => (applyTold(m), m)),
     onMeta: (n, du) => {
       P.meta = n;
       P.live.urgent = mergeUrgent(du);
@@ -1306,11 +1347,14 @@ function paintResults() {
   // P3 Credits: Claim's offers from the joined sponsors, open now, soonest limit first. A row opens its drawer.
   const cr = P.res.credits;
   $("pc-ctx").textContent = cr?.credits.length ? `${cr.credits.length} open` : "";
-  $("pc-body").innerHTML = !cr
+  // Per-hacker credits the event's page states: every entrant gets them, so they're listed whatever the stack.
+  const pcs = P.meta?.page_credits || [], cl = P.meta?.claims || {};
+  const perHacker = pcs.length ? `<p class="also m">Every hacker gets these (the event page)</p>${pcs.map((c) => `<label class="ck"><input type="checkbox" data-claimed="${esc(c.id)}"${cl[c.id] ? " checked" : ""}><span>${esc(c.value)}${cl[c.id]?.source === "chat" ? ` <span class="cap">told to Donna</span>` : ""}</span></label>`).join("")}` : "";
+  $("pc-body").innerHTML = perHacker + (!cr
     ? (P.sec.credits === "failed" ? failed : state("Matching…"))
     : !cr.credits.length
       ? state("No offer posted so far matches your stack")
-      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${liveMark(`credits:${c.offer_id}`)}${[esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`;
+      : `<ul class="prows">${cr.credits.map((c) => `<li class="prow"><button type="button" class="pmain" data-credit="${esc(c.offer_id)}"><span class="pn">${esc(c.value)}</span><span class="pr">${esc(c.why[0])}</span></button><div class="pmeta m">${liveMark(`credits:${c.offer_id}`)}${[cl[c.offer_id] ? `claimed${cl[c.offer_id].source === "chat" ? ", told to Donna" : ""}` : "", esc(c.sponsor), esc(c.limit ? `closes ${pfmt(c.limit * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : c.limit_unclear ? "limit unclear" : "no stated limit"), c.promo_code ? `code ${esc(c.promo_code)}` : "", srcLink(c.source_url)].filter(Boolean).join(" · ")}</div></li>`).join("")}</ul>`);
   // P4 Sessions: upcoming, before the submission deadline, by time. The row's name is the post's first line, verbatim.
   const se = P.res.sessions;
   $("ps-body").innerHTML = !se
@@ -1542,7 +1586,10 @@ fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
   P.meta = m;
   try { P.steps = new Set(JSON.parse(store.get(stepKey()) || "[]")); } catch { P.steps = new Set(); }
   try { const e = JSON.parse(store.get(enterKey()) || "[]"); S.entered = Array.isArray(e) ? e.filter((x) => typeof x === "string") : []; } catch { S.entered = []; }
-  try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
+  // Chat writes (told.ts): the event's stored Plan input is the source; this browser's copy is only a fallback.
+  if (m.input?.idea) { P.input = m.input; store.set(planKey(), JSON.stringify(P.input)); }
+  else try { const saved = JSON.parse(store.get(planKey()) || "null"); if (saved?.idea) P.input = saved; } catch {}
+  P.toldAt = m.told_at;
   paintInput(!P.input);
   paintNext();
   setInterval(paintNext, 60000);
@@ -1562,6 +1609,7 @@ fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) =>
     done = new Set(moved.filter((id) => D.offers.some((o) => o.id === id)));
     if (moved.some((id, k) => id !== saved[k])) store.set(DONE_KEY, JSON.stringify([...done]));
   } catch { done = new Set(); }
+  mergeClaims();
   D.posts.forEach((t, k) => postIndex.set(t, k));
   for (const o of D.offers) for (const p of o.posts) if (!offerByTs.has(p.ts)) offerByTs.set(p.ts, o);
   for (let t = D.posts[0]; dayKey(t) <= dayKey(Math.max(D.posts.at(-1), F.at(-1))); t += 86400) if (!dayOf.has(dayKey(t))) { dayOf.set(dayKey(t), days.length); days.push(dayKey(t)); }
