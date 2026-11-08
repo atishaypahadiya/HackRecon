@@ -49,7 +49,7 @@ describe("Plan tracks", () => {
       ["figma", "We designed the UI in Figma; what does ‘Best Design’ reward beyond that?"],
       ["mana", "What does ‘Best Use of Mana’ reward?"],
     ]);
-    expect(q[2]!.grounds).toBe("your stack lists “UI designed in Figma”; Devpost states no requirements or judging criteria for [Figma] Best Design");
+    expect(q[2]!.grounds).toBe("your stack lists “UI designed in Figma”; the event's page states no requirements or judging criteria for [Figma] Best Design");
   });
   test("a use is stated only when the description states it; the user's words, never invented", () => {
     const idea = "Catalog: a course planner. It uses Apify to scrape course catalogs every night.";

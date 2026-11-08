@@ -158,7 +158,7 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput, gaps: Gap[
     const named = sp ? null : t.product_names.find((n) => productMentioned(n, input.idea));
     const product = sp?.phrase ?? named;
     const base = { track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url };
-    const page = t.evidence === "stated" ? `the page's requirement “${unstop(t.quote)}”` : `Devpost states no requirements or judging criteria for ${t.name}`;
+    const page = t.evidence === "stated" ? `the page's requirement “${unstop(t.quote)}”` : `the event's page states no requirements or judging criteria for ${t.name}`;
     if (!product) {
       if (t.evidence === "title") out.push({ ...base, opening: "", ask: `What does ‘${bare(t.name)}’ reward?`, question: `What does ‘${bare(t.name)}’ reward?`, grounds: page });
       continue;
