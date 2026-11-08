@@ -1248,6 +1248,8 @@ function applyTold(m) {
   const ent = Object.keys(m.entered || {}).sort(), tk = Object.keys(m.ticks || {}).sort();
   const enteredMoved = JSON.stringify(ent) !== JSON.stringify([...S.entered].sort());
   const ticksMoved = JSON.stringify(tk) !== JSON.stringify([...P.steps].sort()) || JSON.stringify(m.ticks || {}) !== JSON.stringify(P.meta.ticks || {}) || JSON.stringify(m.entered || {}) !== JSON.stringify(P.meta.entered || {});
+  // The Plan's gap check covers entered tracks, so a change in them re-runs it (the ranking is a cache hit).
+  const enteredChanged = Object.keys(m.entered || {}).sort().join() !== Object.keys(P.meta.entered || {}).sort().join();
   P.meta.entered = m.entered; P.meta.ticks = m.ticks;
   if (enteredMoved) { S.entered = ent; store.set(enterKey(), JSON.stringify(S.entered)); S.gaps = null; loadShip(); }
   if (ticksMoved || enteredMoved) { P.steps = new Set(tk); store.set(stepKey(), JSON.stringify(tk)); if (P.input) paintResults(); if (S.list) paintShip(); }
@@ -1258,7 +1260,7 @@ function applyTold(m) {
   // Slice 4: a team change re-ran the Plan with everyone's skills; fetch it (a cache hit) and Ship's gaps.
   const teamMoved = JSON.stringify(m.team || []) !== JSON.stringify(P.meta.team || []);
   P.meta.team = m.team || [];
-  if ((notesMoved || teamMoved) && P.input) { if (teamMoved && !$("pf")) paintInput(false); runPlan(); if (S.list) { S.gaps = null; loadShip(); } }
+  if ((notesMoved || teamMoved || enteredChanged) && P.input) { if (teamMoved && !$("pf")) paintInput(false); runPlan(); if (S.list) { S.gaps = null; loadShip(); } }
   if (m.told_at && m.told_at !== P.toldAt && m.input?.idea) {
     P.toldAt = m.told_at;
     P.input = m.input;

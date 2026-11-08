@@ -116,17 +116,19 @@ export function copies(a: string, b: string, n = 5): boolean {
   return aw.some((_, i) => i + n <= aw.length && grams.has(aw.slice(i, i + n).join(" ")));
 }
 
-/** Which tracks are checked: Plan checks its likely tracks; Ship checks the tracks the user enters, whatever their fit. */
+/** Which tracks are checked: Plan checks its likely tracks, plus those in `also` (entered, or checked before and since
+ *  fallen to "possible"; user 2026-11-08: "a gap that disappears because the fit dropped is exactly the one I'd want
+ *  to see"), never every possible one; Ship checks the tracks the user enters, whatever their fit. */
 export type GapScope = "likely" | "all";
 type GapTrack = Pick<PlanTrack, "track_id" | "name" | "fit" | "steps" | "source_url">;
 
 /** The tracks' stated requirement sentences and entry steps, each once per track, then any requirement a rep told the
  *  hacker. Title-tier tracks state none, so they have nothing to check unless a rep said something. A track with a
  *  rep's requirement is checked whatever its fit (slice 3: the note triggers a gap check on its track). */
-export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: GapScope = "likely", notes: RepNote[] = []): GapRequirement[] {
+export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: GapScope = "likely", notes: RepNote[] = [], also: ReadonlySet<string> = new Set()): GapRequirement[] {
   const out: GapRequirement[] = [];
   const told = (id: string) => notes.filter((n) => n.track_id === id && n.kind === "requirement");
-  for (const t of tracks.filter((x) => scope === "all" || x.fit === "likely" || told(x.track_id).length)) {
+  for (const t of tracks.filter((x) => gapChecked(x, scope, notes, also))) {
     const seen = new Set<string>();
     const add = (kind: GapRequirement["kind"], text: string) => {
       const key = norm(text).toLowerCase();
@@ -143,6 +145,11 @@ export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: G
     }
   }
   return out;
+}
+
+/** Whether a track is in the gap check's scope (gapRequirements). */
+export function gapChecked(t: Pick<GapTrack, "track_id" | "fit">, scope: GapScope, notes: RepNote[], also: ReadonlySet<string>): boolean {
+  return scope === "all" || t.fit === "likely" || also.has(t.track_id) || notes.some((n) => n.track_id === t.track_id && n.kind === "requirement");
 }
 
 /** The description's sentences and each stack line, as the user typed them. */
@@ -254,9 +261,9 @@ export interface GapResult {
   usage: Usage | null;
 }
 
-export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely", notes: RepNote[] = [], team: Teammate[] = []): Promise<GapResult | { error: string }> {
+export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely", notes: RepNote[] = [], team: Teammate[] = [], also: ReadonlySet<string> = new Set()): Promise<GapResult | { error: string }> {
   const t0 = now();
-  const reqs = gapRequirements(tracks, entities, scope, notes);
+  const reqs = gapRequirements(tracks, entities, scope, notes, also);
   const facts = [...inputFacts(input), ...teamFacts(team), ...repoFacts].map((f, k) => ({ ...f, id: `F${k + 1}` }));
   const teamTold = facts.some((f) => f.kind === "team");
   const counts = { description: 0, stack: 0, repo: 0, team: 0 };

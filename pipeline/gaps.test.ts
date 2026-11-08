@@ -42,6 +42,15 @@ describe("Plan gaps", () => {
       ["other", "told", "the Actor has to be published on the Store", "told to Donna by Sam at the Apify booth"],
     ]);
   });
+  test("Plan's scope: likely tracks, plus entered or earlier-checked ones whatever their fit; never every possible track", () => {
+    const ents = [actor, { ...actor, id: "other" }, { ...actor, id: "third" }];
+    const three = [...tracks, pt("third", "[Apify] 1st Customer", "possible", "stated")];
+    const ids = (also: string[]) => [...new Set(gapRequirements(three, ents, "likely", [], new Set(also)).map((r) => r.track_id))];
+    expect(ids([])).toEqual(["actor"]);
+    // "other" is entered (or was checked when it was likely, and has fallen to possible): it stays checked.
+    expect(ids(["other"])).toEqual(["actor", "other"]);
+    expect(ids(["other", "unranked-track"])).toEqual(["actor", "other"]);
+  });
   test("requirements: likely tracks only, each sentence once (an entry step repeating a requirement isn't asked twice)", () => {
     expect(gapRequirements(tracks, [actor]).map((r) => [r.id, r.kind, r.text])).toEqual([
       ["R1", "requirement", "We have a Best Actor award for building an actor for this event."],
