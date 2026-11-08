@@ -2,7 +2,7 @@
 // hr: HackRecon pipeline CLI. Subcommands land here as tasks ship (compare first).
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { decideIngest, type IngestDecision } from "./ingest.ts";
 import { parseArgs } from "node:util";
@@ -471,6 +471,8 @@ async function watch(args: string[]): Promise<number> {
 /** The user's replies, answered as they arrive (long polling), beside the watch ticks. --once reads what's waiting. */
 async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean): Promise<void> {
   const client = anthropicClient(guard);
+  // One post boundary per session (agent.ts buildContext): unseen by any post, and stable so answers share the cache.
+  const boundary = randomBytes(6).toString("hex");
   const state = readJsonFile<Record<string, { cursor?: string }>>(CHANNEL_STATE_PATH, {});
   let cursor = state[channel.kind]?.cursor;
   console.log(`chat: reading your ${channel.label} messages${client ? "" : " (no ANTHROPIC_API_KEY: they'll be told answers are off)"}`);
@@ -494,7 +496,7 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
       ask: async (question, history) => {
         if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
         const d = readAgentData(Date.now());
-        return answer(client, { question, history, context: buildContext(d), eventName: d.event?.event ?? "", tz: d.tz });
+        return answer(client, { question, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz });
       },
     });
     for (const t of turns) {
