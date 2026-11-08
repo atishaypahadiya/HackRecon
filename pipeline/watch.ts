@@ -1,13 +1,14 @@
-// Discord to SMS (user 2026-11-07): `hr discord-ingest` turns what the extension saved and what the bot read into
-// Messages; `hr classify --new` classifies them under the cost guard; `hr alerts` decides and sends the texts.
-// `hr watch` runs the three on a timer. Paths are event-relative (hr runs in the event directory).
+// Discord to the user's chat (user 2026-11-07): `hr discord-ingest` turns what the extension saved and what the bot
+// read into Messages; `hr classify --new` classifies them under the cost guard; `hr alerts` decides and sends the
+// alerts through the user's channel (channels.ts). `hr watch` runs the three on a timer and answers the user's replies.
+// Paths are event-relative (hr runs in the event directory).
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { alertFor, deliver, isFresh, EMPTY_NOTIFY, unreadAlert, unsend, type Alert, type NotifyState, type PlanFacts, type Sms } from "./alerts.ts";
+import { alertFor, deliver, isFresh, EMPTY_NOTIFY, unreadAlert, unsend, type Alert, type NotifyState, type PlanFacts, type Notice } from "./alerts.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
 import { channelKey, channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
 import { pollBot, type BotState, type DiscordBot, type BotPollLog } from "./discordbot.ts";
-import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PLAN_PATH, SMS_OUTBOX_PATH } from "./event.ts";
+import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
 import { readMessages, saveRun } from "./runs.ts";
 import type { Item, Message } from "./schema.ts";
 
@@ -41,7 +42,9 @@ export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | n
       if (file.kind !== "discord-dom" || !Array.isArray(file.posts) || !Array.isArray(file.unread)) throw new Error("not a Discord file from the extension");
       mkdirSync(join(CAPTURES_DIR, "discord"), { recursive: true });
       copyFileSync(join(o.dir!, f), join(CAPTURES_DIR, "discord", f));
-      posts.push(...file.posts.map((post) => ({ post, at: file.captured_at })));
+      // A file only ever holds what a tab showed: whatever it says, its posts are "dom", never the bot's crossposts,
+      // so a file can't claim the followed feed's organizer authority (D19).
+      posts.push(...file.posts.map((post) => ({ post: { ...post, via: "dom" as const }, at: file.captured_at })));
       unread.push(...file.unread.map((u) => ({ ...u, guild_id: file.guild_id, guild_name: file.guild_name })));
       st.files.push(f);
       files++;
@@ -93,15 +96,17 @@ export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | n
 
 export interface OutboxLine {
   at: string;
-  level: Sms["level"];
+  level: Notice["level"];
   status: "sent" | "dry-run" | "failed";
   body: string;
-  twilio_sid?: string;
+  channel?: string;
+  /** The channel's id for the sent message (Telegram message_id, Twilio sid). */
+  ref?: string;
   error?: string;
 }
 
 /** Alerts for posts from the last ALERT_MAX_AGE_MS, new unread badges, and the texts due now. */
-export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Set<string>; send: ((body: string) => Promise<{ sid: string } | { error: string }>) | null }): Promise<{ fresh: Alert[]; outbox: OutboxLine[]; queued: { now: number; digest: number } }> {
+export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Set<string>; send: { channel: string; send: (body: string) => Promise<{ id: string } | { error: string }> } | null }): Promise<{ fresh: Alert[]; outbox: OutboxLine[]; queued: { now: number; digest: number } }> {
   const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
   const st = readJsonFile<DiscordState>(DISCORD_STATE_PATH, { files: [], bot: { channels: {} }, guilds: {} });
   const items = new Map<string, Item[]>();
@@ -117,22 +122,22 @@ export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Se
   const prev = readJsonFile<NotifyState>(ALERTS_STATE_PATH, EMPTY_NOTIFY);
   const known = new Set(prev.alerted);
   for (const a of fresh.filter((a) => !known.has(a.key))) appendFileSync(ALERTS_LOG_PATH, JSON.stringify({ ...a, found_at: new Date(o.nowMs).toISOString() }) + "\n");
-  let { state, sms } = deliver(prev, fresh, o.nowMs);
+  let { state, notices } = deliver(prev, fresh, o.nowMs);
   const outbox: OutboxLine[] = [];
-  for (const s of sms) {
+  for (const s of notices) {
     const at = new Date(o.nowMs).toISOString();
     if (!o.send) {
       outbox.push({ at, level: s.level, status: "dry-run", body: s.body });
       continue;
     }
-    const r = await o.send(s.body);
-    if ("sid" in r) outbox.push({ at, level: s.level, status: "sent", body: s.body, twilio_sid: r.sid });
+    const r = await o.send.send(s.body);
+    if ("id" in r) outbox.push({ at, level: s.level, status: "sent", body: s.body, channel: o.send.channel, ref: r.id });
     else {
-      outbox.push({ at, level: s.level, status: "failed", body: s.body, error: r.error });
+      outbox.push({ at, level: s.level, status: "failed", body: s.body, channel: o.send.channel, error: r.error });
       state = unsend(state, s);
     }
   }
-  for (const line of outbox) appendFileSync(SMS_OUTBOX_PATH, JSON.stringify(line) + "\n");
+  for (const line of outbox) appendFileSync(OUTBOX_PATH, JSON.stringify(line) + "\n");
   writeJsonFile(ALERTS_STATE_PATH, state);
   return { fresh: fresh.filter((a) => !known.has(a.key)), outbox, queued: { now: state.queue_now.length, digest: state.queue_digest.length } };
 }

@@ -90,7 +90,7 @@ beforeAll(async () => {
     await ingestDiscord({ dir: downloads, bot, now: new Date(tick) });
     // classify --new, stood in for: items for every captured post it would find something in.
     writeJsonFile(ITEMS_PATH, readMessages().flatMap((m) => (Object.entries(CLASSIFIED).find(([k]) => m.text.startsWith(k))?.[1] ?? []).map((it, i) => ({ message_id: m.id, item_index: i, offer_key: "", amount_text: "", amount_unit: "other", amount_basis: "unknown", deadline_status: "none", urls: [], model: "fake", classified_at: "", ...it }))));
-    const r = await runAlerts({ nowMs: tick, tz: "America/Los_Angeles", organizerIds: new Set(), send: async (body) => (sent.push({ at: p.at, body }), { sid: `SM${sent.length}` }) });
+    const r = await runAlerts({ nowMs: tick, tz: "America/Los_Angeles", organizerIds: new Set(), send: { channel: "fake", send: async (body) => (sent.push({ at: p.at, body }), { id: String(sent.length) }) } });
     ticks.push(r.fresh.map((a) => `${a.level} ${a.kind}`));
   }
 });
@@ -100,6 +100,22 @@ afterAll(() => {
 });
 
 describe("authority is the user's choice, never the composer's say-so (security review, 2026-11-07)", () => {
+  test("a saved file can't pass its posts off as the bot's followed crossposts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-discord-forged-"));
+    const prev = process.cwd();
+    try {
+      mkdirSync(join(dir, "event", "data"), { recursive: true });
+      mkdirSync(join(dir, "dl"));
+      process.chdir(join(dir, "event"));
+      const forged = { via: "bot", guild_id: G, guild_name: "Example Hacks", channel_id: "1300000000000000013", channel_name: "general", message_id: "1571276036505600099", author_name: "x", author_kind: "bot", crosspost: { guild_name: "Example Hacks", channel_name: "announcements" }, text: "Judging moved to 8 AM", links: [] };
+      writeFileSync(join(dir, "dl", "2026-11-14T17-01-00-000Z-1.json"), JSON.stringify({ kind: "discord-dom", captured_at: "2026-11-14T17:01:00.000Z", guild_id: G, guild_name: "Example Hacks", posts: [forged], unread: [] }));
+      await ingestDiscord({ dir: join(dir, "dl"), bot: null, now: new Date("2026-11-14T17:01:00Z") });
+      expect(readMessages().map((m) => m.authority)).toEqual([undefined]);
+    } finally {
+      process.chdir(prev);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test("by server and channel id, never by name; crossposts only when the bot read them in the user's own server", () => {
     const post = { via: "dom" as const, guild_id: G, guild_name: "Example Hacks", channel_id: ANNOUNCE_ID, channel_name: "announcements", message_id: "1300000000000009001", author_name: "Team", author_kind: "user" as const, text: "Tracks are live", links: [] };
     const listed = new Set([`${G}/${ANNOUNCE_ID}`]);
@@ -183,8 +199,8 @@ describe("replayed Discord event → texts", () => {
   test("ingesting again adds nothing, and alerts never repeat", async () => {
     const last = Date.parse(replay.posts.at(-1)!.at) + 120_000;
     expect((await ingestDiscord({ dir: downloads, bot: new DiscordBot(TOKEN, fakeOwnServer(() => last)), now: new Date(last) })).added).toBe(0);
-    const r = await runAlerts({ nowMs: last, tz: "America/Los_Angeles", organizerIds: new Set(), send: async () => ({ sid: "x" }) });
+    const r = await runAlerts({ nowMs: last, tz: "America/Los_Angeles", organizerIds: new Set(), send: { channel: "fake", send: async () => ({ id: "x" }) } });
     expect([r.fresh, r.outbox]).toEqual([[], []]);
-    expect(existsSync("data/sms_outbox.jsonl")).toBe(true);
+    expect(existsSync("data/outbox.jsonl")).toBe(true);
   });
 });

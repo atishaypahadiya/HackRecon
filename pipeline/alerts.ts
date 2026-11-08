@@ -1,6 +1,6 @@
-// SMS alerts (user 2026-11-07): when something relevant lands (tracks or judging posted, a deadline or a room or time
-// change, a workshop matching the user's stack, a sponsor offer), a text with the item, why it matters to this
-// project, and the source. Important ones go out at once, rate-limited; the rest wait for a digest.
+// Alerts (user 2026-11-07): when something relevant lands (tracks or judging posted, a deadline or a room or time
+// change, a workshop matching the user's stack, a sponsor offer), a message with the item, why it matters to this
+// project, and the source, through the user's channel (channels.ts: Telegram for Nov 14). Important ones go out at once, rate-limited; the rest wait for a digest.
 // Every post goes through classify --new first (offers, deadlines and workshops come from its items); tracks,
 // judging and room changes are read from the post itself, and only where organizers post (D19: Message.authority).
 // Nothing here is a model call. The user's Plan (data/plan.json, saved by `hr plan`) says what matters.
@@ -140,7 +140,7 @@ export const NOW_MAX_ITEMS = 3;
 export const DIGEST_EVERY_MS = 2 * 3600_000;
 export const DIGEST_MAX_ITEMS = 6;
 /** Twilio takes up to 1,600 characters; texts stay well under. */
-export const SMS_MAX_CHARS = 1200;
+export const MESSAGE_MAX_CHARS = 1200;
 
 export interface NotifyState {
   alerted: string[];
@@ -150,7 +150,7 @@ export interface NotifyState {
 }
 export const EMPTY_NOTIFY: NotifyState = { alerted: [], queue_now: [], queue_digest: [], sent: [] };
 
-export interface Sms {
+export interface Notice {
   level: "now" | "digest";
   body: string;
   keys: string[];
@@ -159,13 +159,13 @@ export interface Sms {
 }
 
 function cap(body: string): string {
-  return body.length <= SMS_MAX_CHARS ? body : `${body.slice(0, SMS_MAX_CHARS - 1).trimEnd()}…`;
+  return body.length <= MESSAGE_MAX_CHARS ? body : `${body.slice(0, MESSAGE_MAX_CHARS - 1).trimEnd()}…`;
 }
 
 export function nowBody(alerts: Alert[], more: number): string {
   const one = (a: Alert) => [KIND_LABEL[a.kind], a.what, `Why: ${a.why}`, a.source, a.link].join("\n");
   const head = alerts.length === 1 ? `HackRecon: ${one(alerts[0]!)}` : `HackRecon, ${alerts.length} updates:\n\n${alerts.map((a, i) => `${i + 1}. ${one(a)}`).join("\n\n")}`;
-  return cap(head + (more ? `\n\n+${more} more in the next text` : ""));
+  return cap(head + (more ? `\n\n+${more} more in the next message` : ""));
 }
 
 export function digestBody(alerts: Alert[], more: number): string {
@@ -174,7 +174,7 @@ export function digestBody(alerts: Alert[], more: number): string {
 }
 
 /** New alerts in, texts out. Pure: the caller sends them and saves the state. */
-export function deliver(prev: NotifyState, fresh: Alert[], nowMs: number): { state: NotifyState; sms: Sms[] } {
+export function deliver(prev: NotifyState, fresh: Alert[], nowMs: number): { state: NotifyState; notices: Notice[] } {
   const now = new Date(nowMs).toISOString();
   const alerted = new Set(prev.alerted);
   const state: NotifyState = { alerted: [...prev.alerted], queue_now: [...prev.queue_now], queue_digest: [...prev.queue_digest], sent: [...prev.sent] };
@@ -184,25 +184,25 @@ export function deliver(prev: NotifyState, fresh: Alert[], nowMs: number): { sta
     state.alerted.push(a.key);
     (a.level === "now" ? state.queue_now : state.queue_digest).push({ ...a, queued_at: now });
   }
-  const sms: Sms[] = [];
+  const notices: Notice[] = [];
   const nows = state.sent.filter((s) => s.level === "now").map((s) => Date.parse(s.at));
   const lastNow = Math.max(-Infinity, ...nows);
   if (state.queue_now.length && nowMs - lastNow >= NOW_MIN_GAP_MS && nows.filter((t) => nowMs - t < 3600_000).length < NOW_MAX_PER_HOUR) {
     const take = state.queue_now.splice(0, NOW_MAX_ITEMS);
-    sms.push({ level: "now", body: nowBody(take, state.queue_now.length), keys: take.map((a) => a.key), alerts: take });
+    notices.push({ level: "now", body: nowBody(take, state.queue_now.length), keys: take.map((a) => a.key), alerts: take });
   }
   const lastDigest = Math.max(-Infinity, ...state.sent.filter((s) => s.level === "digest").map((s) => Date.parse(s.at)));
   const since = Math.max(lastDigest, Math.min(...state.queue_digest.map((a) => Date.parse(a.queued_at))));
   if (state.queue_digest.length && nowMs - since >= DIGEST_EVERY_MS) {
     const take = state.queue_digest.splice(0);
-    sms.push({ level: "digest", body: digestBody(take.slice(0, DIGEST_MAX_ITEMS), Math.max(0, take.length - DIGEST_MAX_ITEMS)), keys: take.map((a) => a.key), alerts: take });
+    notices.push({ level: "digest", body: digestBody(take.slice(0, DIGEST_MAX_ITEMS), Math.max(0, take.length - DIGEST_MAX_ITEMS)), keys: take.map((a) => a.key), alerts: take });
   }
-  for (const s of sms) state.sent.push({ at: now, level: s.level, keys: s.keys });
-  return { state, sms };
+  for (const s of notices) state.sent.push({ at: now, level: s.level, keys: s.keys });
+  return { state, notices };
 }
 
 /** A text that didn't go out: its alerts back at the front of their queue, its send forgotten. */
-export function unsend(state: NotifyState, s: Sms): NotifyState {
+export function unsend(state: NotifyState, s: Notice): NotifyState {
   const key = s.keys.join(",");
   const i = state.sent.map((x) => x.level === s.level && x.keys.join(",") === key).lastIndexOf(true);
   const sent = i < 0 ? state.sent : [...state.sent.slice(0, i), ...state.sent.slice(i + 1)];

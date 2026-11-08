@@ -1,4 +1,4 @@
-# Discord: the HackRecon bot, your server, and SMS
+# Discord and Telegram: the HackRecon bot, your server, and your chat
 
 HackRecon reads an event's Discord two ways, both read-only:
 
@@ -10,7 +10,8 @@ HackRecon reads an event's Discord two ways, both read-only:
   the bot reads those copies with its own bot token. Announcements then get full text and Plan matching with no tab
   open.
 
-Both feed the same pipeline: `classify --new` under the cost guard, then the SMS rules.
+Both feed the same pipeline: `classify --new` under the cost guard, then the alert rules, which send to your
+Telegram chat; you can also ask questions there (section 4).
 
 ## 1. Your private server
 
@@ -40,7 +41,9 @@ yourself is skipped.
 
    That's permissions integer **66560**. The generated URL looks like
    `https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot&permissions=66560`.
-5. Open the URL, pick your `HackRecon` server, and click **Authorize**.
+5. Open the URL, pick your `HackRecon` server, and click **Continue**. The screen must list exactly two permissions,
+   **View Channels** (some screens say Read Messages/View Channels) and **Read Message History**, and nothing else.
+   If it shows any other, go back and untick it. Click **Authorize**.
 
 What the bot can do: see your server's channels and read their message history. What it can't: send messages,
 react, edit, delete, manage anything, or see any server you didn't add it to. HackRecon's code enforces the same
@@ -69,31 +72,42 @@ suggests a read-only, announcement-named channel, with the entry to add if only 
 "discord_authority_channels": ["<server id>/<channel id>"]
 ```
 
-## 4. Twilio
+## 4. Telegram (your alerts and your questions)
 
-1. In the [Twilio Console](https://console.twilio.com), copy the **Account SID** and **Auth Token**, and get a phone
-   number that can send SMS.
-2. Add to `.env`:
+HackRecon sends alerts to a Telegram bot chat that only you use, and answers what you type there. No carrier
+registration is involved: it's Telegram's own Bot API.
 
-   ```
-   TWILIO_ACCOUNT_SID=AC...
-   TWILIO_AUTH_TOKEN=...
-   TWILIO_FROM=+1...        # your Twilio number
-   HACKRECON_SMS_TO=+1...   # your phone
-   ```
+1. In Telegram, open a chat with **@BotFather** (the one with the blue check) and send `/newbot`.
+2. Give it a display name (`HackRecon`), then a username that ends in `bot` and isn't easy to guess
+   (e.g. `hackrecon_<something>_bot`). BotFather replies with the token.
+3. Add the token to `.env`: `TELEGRAM_BOT_TOKEN=123456789:AA...`. If it ever leaks, send BotFather `/revoke`.
+4. Send BotFather `/setjoingroups`, pick your bot, choose **Disable**, so nobody can add it to a group.
+5. Open your bot (the `t.me/<username>` link BotFather gave) and tap **Start**.
+6. Run `bun run hr telegram-chat-id`. It prints your chat ID; add it to `.env`: `TELEGRAM_CHAT_ID=...`.
 
-A trial account only texts numbers you've verified in the console, and adds a trial notice to each text. Sending
-from a US number also needs Twilio's US messaging registration for that number; the console shows its status.
+Anyone can find a bot and message it; HackRecon only reads and answers your own chat (`TELEGRAM_CHAT_ID`) and drops
+everything else unread. It calls four Bot API methods and nothing else (`pipeline/telegram.test.ts`).
+
+Answers: each question is one `claude-haiku-5-5` call over your Plan, the schedule, alerts so far, and organizer and
+classified posts. Two spend limits, and the chat tells you when one is reached: the cost guard's $1 per watch
+session, and $3 a day per event (set `chat_daily_usd` in the event's `config/event.json`; the day's total is kept in
+`data/chat_spend.json`, so restarting watch doesn't reset it). It also answers at most 20 an hour. Whether a post
+counts as from the organizers is decided in code from where it came from (the followed feed, or a channel you listed
+by id), never from what the post says. `bun run hr ask "..."` gives the same answer in the terminal.
+
+The channel is pluggable (`HACKRECON_CHANNEL` in `.env`, default `telegram`): `sms` uses Twilio one-way (the four
+`TWILIO_*`/`HACKRECON_SMS_TO` keys, and US carrier registration); iMessage and WhatsApp aren't built yet.
 
 ## 5. Run it
 
 ```
 bun run hr plan --idea "..." --stack "Modal: GPU inference, Claude API"   # saves data/plan.json for the "why"
-bun run hr watch --every 2m --dry-run    # texts go to data/sms_outbox.jsonl only
-bun run hr watch --every 2m              # sends them
+bun run hr watch --every 2m --dry-run    # alerts go to data/outbox.jsonl only; replies aren't read
+bun run hr watch --every 2m              # sends them, and answers your messages
 ```
 
 Each tick: `discord-ingest` (your tabs' files from `~/Downloads/hackrecon/discord/`, and the bot's new crossposts),
 `classify --new` on new posts (a run over $1 is refused and the posts wait; watch never passes `--yes`), then
-`alerts`. Important texts go out at once, at most one per 10 minutes and four an hour; the rest come in a digest
-every two hours. `bun run hr alerts --list` shows every alert found.
+`alerts`. Important alerts go out at once, at most one per 10 minutes and four an hour; the rest come in a digest
+every two hours. Between ticks, watch reads your messages and answers them. `bun run hr alerts --list` shows every
+alert found; `data/chat.jsonl` keeps your questions and the answers.
