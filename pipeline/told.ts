@@ -66,8 +66,13 @@ export function quoteInMessage(quote: unknown, message: string): quote is string
 /** The message names what the write changes: each item added or removed, a clear in so many words, the credit's
  *  sponsor. A question that only mentions Modal can't add Modal unless it says to. */
 export function messageNames(message: string, names: string[]): boolean {
-  const m = norm(message);
-  return names.every((n) => norm(n).length > 0 && m.includes(norm(n)));
+  // Whole words, in order: "Exa" isn't named by "example", nor "R" by "run".
+  const words = (s: string) => norm(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const m = words(message);
+  return names.every((n) => {
+    const w = words(n);
+    return w.length > 0 && m.some((_, i) => w.every((x, k) => m[i + k] === x));
+  });
 }
 const CLEAR_WORDS = /\b(clear|empty|wipe|reset|remove (everything|all))\b/i;
 
