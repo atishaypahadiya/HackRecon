@@ -146,8 +146,14 @@ Slice 1 built (2026-11-08):
   - The stack shows a "Told to Donna: Modal" line under the summary, and the offer reads "claimed, told to Donna".
   - No console errors, and no horizontal scroll at 390 px.
 - **Not yet:**
-  - `hr board` needs Slack-grouped offers to start, so it doesn't open on Iterate until Slack or Discord posts are grouped. Its per-hacker credits list is checked only through `/plan/meta`.
   - The Plan re-run a stack write triggers is under the Plan's own $1 guard. The chat budget ($3 a day) doesn't include it.
+- **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
+  - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
+  - On a fresh copy of Iterate with the board open:
+    - Step 1: "add Modal to my stack for the training runs" → "Stack: added Modal (training runs). Tracks: Best Use of Modal possible → likely; gaps 0, booth questions 2." The open board showed "· Modal" and "Told to Donna: Modal, Sun 12:55 PM", and moved Best Use of Modal to likely, 46 s after the reply.
+    - Step 2: "I claimed the Modal credits" → "Marked claimed: $250 in Modal credits (Modal). 1 of 4 per-hacker credits claimed." The board ticked "$250 in Modal credits", labeled "told to Donna", 49 s after the reply.
+    - The server logged no errors.
+  - The board on the real Iterate serves the empty stack and the four credits, none claimed.
 
 ## The brief (user, 2026-10-28, verbatim)
 
