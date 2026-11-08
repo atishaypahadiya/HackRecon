@@ -339,3 +339,8 @@ export function boardData(o: {
     basis: o.basis,
   };
 }
+
+/** The board's own Host header: 127.0.0.1 or localhost on its port. Anything else is another site's name. */
+export function localHost(host: string | null, port: number | undefined): boolean {
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}`;
+}
