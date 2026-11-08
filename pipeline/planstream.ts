@@ -14,7 +14,7 @@ export type PlanSectionName = "tracks" | "booths" | "gaps" | "credits" | "sessio
 const CHAIN = ["tracks", "booths", "gaps", "credits", "sessions", "people"] as const;
 
 export type PlanEvent =
-  | { section: "tracks"; ms: number; from: "cache" | "model"; tracks: PlanTrack[]; usage: Usage | null }
+  | { section: "tracks"; ms: number; from: "cache" | "model" | "none"; tracks: PlanTrack[]; usage: Usage | null }
   | { section: "booths"; ms: number; booths: BoothBlock[] }
   | { section: "gaps"; ms: number; from: GapResult["from"]; gaps: GapResult["gaps"]; checked: number; facts: GapResult["facts"]; usage: Usage | null; repo?: { url: string; commit: string } }
   | { section: "credits"; ms: number; sponsors: JoinSponsor[]; credits: PlanCredit[]; dropped: number }
@@ -87,7 +87,7 @@ export async function* planStream(s: PlanSteps): AsyncGenerator<PlanEvent> {
       for (const section of owed) emit({ section, ms: ms(), error: r.error });
       return;
     }
-    emit({ section: "tracks", ms: ms(), from: r.from as "cache" | "model", tracks: r.items, usage: r.usage });
+    emit({ section: "tracks", ms: ms(), from: r.from, tracks: r.items, usage: r.usage });
     emit({ section: "booths", ms: ms(), booths: s.booths(r.items) });
     const repo = repoP ? await repoP : null;
     if (repo && "error" in repo) s.log?.(`plan: ${repo.error}; checking gaps against the description and stack only`);
