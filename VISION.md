@@ -62,7 +62,7 @@ Every door talks to the same brain. No door has logic of its own.
 - **Spending is capped and announced.** Any run estimated over $1 is refused without `--yes`. Chat answers stop at
   $1 per watch session and $3 per event day, and Donna says so in the chat.
 - **Open:** consent at scale. If Donna serves many hackers at one event (for example through MLH), what may Donna hold
-  about people who never used her? This is undecided, and it gates any multi-user version.
+  about people who never used Donna? This is undecided, and it gates any multi-user version.
 
 ## Profile sources
 
