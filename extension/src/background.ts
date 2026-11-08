@@ -7,6 +7,8 @@ import { pageFileName } from "../../pipeline/schema.ts";
 import { refuseLoad } from "../../pipeline/urlsafety.ts";
 import { pull, type PullState } from "./apipull.ts";
 import { DEVPOST_EVENT_URL } from "./autopages.ts";
+import type { DiscordDomFile } from "../../pipeline/discord.ts";
+import { fromDiscordTab, locate, type ChannelView, type SidebarChannel } from "./discord-dom.ts";
 import { fromSlackTab, isKnown, pullDue, remember, type KnownWorkspace, type SlackSession } from "./handoff.ts";
 import { ApiError, SlackApi, WORKSPACE_ORIGIN } from "./slackapi.ts";
 import type { SyncConfig } from "./thread.ts";
@@ -102,8 +104,11 @@ const PULL_STATUS_FILE = "hackrecon/pull-status.json";
 /** Every hand-off from a Slack tab, overwritten each time: when, which team, and what the worker did. No token. */
 const HANDOFF_STATUS_FILE = "hackrecon/handoff-status.json";
 
+/** What a Discord tab rendered (discord.ts): Downloads/hackrecon/discord/<stamp>-<channel>.json, for hr discord-ingest. */
+const DISCORD_FILE = /^hackrecon\/discord\/[0-9TZ-]+-\d+\.json$/;
+
 async function download(path: string, text: string): Promise<string | null> {
-  if ((path !== PULL_STATUS_FILE && path !== HANDOFF_STATUS_FILE && !SYNC_FILE.test(path)) || path.includes("..")) return `${path}: refused: not a sync file`;
+  if ((path !== PULL_STATUS_FILE && path !== HANDOFF_STATUS_FILE && !SYNC_FILE.test(path) && !DISCORD_FILE.test(path)) || path.includes("..")) return `${path}: refused: not a sync file`;
   for (const part of splitParts(path, new TextEncoder().encode(text))) {
     try {
       await chrome.downloads.download({ url: `data:application/json;base64,${base64(part.bytes)}`, filename: part.name, conflictAction: "overwrite", saveAs: false });
@@ -202,6 +207,22 @@ async function takeSession(s: SlackSession): Promise<void> {
   await runPull("handoff");
 }
 
+/** Discord (user 2026-11-07): a tab's new posts, and unread badges on discovered channels no open tab shows, each
+ *  badge once per time it lights up. Saved only; nothing is sent anywhere but Downloads. */
+async function saveDiscord(view: ChannelView, unread: SidebarChannel[]): Promise<void> {
+  const open = new Set((await chrome.tabs.query({ url: "https://discord.com/channels/*" })).map((t) => locate(new URL(t.url ?? "https://discord.com/").pathname)?.channel_id));
+  const lit = unread.filter((c) => !open.has(c.channel_id));
+  const { discord_unread = [] } = (await chrome.storage.session.get("discord_unread")) as { discord_unread?: string[] };
+  const fresh = lit.filter((c) => !discord_unread.includes(`${view.guild_id}/${c.channel_id}`));
+  const others = discord_unread.filter((k) => !k.startsWith(`${view.guild_id}/`));
+  await chrome.storage.session.set({ discord_unread: [...others, ...lit.map((c) => `${view.guild_id}/${c.channel_id}`)] });
+  if (!view.posts.length && !fresh.length) return;
+  const now = new Date().toISOString();
+  const file: DiscordDomFile = { kind: "discord-dom", captured_at: now, guild_id: view.guild_id, guild_name: view.guild_name, posts: view.posts, unread: fresh.map((c) => ({ channel_id: c.channel_id, channel_name: c.channel_name, role: c.role, since: now })) };
+  // Tokens someone pasted into a post are scrubbed, as everywhere else.
+  await download(`hackrecon/discord/${now.replace(/[:.]/g, "-")}-${view.channel_id}.json`, scrubTokens(JSON.stringify(file)).html);
+}
+
 const knownWorkspaces = async () => (((await chrome.storage.local.get("known_workspaces")).known_workspaces as KnownWorkspace[] | undefined) ?? []);
 
 /** Content scripts run only on page load: after an install, update or reload, hand-off is injected into Slack tabs
@@ -213,7 +234,20 @@ async function injectHandoff(): Promise<void> {
 chrome.runtime.onInstalled.addListener(() => void injectHandoff());
 chrome.runtime.onStartup.addListener(() => void injectHandoff());
 
-chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string; slack?: SlackSession; team?: string; origin?: string }, sender, reply) => {
+chrome.runtime.onMessage.addListener((msg: { type?: string; urls?: string[]; filename?: string; url?: string; slack?: SlackSession; team?: string; origin?: string; view?: ChannelView; unread?: SidebarChannel[] }, sender, reply) => {
+  if (msg.type === "discord-config" || msg.type === "discord-dom") {
+    if (!fromDiscordTab(sender, chrome.runtime.id)) {
+      reply({ error: "refused" });
+      return;
+    }
+    if (msg.type === "discord-config")
+      fetch(chrome.runtime.getURL("dist/sync-config.json"))
+        .then((r) => r.json() as Promise<SyncConfig>)
+        .then((c) => reply({ sponsors: (c.sponsors ?? []).flatMap((s) => s.names) }))
+        .catch(() => reply({ sponsors: [] }));
+    else void saveDiscord(msg.view!, msg.unread ?? []).then(() => reply({}));
+    return true;
+  }
   if (msg.type === "slack-known" || msg.type === "slack-session") {
     // Only our content script in a Slack client tab, and only for the team that tab shows.
     const s = msg.type === "slack-session" ? msg.slack : { team: msg.team ?? "", origin: msg.origin ?? "", token: "", workspace: "" };

@@ -36,6 +36,9 @@ export interface Message {
    *  `text`. The label is the mentioned person's own display name, so it never counts as anyone's words. */
   mentions?: { id: string; label: string }[];
   permalink: string;
+  /** Organizer authority from where it was posted, not who (D19; Discord only), and only where the user chose: a
+   *  crosspost from an announcement channel they followed, or a channel in event.json authority_channels. */
+  authority?: true;
   /** A parent post's rendered "N replies" (Slack counts sent-to-channel replies too). */
   reply_count?: number;
   /** The newest reply's ts, from the reply bar. */
@@ -98,7 +101,7 @@ export interface Run {
   started_at: string;
   channels: string[];
   message_count: number;
-  source: "extension";
+  source: "extension" | "discord";
 }
 
 /** api_end: the API pull (user 2026-11-07) read to the last page Slack returned. */

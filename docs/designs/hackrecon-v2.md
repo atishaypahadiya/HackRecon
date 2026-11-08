@@ -58,6 +58,37 @@ Predecessor: `docs/designs/hackrecon-demo-scope.md` (v1, decisions D1–D26). It
 
 - **Background API pull, live (2026-11-07).** Full pull, resumed after the keep-alive fix: 18 min 13 s, 387 calls, 0 retries, 0 channel errors; `hr compare-api` 54/54 channels, posts 1177/1177, replies 585/585, the locked 25 494/494, and every row only in the pull is newer than the export. Quiet incremental pull: 255 s, 72 calls (three runs alike). Session hand-off: after a reload with no click, the 14:21 timer pull ran with the session the Slack tab handed back.
 
+## Discord read + text push (user, 2026-11-07, for Nov 14)
+
+**Goal (user):** read the event's Discord from the user's own browser, run new posts through `classify --new` under the cost guard, match them against the user's Plan, and text the important ones through Twilio with the item, why it matters to this project, and the source. Important texts rate-limited; the rest batched.
+
+**Read scope (user's choice: open tabs and unread badges, plus announcement following):**
+- **Extension, DOM only** (`extension/src/discord-dom.ts`, `discord.ts`). It reads every Discord channel open in a tab, as rendered, and the sidebar's unread badges on discovered channels no tab shows ("new post in #sponsor-modal"). It never navigates, clicks, scrolls or types, and uses no user token and no Discord API (Discord bans self-bots). A source-scan test enforces this. Channels are discovered by name (announce/news/updates/schedule; sponsor/partner/booth/cohost, or a sponsors.json name).
+- **HackRecon bot** (`pipeline/discordbot.ts`). A bot the user creates, in a private server they own. The user follows the event's announcement channel into it once, and the bot reads the crossposts through the official API with its own token. It sends GET requests only, to 3 allowlisted routes, paced at one call a second with backoff on 429, with a per-channel `after` cursor, and it keeps crossposts only. Permissions: View Channels + Read Message History (66560), plus the Message Content intent. Setup: `docs/discord-bot.md`.
+- **Authority (D19).** Organizer authority comes only from where a post was made, and only where the user chose: a crosspost the bot read in their own server (it gets there only through a Follow they made), or a channel listed by server and channel id in `event.json` `discord_authority_channels` (`Message.authority`). Ids, not names: another server's `#announcements` never counts, and Slack's `authority_channels` names never apply to Discord. Tracks, judging and room-change alerts need it. A read-only composer is not proof (security review, 2026-11-07): servers often lock every channel until a member verifies, so a read-only, announcement-named channel is only proposed for the list, and the read-only check looks at the composer alone, never at text inside a post.
+
+**Alert rules** (`pipeline/alerts.ts`, no model calls). One alert per post, the most urgent match:
+1. Room or time change (organizer post).
+2. Deadline (a classify deadline item, or organizer "due" wording).
+3. Tracks posted (organizer post).
+4. Judging info (organizer post).
+5. Workshop (classify item).
+6. Sponsor offer (credit, prize, job, or a sponsor's "other"; the event's own "other", like dinner, is no offer).
+
+Changes, organizer deadlines, tracks and judging go out at once. Workshops and offers go out at once only when they name a stack item or a Plan track's sponsor or product. Anything else, and jobs, wait for the digest. An unread badge on an announcement channel goes out at once; one on a sponsor channel waits for the digest. A post alerts only while fresh: up to 6 hours old, and not more than 5 minutes ahead of the clock. Delivery: at most one immediate text per 10 minutes and four an hour, up to 3 items each; a digest every 2 hours. A failed send goes back in its queue. The "why" comes from `data/plan.json`, which `hr plan` and the board now save.
+
+**Verified (2026-11-07), on a fake Discord event with replayed posts** (`pipeline/testdata/discord-replay.json`, `extension/testdata/discord-channel.html`):
+- **DOM reader:** each post is read exactly once as it lands. Follow-ups take the author above them; crossposts name their source; sidebar roles and badges are read.
+- **Bot:** against a fake API, a poll is 3 calls and keeps the 2 crossposts, skipping the user's own line. The next poll asks only after the cursor.
+- **End to end, with classify stood in for:** 9 posts give 6 texts, at the right times and with the right text.
+- **Live replay with the real `classify --new`:** 9 Haiku calls, estimated at most $0.04, printed $0.00 at list price. It produced the workshop's start, the credit, the job and Sunday 9:00 AM as the deadline. Stepping the clock through the day sent tracks+judging (09:01), the workshop (10:16), "$50 in Modal credits" (10:41), the room change and the job digest (13:31), and the deadline "in 17 h" (16:01); dinner and chatter sent nothing.
+- **Bugs the live run caught, fixed and tested:** a post dated after "now" alerted early; "in credits" was added twice; dinner counted as an offer.
+
+**Not verified yet:**
+- The selectors on a real Discord server (registration pending).
+- The bot against Discord's API.
+- A real Twilio send.
+
 ## The brief (user, 2026-10-28, verbatim)
 
 > v1 is done (tag it v1). Starting v2: HackRecon becomes the hacker's operating system for a hackathon, with five views: Build (tracks + track stacker), Claim (v1 offers), Now (schedule + live changes), Meet (reps + booths + openers), Ship (submission checklist). Key architecture change: multi-source. Public pages are canon (Devpost: tracks, prizes, judging criteria, submission rules; event site: schedule), Slack is the live layer (changes, credits, reps, fixes). Merge rule: page is canon, Slack updates override with both shown. Also add thread capture to the extension. Per-event config so it runs at the next hackathon. Build order: sources → entities + Opus-judged eval → merge → views (Build, Ship, Now, Meet) → generalize.
