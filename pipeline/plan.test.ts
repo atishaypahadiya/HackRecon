@@ -100,6 +100,11 @@ describe("Plan tracks", () => {
     expect(capLikely(likely, card("[Acme] Best Use", "stated", ["Acme"]), { idea: "x", stack: null })).toEqual({ fit: "likely", capped: false });
     expect(capLikely({ ...likely, fit: "possible" }, claude, { idea: "x", stack: null })).toEqual({ fit: "possible", capped: false });
   });
+  test("no tracks announced yet: an empty ranking from no model call, never a call to rank nothing (Iterate, 2026-11-08)", async () => {
+    const never = { messages: { create: () => Promise.reject(new Error("called")) } } as never;
+    const r = await planTracks(never, { idea: "AI research labs that compete", stack: null }, [], e, {});
+    expect(r).toMatchObject({ items: [], from: "none", usage: null });
+  });
   test("an unranked idea without an API key is an error, never an empty plan", async () => {
     expect(await planTracks(null, { idea: "new", stack: null }, ents, e, {})).toEqual({ error: "no API key, and this idea hasn't been ranked before" });
     expect(parseStack(" , ")).toBeNull();
