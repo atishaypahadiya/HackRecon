@@ -7,7 +7,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { permalinkTs } from "./board.ts";
 import type { EventConfig } from "./classify.ts";
-import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, productMentioned, trackCards, type Evidence, type Ranked, type SponsorAliases, type TrackCard } from "./fit.ts";
+import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, fitRequest, fitSystemPrompt, isEventLevel, productMentioned, trackCards, type Evidence, type Ranked, type SponsorAliases, type TrackCard } from "./fit.ts";
 import { callChecked } from "./model.ts";
 import type { Gap } from "./gaps.ts";
 import type { Entity } from "./schema.ts";
@@ -203,8 +203,34 @@ export function boothBlocks(questions: BoothQuestion[]): BoothBlock[] {
   });
 }
 
+/** The event's own track (sponsor "event"): every team is in it, so it's never ranked, but its description states
+ *  what the event rewards (user 2026-11-08). Verbatim from canon. */
+export interface OverallTrack {
+  track_id: string;
+  name: string;
+  descriptions: string[];
+  /** Prize award texts on this track, verbatim. */
+  prizes: string[];
+  source_url: string;
+}
+
+export function overallTracks(entities: Entity[], e: EventConfig): OverallTrack[] {
+  const str = (v: unknown) => (typeof v === "string" && v ? [v] : []);
+  return entities
+    .filter((t) => t.kind === "track" && isEventLevel(t, e))
+    .map((t) => ({
+      track_id: t.id,
+      name: t.name.value ?? "",
+      descriptions: Object.entries(t.fields).filter(([k]) => /^descriptions?(\[|$)/.test(k)).flatMap(([, v]) => str(v.value)),
+      prizes: entities.filter((p) => p.kind === "prize" && p.fields.track_id?.value === t.id).flatMap((p) => str(p.fields.award_text?.value)),
+      source_url: t.name.source.url,
+    }));
+}
+
 export interface PlanSection<T> {
   items: T[];
+  /** The unranked event-level tracks, shown beside the ranking. */
+  overall?: OverallTrack[];
   /** "cache" when the same idea and stack were ranked before (D4: cached results show instantly); "none" when the
    *  event has no tracks yet (announced later), so nothing was ranked and no model was called. */
   from: "cache" | "model" | "none";
@@ -277,7 +303,8 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   const t0 = now();
   const cards = trackCards(entities, e, aliases);
   // Tracks not announced yet (Iterate, 2026-11-08): an empty ranking, saved as such, and no model call.
-  if (!cards.length) return { items: [], from: "none", ms: Math.round(now() - t0), usage: null };
+  const overall = overallTracks(entities, e);
+  if (!cards.length) return { items: [], overall, from: "none", ms: Math.round(now() - t0), usage: null };
   const system = fitSystemPrompt(e, cards);
   const request = fitRequest(input.idea, stackForRanker(input.stack));
   const hash = fitHash(system, request);
@@ -303,7 +330,7 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
     return { track_id: r.track_id, steps: entrySteps(entities, [r.track_id]), name: t.name.value ?? "", sponsor: t.sponsor, fit, capped, product_names, reason: r.reason, evidence, label: evidence === "stated" ? null : NOT_STATED, quote: r.quote, source_url: t.name.source.url };
   });
   items.sort((a, b) => (a.fit === b.fit ? 0 : a.fit === "likely" ? -1 : 1));
-  return { items, from, ms: Math.round(now() - t0), usage };
+  return { items, overall, from, ms: Math.round(now() - t0), usage };
 }
 
 // ---- the board's Plan tab (P1): request validation, the before-you-type summary, a track's drawer ----

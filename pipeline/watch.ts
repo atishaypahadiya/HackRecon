@@ -4,13 +4,13 @@
 // Paths are event-relative (hr runs in the event directory).
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { alertFor, deliver, isFresh, EMPTY_NOTIFY, unreadAlert, unsend, type Alert, type NotifyState, type PlanFacts, type Notice } from "./alerts.ts";
+import { alertFor, deliver, isFresh, EMPTY_NOTIFY, pageChangeAlert, unreadAlert, unsend, type Alert, type NotifyState, type TrackChange, type PlanFacts, type Notice } from "./alerts.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
 import { channelKey, channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
 import { pollBot, type BotState, type DiscordBot, type BotPollLog } from "./discordbot.ts";
-import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
+import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PAGE_CHANGES_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
 import { readMessages, saveRun } from "./runs.ts";
-import type { Item, Message } from "./schema.ts";
+import type { Entity, Item, Message } from "./schema.ts";
 
 export interface DiscordState {
   files: string[];
@@ -119,6 +119,7 @@ export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Se
     if (a) fresh.push(a);
   }
   for (const u of readJsonFile<UnreadRecord[]>(DISCORD_UNREAD_PATH, []).filter((u) => recent(u.since))) fresh.push(unreadAlert(u));
+  for (const c of readJsonFile<TrackChange[]>(PAGE_CHANGES_PATH, []).filter((c) => recent(c.at))) fresh.push(pageChangeAlert(c));
   const prev = readJsonFile<NotifyState>(ALERTS_STATE_PATH, EMPTY_NOTIFY);
   const known = new Set(prev.alerted);
   for (const a of fresh.filter((a) => !known.has(a.key))) appendFileSync(ALERTS_LOG_PATH, JSON.stringify({ ...a, found_at: new Date(o.nowMs).toISOString() }) + "\n");
@@ -140,4 +141,20 @@ export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Se
   for (const line of outbox) appendFileSync(OUTBOX_PATH, JSON.stringify(line) + "\n");
   writeJsonFile(ALERTS_STATE_PATH, state);
   return { fresh: fresh.filter((a) => !known.has(a.key)), outbox, queued: { now: state.queue_now.length, digest: state.queue_digest.length } };
+}
+
+/** What a canon re-read changed about tracks, per page, for pageChangeAlert: tracks whose id wasn't in canon before,
+ *  and canon_notes newly gone from their page. A page with neither isn't listed. */
+export function canonTrackDiff(
+  before: { url: string; entities: Entity[]; notes_gone?: { quote: string }[] }[],
+  after: { url: string; entities: Entity[]; notes_gone?: { quote: string }[] }[],
+  at: string,
+): (Omit<TrackChange, "tracks"> & { tracks: { id: string; name: string; sponsor: string }[] })[] {
+  const had = new Set(before.flatMap((p) => p.entities.filter((e) => e.kind === "track").map((e) => e.id)));
+  const wasGone = new Set(before.flatMap((p) => (p.notes_gone ?? []).map((n) => n.quote)));
+  return after.flatMap((p) => {
+    const tracks = p.entities.filter((e) => e.kind === "track" && !had.has(e.id)).map((e) => ({ id: e.id, name: e.name.value ?? "", sponsor: e.sponsor }));
+    const notes_gone = (p.notes_gone ?? []).map((n) => n.quote).filter((q) => !wasGone.has(q));
+    return tracks.length || notes_gone.length ? [{ at, url: p.url, tracks, notes_gone }] : [];
+  });
 }

@@ -361,6 +361,8 @@ export interface Entity {
   fields: Record<string, FieldValue<unknown>>;
   history: AppliedChange[];
   origin: "page" | "slack";
+  /** Hand-noted in event.json canon_notes (canon.ts applyNotes), not read by the model; its quote is still checked. */
+  noted?: true;
 }
 
 /** The file a snapshot downloads as: <host>-<path>.page.json, e.g. cal-hacks-13-0.devpost.com-rules.page.json. */
