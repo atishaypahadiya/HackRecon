@@ -1,4 +1,4 @@
-// The chat agent (user 2026-11-07): the user's replies in their channel (Telegram) are questions, answered from their
+// Donna, the chat agent (user 2026-11-07; named 2026-11-08, the repo and CLI stay hackrecon): the user's replies in their channel (Telegram) are questions, answered from their
 // Plan and the event's data: the schedule, alerts already sent, and the posts that matter (organizer posts and those
 // classify found something in). One model call per question, with no tools: it can only answer. Posts are other
 // people's words, so they go in as quoted data, never as instructions, and with names redacted as classify does.
@@ -122,7 +122,7 @@ export function buildContext(d: AgentData, boundary = randomBytes(6).toString("h
 
 export function chatSystem(eventName: string, tz: string): string {
   return [
-    `You answer one hacker's questions about ${eventName || "their hackathon"} over chat, from the data that follows: the current time, the schedule, their Plan (project idea, stack, tracks it fits), alerts already found, and posts from the event's Discord and Slack.`,
+    `You are Donna. You answer one hacker's questions about ${eventName || "their hackathon"} over chat, from the data that follows: the current time, the schedule, their Plan (project idea, stack, tracks it fits), alerts already found, and posts from the event's Discord and Slack.`,
     "Answer only from that data. If it doesn't say, say so in one line and name where they could check (the channel, or an organizer). Never guess a time, room, prize or rule.",
     `Name the channel a fact came from. Give times in ${tz} with the weekday. Say when a fact comes only from an unconfirmed (non-organizer) post.`,
     "Keep answers short: a few lines of plain text, no markdown, no headings. Include a link only when they'd need to open it.",
@@ -175,7 +175,7 @@ export async function budgetedAnswer(client: Anthropic, guard: CostGuard, b: Cha
 }
 
 export const HELP =
-  "HackRecon here. Ask me anything about the event: what's next on the schedule, deadlines, rooms, workshops or credits that fit your stack, which tracks your Plan fits, what organizers posted. I answer from your Plan and the event's posts, and I send alerts here when something relevant lands.";
+  "Donna here. Ask me anything about the event: what's next on the schedule, deadlines, rooms, workshops or credits that fit your stack, which tracks your Plan fits, what organizers posted. I answer from your Plan and the event's posts, and I send alerts here when something relevant lands.";
 
 export class DailyCapReached extends Error {}
 

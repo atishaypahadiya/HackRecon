@@ -178,7 +178,7 @@ async function sync(): Promise<void> {
   };
 
   // 1. The sidebar's channels, scrolled top to bottom (it may render only what's visible).
-  ui.set("HackRecon: reading the sidebar…");
+  ui.set("Donna: reading the sidebar…");
   const sideScroller = (() => {
     const item = document.querySelector(SEL.sidebarChannel);
     return item ? scrollableAncestor(item) : null;
@@ -203,7 +203,7 @@ async function sync(): Promise<void> {
   log.targets = targets.map((c) => c.name);
   log.config = { event: config?.event ?? null, channels: config?.channels.length ?? 0, missing: pick.missing, discovered: pick.discovered, authors_only: pick.authors.map((c) => c.name) };
   if (!targets.length && !pick.authors.length) {
-    ui.set(`HackRecon: none of the config's ${config?.channels.length ?? 0} channels, and no spons-, partner-, cohost- or announcement channels, in the sidebar (${log.sidebar.length} channels read).`);
+    ui.set(`Donna: none of the config's ${config?.channels.length ?? 0} channels, and no spons-, partner-, cohost- or announcement channels, in the sidebar (${log.sidebar.length} channels read).`);
     await saveLog();
     ui.done();
     return;
@@ -364,12 +364,12 @@ async function sync(): Promise<void> {
       if (stop) break;
       if (scroller) scroller.scrollTop += scroller.clientHeight * 0.8;
       tl.steps++;
-      ui.set(`HackRecon: #${ch.name} · thread ${parent.ts} · ${replies()}/${want} replies · step ${tl.steps}`);
+      ui.set(`Donna: #${ch.name} · thread ${parent.ts} · ${replies()}/${want} replies · step ${tl.steps}`);
       await sleep(STEP_WAIT_MS);
     }
     // Slack's loading placeholders: wait, then read the pane again from the top, until they fill in (bounded).
     for (let w = 0; rec.loading.size && w < LOADING_WAITS && !stopped; w++) {
-      ui.set(`HackRecon: #${ch.name} · thread ${parent.ts} · waiting for Slack to load ${rec.loading.size} replies`);
+      ui.set(`Donna: #${ch.name} · thread ${parent.ts} · waiting for Slack to load ${rec.loading.size} replies`);
       await sleep(STEP_WAIT_MS);
       rec.record(paneRows(root()));
       scroller = paneScroller(root()) ?? scroller;
@@ -401,7 +401,7 @@ async function sync(): Promise<void> {
     if (stopped) break;
     const cl: ChannelLog = { id: ch.id, name: ch.name, opened: false, saved: [] };
     log.channels.push(cl);
-    ui.set(`HackRecon: opening #${ch.name} (${i + 1}/${targets.length})…`);
+    ui.set(`Donna: opening #${ch.name} (${i + 1}/${targets.length})…`);
     const err = await openChannel(ch);
     if (err) {
       cl.error = err;
@@ -466,7 +466,7 @@ async function sync(): Promise<void> {
     if (stopped) break;
     const cl: ChannelLog = { id: ch.id, name: ch.name, mode: "authors", opened: false, saved: [] };
     log.channels.push(cl);
-    ui.set(`HackRecon: #${ch.name}, authors only (${i + 1}/${pick.authors.length})…`);
+    ui.set(`Donna: #${ch.name}, authors only (${i + 1}/${pick.authors.length})…`);
     const err = await openChannel(ch);
     if (err) {
       cl.error = err;
@@ -527,7 +527,7 @@ async function sync(): Promise<void> {
   const replies = threads.reduce((n, t) => n + t.replies, 0);
   const secs = Math.round((Date.now() - started.getTime()) / 1000);
   ui.set(
-    `HackRecon: ${stopped ? "stopped. " : ""}${opened}/${targets.length} channels, ${threads.length} threads (${threads.filter((t) => t.stop !== "not_opened").length} opened), ${replies} replies in ${Math.round(secs / 60)} min. ` +
+    `Donna: ${stopped ? "stopped. " : ""}${opened}/${targets.length} channels, ${threads.length} threads (${threads.filter((t) => t.stop !== "not_opened").length} opened), ${replies} replies in ${Math.round(secs / 60)} min. ` +
       `Saved to Downloads/hackrecon/sync/${stamp}/${log.save_errors.length ? `; ${log.save_errors.length} files failed to save` : ""}.`,
   );
   ui.done();

@@ -29,7 +29,7 @@ async function capture(): Promise<void> {
   ui.onStop(() => (userStopped = true));
   const r = await captureChannelFile(ui.set, () => userStopped);
   if (!r.file) {
-    ui.set(`HackRecon: ${r.error}.`);
+    ui.set(`Donna: ${r.error}.`);
     ui.done();
     return;
   }
@@ -39,7 +39,7 @@ async function capture(): Promise<void> {
   // (and, when Slack restricts posting there, its schedule pages) in background tabs, with no click.
   const targets = autoPageTargets(file);
   if (targets.length) chrome.runtime.sendMessage({ type: "capture-pages", urls: targets }).then((r: string[] | undefined) => r && console.log("[hackrecon] pages:", r.join("; ")));
-  ui.set(`HackRecon: ${r.summary} Saved ${file.channel_id}.json.`);
+  ui.set(`Donna: ${r.summary} Saved ${file.channel_id}.json.`);
   ui.done();
 }
 
