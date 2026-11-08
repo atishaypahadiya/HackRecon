@@ -213,6 +213,14 @@ Slice 1 built (2026-11-08):
   - **Live on the Cal Hacks copy:**
     - Priya joins: Convex possible → likely. Lee joins. Priya leaves, "yes": Convex likely → possible, with its pre-join reason. The gap reads "Nobody on the team lists a skill for this" (Plan and board). Lee's 1st Customer Award stays, recorded under Lee.
     - Convex's gap shows at "possible" only because a rep's note keeps the track checked. The Plan gap-checks likely tracks, so a track that falls back to possible otherwise shows its gap on Ship, if entered.
+- **The Plan's gap check: entered and fallen tracks too (user, 2026-11-08):** "gap-check any track I've entered, whatever its rating, and any track that was gap-checked before and has since fallen to 'possible'... Don't gap-check every possible track; that's noise."
+  - **Scope** (`gaps.ts gapChecked`): likely tracks, plus tracks the hacker entered, plus tracks the check covered before, plus tracks with a rep's requirement (slice 3). Other possible tracks stay out.
+  - `data/gap_checked.json` lists every track the Plan's check has covered, so one that falls to "possible" stays in scope.
+  - Entered tracks the Plan doesn't rank have no Plan row to show a gap on, so they keep Ship's check (with a repo set).
+  - The board re-runs the Plan when entered tracks change (from chat or another tab), so an entered track's gap shows on the next refresh.
+  - **Live on the Cal Hacks copy**, with the rep's note moved aside and Convex's cached rating set to "possible":
+    - With the record, Convex keeps its gap: "Nobody on the team lists a skill for this".
+    - With the record removed, the Plan shows 0 gaps, the old behavior.
 - **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
   - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
   - On a fresh copy of Iterate with the board open:
