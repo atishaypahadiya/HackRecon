@@ -974,14 +974,14 @@ for (const [p, a, b] of [["play", "prev", "next"], ["play2", "prev2", "next2"]])
   $(b).onclick = () => { setPlaying(false); render(i + 1); };
 }
 document.addEventListener("keydown", (e) => {
-  if (tab !== "claim" || $("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
+  if (tab !== "claim" || !D?.posts.length || $("drawer").open || e.metaKey || e.ctrlKey || e.altKey || e.target.matches("input, textarea, .matrix")) return;
   if (e.key === "ArrowLeft") { setPlaying(false); render(i - 1); e.preventDefault(); }
   else if (e.key === "ArrowRight") { setPlaying(false); render(i + 1); e.preventDefault(); }
   else if (e.key === " " && !e.target.matches("button, a")) { setPlaying(!timer); e.preventDefault(); }
 });
 addEventListener("scroll", () => { if ($("tip").classList.contains("on")) { $("tip").classList.remove("on"); clearHot(); } }, { passive: true });
 let rz;
-addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { buildMatrix(); render(i); }, 120); });
+addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (D?.posts.length) { buildMatrix(); render(i); } }, 120); });
 
 /* ---------- Plan (v2): the default tab ---------- */
 // Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
@@ -1018,7 +1018,7 @@ function setTab(name, focus) {
   document.body.classList.toggle("on-plan", name !== "claim");
   if (name === "ship") loadShip();
   // The dot matrix measures itself, so it's built once Claim is visible.
-  if (name === "claim" && D) { cols = 0; buildMatrix(); render(i); }
+  if (name === "claim" && D?.posts.length) { cols = 0; buildMatrix(); render(i); }
 }
 for (const t of document.querySelectorAll('[role="tab"]')) {
   t.addEventListener("click", () => setTab(t.id.slice(2)));
@@ -1610,6 +1610,12 @@ fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) =>
     if (moved.some((id, k) => id !== saved[k])) store.set(DONE_KEY, JSON.stringify([...done]));
   } catch { done = new Set(); }
   mergeClaims();
+  $("ev").textContent = D.event;
+  // An event with no Slack or Discord posts yet (Iterate before it starts): Plan and Ship work from the event's page.
+  if (!D.posts.length) {
+    $("p-claim").innerHTML = `<section class="tile" style="grid-column:1/-1"><p class="lead">No offers posted yet.</p><p class="cap">Offers show here as sponsors post them in the event's channels.</p></section>`;
+    return;
+  }
   D.posts.forEach((t, k) => postIndex.set(t, k));
   for (const o of D.offers) for (const p of o.posts) if (!offerByTs.has(p.ts)) offerByTs.set(p.ts, o);
   for (let t = D.posts[0]; dayKey(t) <= dayKey(Math.max(D.posts.at(-1), F.at(-1))); t += 86400) if (!dayOf.has(dayKey(t))) { dayOf.set(dayKey(t), days.length); days.push(dayKey(t)); }
