@@ -202,6 +202,17 @@ Slice 1 built (2026-11-08):
     - "Priya joined the team, she does TypeScript and React" → Convex possible → likely. The gap reads "Not done yet: Priya lists TypeScript". No track dropped. $0.0134 re-rank + $0.0043 gaps.
     - "Lee joined the team and builds Apify Actors" → Apify's 1st Customer Award came in as possible. $0.0159 + $0.0043.
     - "Priya left the team" was asked first. After "yes", the gap reads "Nobody on the team lists a skill for this"; the board showed it on the next refresh. Convex stayed likely (the ranker's call; the rule only stops a fit rising when someone leaves). $0.0158 + $0.0041.
+- **A teammate leaving returns what their joining raised (user, 2026-11-08):** "when someone leaves, any track whose current rating was raised while they were on the team must be re-judged without the floor, so it can fall back. Priya leaving should return Convex to possible... Keep the no-rise rule on departures."
+  - Live before this: Priya left and the ranker, re-judging with the team that remained, rated Convex likely again.
+  - **Now:** when a person's join (or a skill they add) raises a track, `team.json` records that track's judgment just before under that person (`raised`), or null if it wasn't ranked. `plan.json` keeps each track's reason and quote for this.
+  - **On leaving:** those tracks are re-judged along with the rest, under the no-rise rule. Each is also capped at its recorded judgment. If the new rating is higher, the old judgment comes back whole (fit, reason, quote). A track the join brought in drops out.
+  - **Scope:** only raises from that person's own team writes are recorded. A raise from a stack change or a rep's note made while they were on the team isn't undone when they leave.
+  - **Test** (`team.test.ts`, the real merge behind the chat write):
+    - Join raises a track, leave returns it.
+    - Join, a second join, leave: the ranker says likely again and the cap returns the track. Without the cap, this one fails.
+  - **Live on the Cal Hacks copy:**
+    - Priya joins: Convex possible → likely. Lee joins. Priya leaves, "yes": Convex likely → possible, with its pre-join reason. The gap reads "Nobody on the team lists a skill for this" (Plan and board). Lee's 1st Customer Award stays, recorded under Lee.
+    - Convex's gap shows at "possible" only because a rep's note keeps the track checked. The Plan gap-checks likely tracks, so a track that falls back to possible otherwise shows its gap on Ship, if entered.
 - **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
   - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
   - On a fresh copy of Iterate with the board open:

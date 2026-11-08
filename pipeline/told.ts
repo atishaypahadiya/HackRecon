@@ -241,6 +241,9 @@ export interface Teammate {
   name: string | null;
   skills: { name: string; told: Told }[];
   told: Told;
+  /** Tracks their joining (or a skill they added) raised, each with its judgment just before; null when the track
+   *  wasn't ranked. Leaving caps each at that judgment, so it falls back. */
+  raised?: Record<string, { fit: "likely" | "possible"; reason: string; quote: string } | null>;
 }
 export const readTeam = (): Teammate[] => readJsonFile<Teammate[]>(TEAM_PATH, []);
 export const who = (t: Pick<Teammate, "name">) => t.name ?? "you";
@@ -487,7 +490,7 @@ export function makeWrites(deps: {
       changed = [...added, ...gone];
       monotone = gone.length ? (added.length ? undefined : "down") : "up";
       if (!added.length && !gone.length && was) return { line: `Nothing changed: ${who(was)} already ${was.name ? "lists" : "list"} ${u.skills.join(", ") || "those skills"}.` };
-      const t: Teammate = { id, name: u.name, skills, told: was?.told ?? told };
+      const t: Teammate = { id, name: u.name, skills, told: was?.told ?? told, ...(was?.raised ? { raised: was.raised } : {}) };
       if (was) team[at] = t;
       else team.push(t);
       const parts = [added.length ? `${added.join(", ")}` : "", gone.length ? `dropped ${gone.join(", ")}` : ""].filter(Boolean).join("; ");
@@ -502,8 +505,24 @@ export function makeWrites(deps: {
       // likely track only because the list was longer.
       try {
         const input: PlanInput = { idea: plan.input.idea, stack: plan.input.stack, ...(plan.input.repo ? { repo: plan.input.repo } : {}) };
-        const failed = await deps.rerun(input, { before: input, changed, tracks: (plan.tracks ?? []).map((t) => t.track_id).filter((x): x is string => !!x), beforeTeam, ...(monotone ? { monotone } : {}) });
-        change = planChangeLine(snapshot(plan), failed ? null : snapshot(readJsonFile<PlanFacts | null>(PLAN_PATH, null)), failed?.error ?? null);
+        const ceilings = u.left ? (was!.raised ?? {}) : undefined;
+        const ids = [...new Set([...(plan.tracks ?? []).map((t) => t.track_id), ...Object.keys(ceilings ?? {})].filter((x): x is string => !!x))];
+        const failed = await deps.rerun(input, { before: input, changed, tracks: ids, beforeTeam, ...(monotone ? { monotone } : {}), ...(ceilings ? { ceilings } : {}) });
+        const after = failed ? null : readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+        change = planChangeLine(snapshot(plan), snapshot(after), failed?.error ?? null);
+        // What this person's change raised, so their leaving can put it back.
+        if (after && !u.left) {
+          const rankOf = { possible: 0, likely: 1 } as const;
+          const before = new Map(plan.tracks.map((t) => [t.track_id, t]));
+          const me = team.find((x) => x.id === id)!;
+          for (const t of after.tracks) {
+            const b = before.get(t.track_id);
+            if (b && rankOf[t.fit] <= rankOf[b.fit]) continue;
+            me.raised ??= {};
+            if (!(t.track_id in me.raised)) me.raised[t.track_id] = b ? { fit: b.fit, reason: b.reason ?? "", quote: b.quote ?? "" } : null;
+          }
+          writeJsonFile(TEAM_PATH, team);
+        }
       } catch (e) {
         change = planChangeLine(null, null, (e as Error).message);
       }

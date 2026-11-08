@@ -429,7 +429,8 @@ describe("slice 4: teammates and their skills", () => {
         line: "Priya joined the team: React, Figma. Team skills: Priya: React, Figma. Tracks: Best Use of Modal possible → likely; gaps 0 → 2 (1 nobody on the team lists a skill for), booth questions 2 → 3.",
       });
       const told = { source: "chat" as const, at, quote: q };
-      expect(readTeam()).toEqual([{ id: "priya", name: "Priya", skills: [{ name: "React", told }, { name: "Figma", told }], told }]);
+      // The raise is recorded under Priya, with the judgment before it, so her leaving can put it back.
+      expect(readTeam()).toEqual([{ id: "priya", name: "Priya", skills: [{ name: "React", told }, { name: "Figma", told }], told, raised: { t: { fit: "possible", reason: "", quote: "" } } }]);
       // Every track on the Plan is judged again with the team's skills, plus any a new skill names.
       const input = { idea: "AI research labs", stack: null };
       expect(seen).toEqual([[input, { before: input, changed: ["React", "Figma"], tracks: ["t"], beforeTeam: [], monotone: "up" }]]);
