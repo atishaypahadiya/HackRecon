@@ -1,7 +1,7 @@
 // Discord (user 2026-11-07, for the Nov 14 event): posts arrive two ways, both read-only.
 // (a) The extension reads what the user's own Discord tabs render (DOM only: no user token, no Discord API, no
 //     navigation, clicks or scrolling; Discord bans self-bots), plus the sidebar's unread badges.
-// (b) The HackRecon bot, a real bot account in a private server the user owns, reads the crossposts Discord copies
+// (b) The Donna bot, a real bot account in a private server the user owns, reads the crossposts Discord copies
 //     there from event announcement channels the user followed (official API, bot token, GET only: discordbot.ts).
 // Both become Messages here, so classify --new, the cost guard and the SMS rules (alerts.ts) treat them alike.
 import { messageId, type Message } from "./schema.ts";
