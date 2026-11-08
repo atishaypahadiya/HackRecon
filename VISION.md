@@ -1,6 +1,6 @@
 # Donna
 
-Donna is a hackathon agent for one hacker. Donna knows the event as it happens, knows who is worth talking to, and
+Donna is a hackathon agent for one hacker. She knows the event as it happens, knows who is worth talking to, and
 reaches the hacker wherever they are, without ever acting on their behalf. The repo and the `hr` CLI keep the name
 hackrecon; everything the hacker sees says Donna.
 
@@ -30,16 +30,16 @@ Every door talks to the same brain. No door has logic of its own.
 - Organizer authority comes only from signals hackers can't set: restricted channels, followed feeds, or channel IDs
   the hacker lists. A post's text never grants it.
 
-**Consent gate** (decided in rule; the single code path is proposed)
-- Donna drafts; the hacker sends. Donna messages only the hacker, never anyone else.
-- Proposed: one gate function every outbound path passes through. It refuses any recipient other than the hacker's
-  own channel, and a test pins that.
+**Consent gate** (decided, 2026-11-08; the single function isn't built yet)
+- Donna drafts; the hacker sends. She messages only the hacker, never anyone else.
+- One gate function every outgoing message passes through. It refuses any recipient other than the hacker's own
+  channel, and a test pins that.
 
 ## Three doors
 
 1. **Dashboard.** Built: the local board (`hr board`). It has Plan, Ship, Credits, Sessions and People, plus drafts
-   to confirm one by one. Proposed: a hosted dashboard behind a login, so it works away from the laptop. The login
-   provider is undecided.
+   to confirm one by one. Decided (2026-11-08): a hosted dashboard behind a login, so it works away from the laptop.
+   Not built; the login provider is undecided.
 2. **Chat.** Built: Telegram, two-way.
    - Alerts arrive there.
    - Anything the hacker types is a question, answered from the Plan and the event's data, with the source channel
@@ -54,15 +54,15 @@ Every door talks to the same brain. No door has logic of its own.
   Discord, the extension only reads what open tabs show: it never navigates, clicks, scrolls or types, and it uses
   no user token. The Donna bot uses its own token, GET requests only, in the hacker's own server.
 - **No LinkedIn scraping.** LinkedIn appears only as search links; nothing is fetched.
-- **The hacker sends every message to another person.** Donna writes openers and drafts and never sends them.
+- **The hacker sends every message to another person.** Donna writes openers and drafts; she never sends them.
 - **Credentials stay put.** Tokens are read from `.env` or kept in extension memory. They never reach disk, logs,
   captures or errors, and never go to a server of ours.
 - **Workspace data is never committed.** Only synthetic fixtures are tracked.
 - **Names are hidden in demos.** Demo mode shows hackers as "a hacker" and hides author names.
 - **Spending is capped and announced.** Any run estimated over $1 is refused without `--yes`. Chat answers stop at
   $1 per watch session and $3 per event day, and Donna says so in the chat.
-- **Open:** consent at scale. If Donna serves many hackers at one event (for example through MLH), what may Donna hold
-  about people who never used Donna? This is undecided, and it gates any multi-user version.
+- **Open:** consent at scale. If Donna serves many hackers at one event (for example through MLH), what may she hold
+  about people who never used her? This is undecided, and it gates any multi-user version.
 
 ## Profile sources
 
@@ -76,8 +76,8 @@ Every door talks to the same brain. No door has logic of its own.
   domain) and their posts in event channels.
 - Nothing from outside the event's spaces, and nothing fetched from LinkedIn.
 
-**Proposed:** let the hacker add a source by hand (a GitHub profile, a personal site) and use it only for their own
-profile, never for other people's.
+**Hand-added sources** (decided, 2026-11-08; not built): the hacker can add a source by hand (a GitHub profile, a
+personal site). It's used only for their own profile, never for other people's.
 
 ## Message rhythm (decided, as built)
 
@@ -85,10 +85,10 @@ profile, never for other people's.
   or offers that match the Plan. At most one message per 10 minutes and four an hour, up to 3 items each.
 - **Everything else** waits for a digest every 2 hours, up to 6 items.
 - **Fresh only:** a post alerts while it's under 6 hours old, never twice.
-- **Answers:** at most 20 an hour. A question older than 15 minutes when Donna reads it is skipped, since the answer
+- **Answers:** at most 20 an hour. A question older than 15 minutes when she reads it is skipped, since the answer
   may have changed.
-- **Proposed:** quiet hours during sleep blocks, holding everything but room or time changes and deadlines. The hours
-  are the hacker's to set; none is set today.
+- **Quiet hours** (decided, 2026-11-08; not built): 1:00 to 8:00 AM Pacific by default, overridable per event.
+  Deadline-critical alerts always go through; everything else waits until the quiet hours end.
 
 ## Build order
 
@@ -98,11 +98,14 @@ profile, never for other people's.
 3. Board: Plan, Ship, Credits, Sessions and People; rep signals and person links.
 4. Discord: open tabs, unread badges, and the Donna bot reading followed announcements.
 5. Alerts and chat: Telegram two-way, with Donna answering from the Plan.
+6. Iterate as the current event: the Plan saved from the idea alone, tracks empty until announced.
 
 **Next (proposed order)**
-1. Iterate, Nov 14: check the Discord reader on the real server, follow the announcement channel into the Donna
-   server, and run `hr watch` through the event.
-2. Quiet pulls: ask Slack which channels moved and read only those (TODOS).
-3. The dashboard behind a login.
-4. iMessage, then WhatsApp, as channel adapters.
-5. The multi-user question (consent at scale, the MLH conversation) before anything that serves more than one hacker.
+1. Iterate, Nov 14: quiet hours (the event runs through the night of Nov 14), the Discord reader checked on the real
+   server, the announcement channel followed into the Donna server, and `hr watch` through the event.
+2. The consent gate as one function, with its test.
+3. Quiet pulls: ask Slack which channels moved and read only those (TODOS).
+4. The dashboard behind a login.
+5. Hand-added profile sources.
+6. iMessage, then WhatsApp, as channel adapters.
+7. The multi-user question (consent at scale, the MLH conversation) before anything that serves more than one hacker.
