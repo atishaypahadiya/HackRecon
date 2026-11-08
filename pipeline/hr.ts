@@ -73,7 +73,8 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { budgetedAnswer, buildContext, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
+import { logWrite, makeWrites, pageCredits, readClaims, setClaim, type Told, type WriteRecord } from "./told.ts";
+import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
 import { canonTrackDiff, ingestDiscord, runAlerts } from "./watch.ts";
@@ -133,6 +134,7 @@ import {
   fromCaller,
   takeEventArg,
   useEvent,
+  WRITES_LOG_PATH,
 } from "./event.ts";
 import { findTokens, scrubTokens, total } from "./domscrub.ts";
 import { BUNDLE_DIR, summarizeSync, wholeFiles, type SyncLogLite } from "./syncbundle.ts";
@@ -490,7 +492,7 @@ async function pagesRun(nowMs: number): Promise<void> {
   const fits = new Map<string, "likely" | "possible">();
   if (plan) {
     const ctx: PlanContext = { entities: after.flatMap((p) => p.entities), event, aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
-    const events = await runPlanStream({ idea: plan.input.idea, stack: plan.input.stack }, ctx, { via: "watch", nowMs, guard: new CostGuard("plan", false) }, () => {});
+    const events = await runPlanStream({ idea: plan.input.idea, stack: plan.input.stack, ...(plan.input.repo ? { repo: plan.input.repo } : {}) }, ctx, { via: "watch", nowMs, guard: new CostGuard("plan", false) }, () => {});
     const tr = events.find((e) => e.section === "tracks" && !("error" in e));
     if (tr && tr.section === "tracks" && !("error" in tr)) for (const t of tr.tracks) fits.set(t.track_id, t.fit);
   }
@@ -544,6 +546,7 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
   const state = readJsonFile<Record<string, { cursor?: string }>>(CHANNEL_STATE_PATH, {});
   let cursor = state[channel.kind]?.cursor;
   console.log(`chat: reading your ${channel.label} messages${client ? "" : " (no ANTHROPIC_API_KEY: they'll be told answers are off)"}`);
+  const writes = chatWrites();
   for (;;) {
     let r: Awaited<ReturnType<NonNullable<MessageChannel["receive"]>>>;
     try {
@@ -562,11 +565,12 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
       tz: budget().tz,
       history: readChatLog(),
       dailyCapUsd: budget().capUsd,
-      ask: async (question, history) => {
+      ask: async (question, history, at) => {
         if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
         const d = readAgentData(Date.now());
-        return budgetedAnswer(client, guard, budget(), { question, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz });
+        return budgetedAnswer(client, guard, budget(), { question, at, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz }, Date.now, writes.exec);
       },
+      confirm: writes.confirm,
     });
     for (const t of turns) {
       appendFileSync(CHAT_LOG_PATH, JSON.stringify(t) + "\n");
@@ -579,6 +583,19 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
     }
     if (once) return;
   }
+}
+
+/** Chat writes (told.ts) for this event: a stack change re-runs the Plan under the Plan's own spend guard. */
+function chatWrites() {
+  return makeWrites({
+    rerun: async (input) => {
+      const ctx: PlanContext = { entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
+      const events = await runPlanStream(input, ctx, { via: "chat", guard: new CostGuard("plan", false) }, () => {});
+      const failed = events.find((e) => e.section === "tracks" && "error" in e) as { error: string } | undefined;
+      return failed ? { error: failed.error } : null;
+    },
+    credits: () => readAgentData(Date.now()).credits ?? [],
+  });
 }
 
 /** The event's daily chat budget, from event.json (read per question, so an edit applies at once). */
@@ -602,13 +619,20 @@ async function ask(args: string[]): Promise<number> {
   const guard = new CostGuard("ask", values.yes!);
   const client = anthropicClient(guard);
   if (!client) return 1;
+  // A pending "clear my stack" settles here as in Telegram: hr ask yes.
+  const writes = chatWrites();
+  const settled = await writes.confirm(question, new Date().toISOString());
+  if (settled !== null) {
+    console.log(settled);
+    return 0;
+  }
   const d = readAgentData(nowMs);
   const context = buildContext(d);
   const route = routeQuestion(question);
   console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"}, ${d.past?.length ?? 0} past events); ${route} question, ${route === "deep" ? CHAT_DEEP_MODEL : CHAT_MODEL}`);
   try {
     const b = budget();
-    const r = await budgetedAnswer(client, guard, b, { question, history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz });
+    const r = await budgetedAnswer(client, guard, b, { question, at: new Date().toISOString(), history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz }, Date.now, writes.exec);
     console.log(`ask: today's chat spend $${b.spent(Date.now()).toFixed(4)} of $${b.capUsd.toFixed(2)}`);
     console.log("text" in r ? r.text : `no answer: ${r.error}`);
     return "text" in r ? 0 : 1;
@@ -1339,6 +1363,18 @@ async function board(args: string[]): Promise<number> {
         console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
         return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
       }
+      if (req.method === "POST" && path === "/claims") {
+        // The board's claimed box: the same store chat writes (told.ts), source "board".
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const b = (await req.json().catch(() => null)) as { id?: unknown; claimed?: unknown } | null;
+        const { entities } = planContext();
+        const known = new Set([...pageCredits(entities).map((c) => c.id), ...data.offers.map((o) => o.id)]);
+        if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.claimed !== "boolean") return json({ error: "not a credit on this board" }, 400);
+        const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
+        setClaim(b.id, b.claimed, told);
+        logWrite({ ...told, op: "mark_claimed", input: { credit_id: b.id, claimed: b.claimed }, result: b.claimed ? "claimed" : "not claimed" });
+        return json({ claims: readClaims() });
+      }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
       if (path === "/ship/list") {
         // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
@@ -1358,7 +1394,9 @@ async function board(args: string[]): Promise<number> {
         const at = new URL(req.url).searchParams.get("now");
         const nowMs = at ? Date.parse(at) : undefined;
         if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
-        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages() });
+        // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
+        const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims() });
       }
       if (path === "/")
         return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
@@ -1872,7 +1910,7 @@ interface FitCached {
 
 type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
 
-async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli" | "watch"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli" | "watch" | "chat"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const client = anthropicClient(opts.guard);
@@ -1893,10 +1931,15 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
   const of = (section: string) => events.find((e) => e.section === section && !("error" in e)) as Extract<PlanEvent, { from: string }> | undefined;
   // The SMS alerts read the last Plan for "why it matters" (watch.ts): idea, stack and ranked tracks only.
   const ranked = events.find((e) => e.section === "tracks" && !("error" in e)) as Extract<PlanEvent, { section: "tracks"; tracks: unknown }> | undefined;
+  const countOf = (k: "gaps" | "booths") => {
+    const e = events.find((x) => x.section === k && !("error" in x)) as { gaps?: unknown[]; booths?: unknown[] } | undefined;
+    return e ? ((k === "gaps" ? e.gaps : e.booths)?.length ?? 0) : null;
+  };
   if (ranked)
     writeJsonFile(PLAN_PATH, {
       saved_at: new Date().toISOString(),
-      input: { idea: input.idea, stack: input.stack },
+      input: { idea: input.idea, stack: input.stack, ...(input.repo ? { repo: input.repo } : {}) },
+      counts: { gaps: countOf("gaps"), booths: countOf("booths") },
       tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names })),
       overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
@@ -3115,6 +3158,12 @@ async function repSignals(args: string[]): Promise<number> {
 function dataVersion(): string {
   const parts = [CANON_PATH, CANON_HISTORY_PATH, MESSAGES_PATH, ITEMS_PATH, EVENT_PATH, SPONSORS_PATH, REP_SIGNALS_PATH, BOARD_DATA_PATH].map((p) => (existsSync(p) ? `${p}:${statSync(p).mtimeMs}:${statSync(p).size}` : `${p}:-`));
   return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/** When the stack was last told to Donna: the board takes the stored input when this moves, and never otherwise, so
+ *  a plan the board is still running isn't replaced by the one before it. */
+function lastStackTold(): string | null {
+  return readLines<WriteRecord>(WRITES_LOG_PATH).filter((w) => w.source === "chat" && w.op === "update_stack").at(-1)?.at ?? null;
 }
 
 /** D4's stale state: canon pages the last sync couldn't fetch (refused, login, error) and the extension didn't read
