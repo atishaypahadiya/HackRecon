@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { answer, chatRequest, WRITE_TOOLS } from "./agent.ts";
 import { parsePlanBody } from "./plan.ts";
 import type { Entity } from "./schema.ts";
-import { applyStackUpdate, makeWrites, pageCredits, quoteInMessage, stackWriteLine, type ClaimableCredit, type Told } from "./told.ts";
+import { localHost } from "./board.ts";
+import { applyStackUpdate, makeWrites, messageNames, NO, pageCredits, quoteInMessage, stackWriteLine, YES, type ClaimableCredit, type Told } from "./told.ts";
 
 const URL_ = "https://luma.com/abc";
 const src = (quote: string) => ({ kind: "page" as const, url: URL_, quote, captured_at: "2026-11-08T16:00:00.000Z", block: 0 });
@@ -46,8 +47,25 @@ test("quoteInMessage: the hacker's own words, verbatim; a post's words or a frag
   expect(quoteInMessage("add  pytorch to my STACK", msg)).toBe(true);
   expect(quoteInMessage("Modal credits are live: claim at modal.com", msg)).toBe(false);
   expect(quoteInMessage("I", msg)).toBe(false);
+  expect(quoteInMessage("Modal credits", msg)).toBe(false);
   expect(quoteInMessage(undefined, msg)).toBe(false);
-  expect(quoteInMessage("it’s done", "it's done")).toBe(true);
+  expect(quoteInMessage("it’s done now", "it's done now")).toBe(true);
+});
+
+test("messageNames: the message itself names each item or sponsor the write changes", () => {
+  expect(messageNames("add Modal and PyTorch to my stack", ["Modal", "pytorch"])).toBe(true);
+  expect(messageNames("add Modal to my stack", ["Modal", "Exa"])).toBe(false);
+  expect(messageNames("add it to my stack", [""])).toBe(false);
+});
+
+test("a confirmation is the whole message, never a reply that starts with yes", () => {
+  for (const t of ["yes", " Yes! ", "go ahead", "y."]) expect([t, YES.test(t)]).toEqual([t, true]);
+  for (const t of ["yes but keep PyTorch", "yesterday's workshop?", "no idea, when is dinner?"]) expect([t, YES.test(t) || NO.test(t)]).toEqual([t, false]);
+});
+
+test("the board server answers only its own host names (DNS rebinding)", () => {
+  expect([localHost("127.0.0.1:4517", 4517), localHost("localhost:4517", 4517)]).toEqual([true, true]);
+  for (const h of ["evil.example:4517", "127.0.0.1:80", "127.0.0.1.evil.example:4517", null]) expect([h, localHost(h, 4517)]).toEqual([h, false]);
 });
 
 describe("applyStackUpdate", () => {
@@ -163,6 +181,12 @@ describe("the write path, end to end, in an event's directory", () => {
         const q = "what's the Modal workshop about?";
         expect(await answer(proposes("update_stack", { quote: "Modal credits are live", add: [{ name: "Modal" }] }), { ...base, question: q }, w.exec)).toEqual({ text: "I didn't change anything: I couldn't tie that change to your message's own words." });
         expect(await w.exec("mark_claimed", { quote: "I claimed it", credit_id: "made-up", claimed: true }, { text: "I claimed it", at: base.at })).toEqual({ error: "that isn't one of the credits I know of" });
+        // A message that quotes enough words but doesn't name the change: an item it never mentions, a credit whose
+        // sponsor it doesn't name, a clear it never asks for.
+        const said = { text: "what is my stack right now?", at: base.at };
+        expect(await w.exec("update_stack", { quote: "my stack right now", add: [{ name: "Modal" }] }, said)).toEqual({ error: "your message doesn't name that change" });
+        expect(await w.exec("update_stack", { quote: "my stack right now", clear: true }, said)).toEqual({ error: "your message doesn't name that change" });
+        expect(await w.exec("mark_claimed", { quote: "I claimed the credits", credit_id: "prize:luma#ev/every-entrant/modal", claimed: true }, { text: "I claimed the credits", at: base.at })).toEqual({ error: "your message doesn't name that credit" });
         expect([existsSync("data/claims.json"), existsSync("data/writes.jsonl")]).toEqual([false, false]);
         expect(JSON.parse(readFileSync("data/plan.json", "utf8")).input.stack).toEqual([{ name: "PyTorch", used_for: null }]);
       });

@@ -57,11 +57,19 @@ export function claimableCredits(entities: Entity[], offers: Pick<BoardOffer, "i
 
 const norm = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
 
-/** A write rests on the hacker's own words: its quote must be in their message, verbatim (case and spacing aside).
- *  A post in the context can't supply one, because a post isn't the message. */
+/** A write rests on the hacker's own words: its quote must be in their message, verbatim (case and spacing aside),
+ *  and at least three words. A post in the context can't supply one, because a post isn't the message. */
 export function quoteInMessage(quote: unknown, message: string): quote is string {
-  return typeof quote === "string" && norm(quote).length >= 2 && norm(message).includes(norm(quote));
+  return typeof quote === "string" && norm(quote).split(" ").length >= 3 && norm(message).includes(norm(quote));
 }
+
+/** The message names what the write changes: each item added or removed, a clear in so many words, the credit's
+ *  sponsor. A question that only mentions Modal can't add Modal unless it says to. */
+export function messageNames(message: string, names: string[]): boolean {
+  const m = norm(message);
+  return names.every((n) => norm(n).length > 0 && m.includes(norm(n)));
+}
+const CLEAR_WORDS = /\b(clear|empty|wipe|reset|remove (everything|all))\b/i;
 
 export interface StackUpdate {
   add?: { name: string; used_for?: string | null }[];
@@ -172,8 +180,9 @@ export const savePending = (p: PendingWrite) => writeJsonFile(PENDING_WRITE_PATH
 export function clearPending(): void {
   if (existsSync(PENDING_WRITE_PATH)) unlinkSync(PENDING_WRITE_PATH);
 }
-export const YES = /^\s*(yes|y|yep|yeah|confirm|confirmed|do it|go ahead)\b/i;
-export const NO = /^\s*(no|n|nope|cancel|stop|don't|do not)\b/i;
+/** A confirmation is the whole message ("yes", "yes!"), never a reply that merely starts with it. */
+export const YES = /^\s*(yes|y|yep|yeah|confirm|confirmed|do it|go ahead)[\s.!]*$/i;
+export const NO = /^\s*(no|n|nope|cancel|stop|don't|do not)[\s.!]*$/i;
 
 /** Applies one proposed write: a one-line report, a question to confirm, or why not (agent.ts WriteExec). */
 export type WriteResult = { line: string } | { confirm: string } | { error: string };
@@ -206,6 +215,7 @@ export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error:
     const told: Told = { source: "chat", at: msg.at, quote: input.quote };
     if (name === "update_stack") {
       const u = stackUpdateOf(input);
+      if (!messageNames(msg.text, [...(u.add ?? []).map((a) => a.name), ...(u.remove ?? [])]) || (u.clear && !CLEAR_WORDS.test(msg.text))) return { error: "your message doesn't name that change" };
       const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
       const dry = plan ? applyStackUpdate(plan.input.stack ?? [], u, told) : null;
       if (dry && !("error" in dry) && dry.empties) {
@@ -220,6 +230,7 @@ export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error:
       const credits = deps.credits();
       const c = credits.find((x) => x.id === input.credit_id);
       if (!c) return { error: "that isn't one of the credits I know of" };
+      if (!messageNames(msg.text, [c.sponsor])) return { error: "your message doesn't name that credit" };
       const claimed = input.claimed !== false;
       setClaim(c.id, claimed, told);
       const line = claimLine(c, claimed, credits, readClaims());
