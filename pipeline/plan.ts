@@ -205,8 +205,9 @@ export function boothBlocks(questions: BoothQuestion[]): BoothBlock[] {
 
 export interface PlanSection<T> {
   items: T[];
-  /** "cache" when the same idea and stack were ranked before (D4: cached results show instantly). */
-  from: "cache" | "model";
+  /** "cache" when the same idea and stack were ranked before (D4: cached results show instantly); "none" when the
+   *  event has no tracks yet (announced later), so nothing was ranked and no model was called. */
+  from: "cache" | "model" | "none";
   ms: number;
   usage: Usage | null;
 }
@@ -275,6 +276,8 @@ export function capLikely(r: Ranked, card: TrackCard | undefined, input: PlanInp
 export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now()): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
   const cards = trackCards(entities, e, aliases);
+  // Tracks not announced yet (Iterate, 2026-11-08): an empty ranking, saved as such, and no model call.
+  if (!cards.length) return { items: [], from: "none", ms: Math.round(now() - t0), usage: null };
   const system = fitSystemPrompt(e, cards);
   const request = fitRequest(input.idea, stackForRanker(input.stack));
   const hash = fitHash(system, request);

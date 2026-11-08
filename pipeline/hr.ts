@@ -1871,7 +1871,7 @@ async function planCli(args: string[]): Promise<number> {
   // Every line is wrapped at spaces here, so the terminal never soft-wraps one (a soft wrap can lose the space).
   const width = cliWidth();
   const out = (line: string) => console.log(wrapText(line, width));
-  out(`Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
+  out(r.from === "none" ? "Tracks to target: none yet; the event hasn't announced its tracks. Your Plan is saved, and tracks get ranked once they're on the event's pages." : `Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
   out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
   let shown = "";
   for (const t of r.items) {
@@ -2843,11 +2843,11 @@ process.exit(
  *  server's, or `hr plan --at`). */
 function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullable<PlanSteps["joins"]> {
   const sponsors = readSponsors(SPONSORS_PATH);
-  const messages = readMessages();
+  const messages = existsSync(MESSAGES_PATH) ? readMessages() : []; // a new event has no posts yet
   const byId = new Map(messages.map((m) => [m.id, m]));
   const person = loadPersonKey();
   const reps = loadRepIndex(person);
-  const role = rolesById(messages, sponsors, loadOrganizerIds(), person, reps.confirmed);
+  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), person, reps.confirmed);
   const products = readProducts();
   const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
   const nowSec = nowMs / 1000;
