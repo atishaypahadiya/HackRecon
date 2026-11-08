@@ -54,7 +54,7 @@ import {
 import { messageFromRow, redactedInputs } from "./inputs.ts";
 import { costUsd, formatUsage, sumUsage, type Usage } from "./usage.ts";
 import { formatPreview, preview } from "./preview.ts";
-import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_LIVE_JS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, plainText, v1Ids, type BoardData } from "./board.ts";
+import { BOARD_FONT_DIR, BOARD_FONTS, BOARD_LIVE_JS, BOARD_PAGE, BOARD_PREFILL_JS, boardData, localHost, plainText, v1Ids, type BoardData } from "./board.ts";
 import { joinSponsors, planCredits, planPeople, planSessions, submissionDeadline } from "./planjoin.ts";
 import { GROUP_EFFORT, GROUP_MAX_TOKENS, GROUP_MODEL, GROUP_SCHEMA, groupHash, groupOffers, groupRequest, groupSystemPrompt, inputHash, withLabelAmounts, type GroupResult } from "./group.ts";
 import {
@@ -1257,6 +1257,9 @@ async function board(args: string[]): Promise<number> {
     hostname: "127.0.0.1",
     port: Number(values.port),
     async fetch(req) {
+      // DNS rebinding: a page on another site can resolve its own name to 127.0.0.1 and read this server. Only the
+      // board's own host names are answered, so the Plan, claims and posts stay with the page this server served.
+      if (!localHost(req.headers.get("host"), server.port)) return new Response("not found", { status: 404 });
       const path = new URL(req.url).pathname;
       if (req.method === "POST" && path === "/plan/stream") {
         // P2: Plan's sections as NDJSON, one line per section as it's ready (planstream.ts), tracks first.
