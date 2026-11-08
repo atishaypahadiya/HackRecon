@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 import type { BoardOffer } from "./board.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
 import type { PlanFacts } from "./alerts.ts";
-import { CLAIMS_PATH, ENTERED_PATH, PENDING_WRITE_PATH, PLAN_PATH, SHIP_TICKS_PATH, WRITES_LOG_PATH } from "./event.ts";
+import { CLAIMS_PATH, ENTERED_PATH, PENDING_WRITE_PATH, PLAN_PATH, REP_NOTES_PATH, SHIP_TICKS_PATH, WRITES_LOG_PATH } from "./event.ts";
 import type { ShipItem, ShipList } from "./shiplist.ts";
 import type { PlanInput, StackItem, StackRerank } from "./plan.ts";
 import type { Entity } from "./schema.ts";
@@ -127,9 +127,13 @@ export interface PlanSnapshot {
 /** One line: what the stack write changed, then what the re-run changed. */
 export function stackWriteLine(changes: StackChange[], before: PlanSnapshot | null, after: PlanSnapshot | null, rerunError: string | null = null): string {
   const what = changes.map((c) => (c.op === "add" ? `added ${c.item.name}${c.item.used_for ? ` (${c.item.used_for})` : ""}` : c.op === "remove" ? `removed ${c.name}` : `${c.name} now for ${c.to}`)).join(", ");
-  const head = `Stack: ${what}.`;
-  if (rerunError) return `${head} Re-ranking didn't run (${rerunError}); your Plan shows the old ranking until it does.`;
-  if (!after) return head;
+  return `Stack: ${what}.${planChangeLine(before, after, rerunError)}`;
+}
+
+/** What a re-run changed, after a write: each fit that moved, then the gap and booth counts (" Tracks: …; gaps …."). */
+export function planChangeLine(before: PlanSnapshot | null, after: PlanSnapshot | null, rerunError: string | null = null): string {
+  if (rerunError) return ` Re-ranking didn't run (${rerunError}); your Plan shows the old ranking until it does.`;
+  if (!after) return "";
   const was = new Map((before?.tracks ?? []).map((t) => [t.track_id, t.fit]));
   const now = new Map(after.tracks.map((t) => [t.track_id, t]));
   const moved = [
@@ -138,7 +142,7 @@ export function stackWriteLine(changes: StackChange[], before: PlanSnapshot | nu
   ];
   const count = (label: string, a: number | null | undefined, b: number | null) => (b === null ? "" : a === b || a === undefined || a === null ? `${label} ${b}` : `${label} ${a} → ${b}`);
   const counts = [count("gaps", before?.gaps, after.gaps), count("booth questions", before?.booths, after.booths)].filter(Boolean).join(", ");
-  return `${head} Tracks: ${moved.length ? moved.join("; ") : "no change"}${counts ? `; ${counts}` : ""}.`;
+  return ` Tracks: ${moved.length ? moved.join("; ") : "no change"}${counts ? `; ${counts}` : ""}.`;
 }
 
 // The store.
@@ -205,6 +209,27 @@ export const shipItems = (l: ShipList): (ShipItem & { section: string })[] => [
   ...l.judging.map((x) => ({ ...x, section: "Judging" })),
 ];
 
+// Slice 3: what a rep said at a booth. The weakest tier: it never replaces the page's lines, which are shown beside it.
+export interface RepNote {
+  id: string;
+  track_id: string;
+  kind: "requirement" | "criterion";
+  /** The hacker's words, verbatim from their message. */
+  text: string;
+  /** The rep, when the hacker named one ("Sam at the Modal booth"). */
+  rep: string | null;
+  told: Told;
+}
+export const readRepNotes = (): RepNote[] => readJsonFile<RepNote[]>(REP_NOTES_PATH, []);
+export function addRepNote(n: Omit<RepNote, "id">): RepNote {
+  const all = readRepNotes();
+  const note = { id: `rep:${n.track_id}#${all.length + 1}`, ...n };
+  writeJsonFile(REP_NOTES_PATH, [...all, note]);
+  return note;
+}
+/** How a note reads wherever it's shown: "told to Donna by Sam at the Modal booth" / "told to Donna by a rep". */
+export const repSource = (n: Pick<RepNote, "rep">) => `told to Donna by ${n.rep ?? "a rep"}`;
+
 export interface WriteRecord {
   at: string;
   source: Told["source"];
@@ -248,6 +273,8 @@ export function makeWrites(deps: {
   /** The event's tracks (canon), and its Ship checklist for a set of entered track ids. */
   tracks: () => TrackRef[];
   ship: (entered: string[]) => ShipList;
+  /** The page's own requirement and criterion lines for a track, shown beside a rep's note (never replaced by it). */
+  pageLines: (track_id: string) => string[];
 }) {
   const snapshot = (p: PlanFacts | null): PlanSnapshot | null => (p ? { tracks: (p.tracks ?? []).map((t) => ({ track_id: t.track_id ?? t.name, name: t.name, fit: t.fit })), gaps: p.counts?.gaps ?? null, booths: p.counts?.booths ?? null } : null);
   const applyStack = async (u: StackUpdate, told: Told, op: string): Promise<WriteResult> => {
@@ -318,6 +345,34 @@ export function makeWrites(deps: {
         return { confirm: asked };
       }
       return applyEntered(u, told);
+    }
+    if (name === "record_rep_note") {
+      const t = deps.tracks().find((x) => x.track_id === input.track_id);
+      if (!t) return { error: "that isn't a track on this event's pages" };
+      if (!namesTrack(msg.text, t)) return { error: "your message doesn't name that track" };
+      // The note is the hacker's words, verbatim; a rep's name only when they gave one.
+      if (!quoteInMessage(input.text, msg.text)) return { error: "I couldn't find what the rep said in your message's own words" };
+      const rep = typeof input.rep === "string" && input.rep.trim() ? input.rep.trim() : null;
+      if (rep && !messageNames(msg.text, [rep])) return { error: "your message doesn't name that rep" };
+      const kind = input.kind === "criterion" ? "criterion" : "requirement";
+      const beforeNotes = readRepNotes();
+      const note = addRepNote({ track_id: t.track_id, kind, text: input.text, rep, told });
+      const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+      let change = "";
+      if (plan) {
+        const input0: PlanInput = { idea: plan.input.idea, stack: plan.input.stack, ...(plan.input.repo ? { repo: plan.input.repo } : {}) };
+        try {
+          const failed = await deps.rerun(input0, { before: input0, changed: [], beforeNotes, tracks: [t.track_id] });
+          change = planChangeLine(snapshot(plan), failed ? null : snapshot(readJsonFile<PlanFacts | null>(PLAN_PATH, null)), failed?.error ?? null);
+        } catch (e) {
+          change = planChangeLine(null, null, (e as Error).message);
+        }
+      }
+      const page = deps.pageLines(t.track_id);
+      const both = page.length ? ` The page states for it: ${page.map((l) => `"${l}"`).join("; ")}. Both are kept; the page wins where they differ.` : " The page states no requirements for it.";
+      const line = `Noted for ${t.name}, ${repSource(note)}: "${note.text}" (${kind}).${change}${both}`;
+      logWrite({ at: told.at, source: "chat", quote: told.quote, op: "record_rep_note", input: { track_id: t.track_id, kind, text: note.text, rep }, result: line });
+      return { line };
     }
     if (name === "tick_ship_item") {
       const items = shipItems(deps.ship(deps.tracks().map((t) => t.track_id)));

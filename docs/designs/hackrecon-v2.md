@@ -126,7 +126,7 @@ Verified (2026-11-07):
 - **Slices.**
   1. Stack updates and claims, end to end (this change).
   2. Entered tracks (confirm unset) and Ship ticks, both moved from localStorage to the store (built 2026-11-08).
-  3. Rep requirements and criteria, at the weakest tier.
+  3. Rep requirements and criteria, at the weakest tier (built 2026-11-08).
   4. Teammates and their skills.
 
 Slice 1 built (2026-11-08):
@@ -175,6 +175,17 @@ Slice 1 built (2026-11-08):
     - Unticking on the board wrote `{}` and a log line with source "board".
     - No console or server errors.
   - The "Submit on Devpost" item stays as it is until Iterate's submission platform is known (user, 2026-11-08). The Ship fold link that read "All 3 tracks on Devpost" now reads "on the event's page".
+- **Slice 3, what a rep told you (user, 2026-11-08):** "Rep-told requirements are chat-sourced and the weakest tier: they never override the page, they're labeled 'told to Donna' with my words and which rep I spoke to if I say, and they trigger a re-rank plus gap check on that track. If a rep's requirement contradicts the page, show both rather than replacing."
+  - Stored in `data/rep_notes.json`: track, kind (requirement or judging criterion), the rep's words copied from the message, the rep if named, and the provenance. Never canon.
+  - Donna's `record_rep_note`. The message must name the track (as in slice 2); the rep's words and the rep's name must appear in it verbatim.
+  - **Re-rank:** the note rides on its track's card as a context line, which the ranker reads but can never quote, so the page stays the only quotable source. Only that track is re-ranked (the slice-2 partial path, given the track directly). The prior ranking is looked up under the system prompt without the note.
+  - **Gap check:** a rep's requirement joins its track's requirements as kind "told", labeled as not on the page, and its track is checked whatever its fit. Gaps, Booths and the CLI name its source ("A rep's requirement, told to Donna by Sam at the Exa booth"), never "the page's".
+  - **Ship:** a rep's requirement for an entered track is an item under that track, labeled with who said it. A new note means a new Ship gap recheck.
+  - **Both, not replacing:** Donna's reply quotes the page's requirement and criterion lines for that track beside the note ("Both are kept; the page wins where they differ"). The board's track drawer keeps the page's Requirements and Judging criteria and adds "What a rep told you" below them.
+  - Live, on temp copies:
+    - Iterate (Exa states no requirements): "Sam at the Exa booth said the project has to call the Exa search API from the agents themselves" → noted. Exa re-ranked, its reason now turning on Exa search; no gap. The board showed "a rep's note, told to Donna" on the row about 45 s later. Cost $0.0046 re-rank + $0.0030 gap check. After "I'm entering the Exa track", Ship listed the requirement under Exa.
+    - Cal Hacks copy (Convex's page: "Build it on Convex: database, functions, workflows, sync, search, and file storage in one TypeScript backend"): "Priya at the Convex booth said it's fine to use Convex only for the database and keep our Python backend". Donna's reply quoted both page lines; the drawer showed both. The gap from the page's requirement stayed. Convex went likely → possible: with the conflict in front of it and the page winning, the ranker judged the Python backend against the page. Cost $0.0229 re-rank (cache cold) + $0.0040 gap check.
+    - A rep saying something looser than the page can't raise a fit. That is the "never override the page" rule, and it can lower one by drawing attention to the conflict.
 - **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
   - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
   - On a fresh copy of Iterate with the board open:

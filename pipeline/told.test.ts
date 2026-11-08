@@ -10,7 +10,7 @@ import { parsePlanBody } from "./plan.ts";
 import type { Entity } from "./schema.ts";
 import { localHost } from "./board.ts";
 import type { ShipList } from "./shiplist.ts";
-import { applyStackUpdate, makeWrites, messageNames, namesItem, namesTrack, NO, pageCredits, quoteInMessage, stackWriteLine, YES, type ClaimableCredit, type Told } from "./told.ts";
+import { applyStackUpdate, makeWrites, readRepNotes, messageNames, namesItem, namesTrack, NO, pageCredits, quoteInMessage, stackWriteLine, YES, type ClaimableCredit, type Told } from "./told.ts";
 
 const URL_ = "https://luma.com/abc";
 const src = (quote: string) => ({ kind: "page" as const, url: URL_, quote, captured_at: "2026-11-08T16:00:00.000Z", block: 0 });
@@ -25,7 +25,7 @@ const prize = (id: string, award: string, place?: string): Entity => ({
 });
 const PER_HACKER = "$600+ in credits per hacker, including $250 in Modal credits, $200 in Devin credits (1 month of the Max plan), $100 in Tinker credits and $50 in Exa credits";
 const ENTITIES = [prize("prize:luma#ev/every-entrant", PER_HACKER, "every entrant"), prize("prize:luma#ev/modal", "$5,000 in Modal credits")];
-const NO_SHIP = { tracks: () => [], ship: () => ({ deadline: null, required: [], tracks: [], choices: [], judging: [] }) };
+const NO_SHIP = { tracks: () => [], ship: () => ({ deadline: null, required: [], tracks: [], choices: [], judging: [] }), pageLines: () => [] };
 const TOLD: Told = { source: "chat", at: "2026-11-14T19:00:00.000Z", quote: "add Modal" };
 
 describe("pageCredits: the per-hacker credits the event page states", () => {
@@ -271,7 +271,7 @@ describe("slice 2: entered tracks and Ship ticks", () => {
       rmSync(root, { recursive: true, force: true });
     }
   };
-  const writes = () => makeWrites({ rerun: async () => null, credits: () => [], tracks: () => TRACKS, ship });
+  const writes = () => makeWrites({ rerun: async () => null, credits: () => [], tracks: () => TRACKS, ship, pageLines: () => [] });
   const read = (f: string) => (existsSync(`data/${f}`) ? JSON.parse(readFileSync(`data/${f}`, "utf8")) : null);
 
   test("namesTrack: the sponsor or the whole name; an event-level track only by name", () => {
@@ -323,6 +323,71 @@ describe("slice 2: entered tracks and Ship ticks", () => {
       expect(await w.exec("tick_ship_item", { quote: "the judging rules here", item_id: "standing:drafts", done: true }, said)).toEqual({ error: "your message doesn't name that item" });
       expect(await w.exec("tick_ship_item", { quote: "the judging rules here", item_id: "made-up", done: true }, said)).toEqual({ error: "that isn't an item on your Ship checklist" });
       expect([read("entered.json"), read("ship_ticks.json"), existsSync("data/writes.jsonl")]).toEqual([null, null, false]);
+    });
+  });
+});
+
+describe("slice 3: what a rep told you", () => {
+  const TRACKS = [{ track_id: "track:luma#modal", name: "Best Use of Modal", sponsor: "Modal" }];
+  const at = "2026-11-14T19:00:00.000Z";
+  const inEvent = async (f: () => Promise<void>) => {
+    const root = mkdtempSync(join(tmpdir(), "hr-slice3-"));
+    mkdirSync(join(root, "data"), { recursive: true });
+    const was = process.cwd();
+    process.chdir(root);
+    try {
+      writeFileSync("data/plan.json", JSON.stringify({ input: { idea: "AI research labs", stack: [{ name: "Modal", used_for: "training runs" }] }, counts: { gaps: 0, booths: 2 }, tracks: [{ track_id: "track:luma#modal", name: "Best Use of Modal", fit: "possible" }] }));
+      await f();
+    } finally {
+      process.chdir(was);
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+  const writes = (page: string[], seen: unknown[] = []) =>
+    makeWrites({
+      rerun: async (input, rerank) => {
+        seen.push(rerank);
+        const p = JSON.parse(readFileSync("data/plan.json", "utf8"));
+        writeFileSync("data/plan.json", JSON.stringify({ ...p, input, counts: { gaps: 1, booths: 3 }, tracks: [{ ...p.tracks[0], fit: "likely" }] }));
+        return null;
+      },
+      credits: () => [],
+      tracks: () => TRACKS,
+      ship: () => ({ deadline: null, required: [], tracks: [], choices: [], judging: [] }),
+      pageLines: () => page,
+    });
+
+  test("recorded with the hacker's words and the rep; its track re-ranked and gap-checked; the page's lines shown beside it", async () => {
+    await inEvent(async () => {
+      const q = "Sam at the Modal booth said the project has to use Modal Sandboxes";
+      const seen: unknown[] = [];
+      const r = await writes(["Projects must deploy on Modal."], seen).exec("record_rep_note", { quote: q, track_id: "track:luma#modal", kind: "requirement", text: "the project has to use Modal Sandboxes", rep: "Sam at the Modal booth" }, { text: q, at });
+      expect(r).toEqual({ line: 'Noted for Best Use of Modal, told to Donna by Sam at the Modal booth: "the project has to use Modal Sandboxes" (requirement). Tracks: Best Use of Modal possible → likely; gaps 0 → 1, booth questions 2 → 3. The page states for it: "Projects must deploy on Modal.". Both are kept; the page wins where they differ.' });
+      expect(readRepNotes()).toEqual([{ id: "rep:track:luma#modal#1", track_id: "track:luma#modal", kind: "requirement", text: "the project has to use Modal Sandboxes", rep: "Sam at the Modal booth", told: { source: "chat", at, quote: q } }]);
+      expect(seen).toEqual([{ before: { idea: "AI research labs", stack: [{ name: "Modal", used_for: "training runs" }] }, changed: [], beforeNotes: [], tracks: ["track:luma#modal"] }]);
+      expect(JSON.parse(readFileSync("data/writes.jsonl", "utf8").trim()).op).toBe("record_rep_note");
+    });
+  });
+  test("no rep named: \"a rep\"; a page with no lines says so", async () => {
+    await inEvent(async () => {
+      const q = "the Modal people said judges care most about cold start times";
+      const r = await writes([]).exec("record_rep_note", { quote: q, track_id: "track:luma#modal", kind: "criterion", text: "judges care most about cold start times" }, { text: q, at });
+      expect("line" in r && r.line.startsWith('Noted for Best Use of Modal, told to Donna by a rep: "judges care most about cold start times" (criterion).')).toBe(true);
+      expect("line" in r && r.line.endsWith("The page states no requirements for it.")).toBe(true);
+    });
+  });
+  test("the track, the rep's words and the rep's name must all be in the message; otherwise nothing is written", async () => {
+    await inEvent(async () => {
+      const w = writes([]);
+      const q = "Sam at the Modal booth said the project has to use Modal Sandboxes";
+      const said = { text: q, at };
+      const base = { quote: q, track_id: "track:luma#modal", kind: "requirement" };
+      expect(await w.exec("record_rep_note", { ...base, text: "the project must win first place" }, said)).toEqual({ error: "I couldn't find what the rep said in your message's own words" });
+      expect(await w.exec("record_rep_note", { ...base, text: "the project has to use Modal Sandboxes", rep: "Priya" }, said)).toEqual({ error: "your message doesn't name that rep" });
+      expect(await w.exec("record_rep_note", { ...base, track_id: "track:other", text: "the project has to use Modal Sandboxes" }, said)).toEqual({ error: "that isn't a track on this event's pages" });
+      const other = "the judging rules say the project has to use Sandboxes";
+      expect(await w.exec("record_rep_note", { ...base, quote: other, text: "the project has to use Sandboxes" }, { text: other, at })).toEqual({ error: "your message doesn't name that track" });
+      expect([readRepNotes(), existsSync("data/writes.jsonl")]).toEqual([[], false]);
     });
   });
 });

@@ -10,6 +10,7 @@ import { ELIGIBILITY, FIT_EFFORT, FIT_MODEL } from "./fit.ts";
 import { callChecked } from "./model.ts";
 import { trackDetail, type PlanInput, type PlanTrack } from "./plan.ts";
 import type { Entity } from "./schema.ts";
+import { repSource, type RepNote } from "./told.ts";
 import type { Usage } from "./usage.ts";
 
 export const GAP_MAX_TOKENS = 8000;
@@ -22,9 +23,12 @@ export interface GapRequirement {
   track: string;
   /** How a person says the track: "Best Actor" for "[Apify] Best Actor sponsored by Apify". */
   short: string;
-  kind: "requirement" | "entry_step";
+  /** "told": a rep's requirement told to Donna (told.ts), never on the page. */
+  kind: "requirement" | "entry_step" | "told";
   text: string;
   source_url: string;
+  /** For a told requirement: "told to Donna by Sam at the Modal booth". */
+  told_by?: string;
 }
 
 export interface ProjectFact {
@@ -49,7 +53,7 @@ export interface Gap {
   /** The question for the rep, in the team's words, naming the track: "does Best Actor need a new Actor built this
    *  weekend?". The Devpost sentence stays in the evidence, never in the question. */
   question: string;
-  requirement: { kind: GapRequirement["kind"]; quote: string; source_url: string };
+  requirement: { kind: GapRequirement["kind"]; quote: string; source_url: string; told_by?: string };
   project: { quote: string; source: string; url: string | null }[];
 }
 
@@ -105,11 +109,13 @@ export function copies(a: string, b: string, n = 5): boolean {
 export type GapScope = "likely" | "all";
 type GapTrack = Pick<PlanTrack, "track_id" | "name" | "fit" | "steps" | "source_url">;
 
-/** The tracks' stated requirement sentences and entry steps, each once per track. Title-tier tracks state none, so
- *  they have nothing to check. */
-export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: GapScope = "likely"): GapRequirement[] {
+/** The tracks' stated requirement sentences and entry steps, each once per track, then any requirement a rep told the
+ *  hacker. Title-tier tracks state none, so they have nothing to check unless a rep said something. A track with a
+ *  rep's requirement is checked whatever its fit (slice 3: the note triggers a gap check on its track). */
+export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: GapScope = "likely", notes: RepNote[] = []): GapRequirement[] {
   const out: GapRequirement[] = [];
-  for (const t of tracks.filter((x) => scope === "all" || x.fit === "likely")) {
+  const told = (id: string) => notes.filter((n) => n.track_id === id && n.kind === "requirement");
+  for (const t of tracks.filter((x) => scope === "all" || x.fit === "likely" || told(x.track_id).length)) {
     const seen = new Set<string>();
     const add = (kind: GapRequirement["kind"], text: string) => {
       const key = norm(text).toLowerCase();
@@ -119,6 +125,11 @@ export function gapRequirements(tracks: GapTrack[], entities: Entity[], scope: G
     };
     for (const r of trackDetail(entities, t.track_id).requirements) add("requirement", r);
     for (const s of t.steps) add("entry_step", s.quote);
+    for (const n of told(t.track_id)) {
+      const before = out.length;
+      add("told", n.text);
+      if (out.length > before) out[out.length - 1]!.told_by = repSource(n);
+    }
   }
   return out;
 }
@@ -143,7 +154,7 @@ export const GAP_SYSTEM = [
 export function gapRequest(reqs: GapRequirement[], facts: ProjectFact[]): string {
   return [
     "REQUIREMENTS",
-    ...reqs.map((r) => `[${r.id}] ${r.track}, said as "${r.short}" (${r.kind === "entry_step" ? "entry step" : "requirement"}): ${r.text}`),
+    ...reqs.map((r) => `[${r.id}] ${r.track}, said as "${r.short}" (${r.kind === "entry_step" ? "entry step" : r.kind === "told" ? "requirement a rep told the team; not on the page" : "requirement"}): ${r.text}`),
     "",
     "PROJECT FACTS",
     ...facts.map((f) => `[${f.id}] ${f.source}: ${f.text}`),
@@ -185,7 +196,7 @@ export function checkGaps(parsed: unknown, reqs: GapRequirement[], facts: Projec
     if (!question.toLowerCase().includes(r.short.toLowerCase())) return { error: `${g.requirement_id}: the question must name the track as "${r.short}"` };
     if (copies(question, r.text)) return { error: `${g.requirement_id}: ask in the team's own words; the Devpost sentence belongs in the evidence, not the question` };
     if (ELIGIBILITY.test(question) || VERDICT.test(question) || /\bcounts?\b/i.test(question)) return { error: `${g.requirement_id}: "${question}" judges eligibility or gives advice; ask what the requirement needs` };
-    out.push({ track_id: r.track_id, track: r.track, gap, instead, question, requirement: { kind: r.kind, quote: r.text, source_url: r.source_url }, project });
+    out.push({ track_id: r.track_id, track: r.track, gap, instead, question, requirement: { kind: r.kind, quote: r.text, source_url: r.source_url, ...(r.told_by ? { told_by: r.told_by } : {}) }, project });
   }
   return out;
 }
@@ -202,9 +213,9 @@ export interface GapResult {
   usage: Usage | null;
 }
 
-export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely"): Promise<GapResult | { error: string }> {
+export async function planGaps(client: Anthropic | null, tracks: GapTrack[], entities: Entity[], input: PlanInput, repoFacts: ProjectFact[], cache: GapCache, now = () => performance.now(), scope: GapScope = "likely", notes: RepNote[] = []): Promise<GapResult | { error: string }> {
   const t0 = now();
-  const reqs = gapRequirements(tracks, entities, scope);
+  const reqs = gapRequirements(tracks, entities, scope, notes);
   const own = inputFacts(input);
   const facts = [...own, ...repoFacts.map((f, k) => ({ ...f, id: `F${own.length + k + 1}` }))];
   const counts = { description: 0, stack: 0, repo: 0 };

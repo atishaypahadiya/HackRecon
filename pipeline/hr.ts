@@ -73,7 +73,7 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
+import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNotes, repSource, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
 import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
@@ -597,6 +597,10 @@ function chatWrites() {
     credits: () => readAgentData(Date.now()).credits ?? [],
     tracks: eventTracks,
     ship: (entered) => shipNow(entered),
+    pageLines: (id) => {
+      const d = trackDetail(readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), id);
+      return [...d.requirements, ...d.criteria.map((c) => (c.description ? `${c.name}: ${c.description}` : c.name))];
+    },
   });
 }
 
@@ -1425,7 +1429,7 @@ async function board(args: string[]): Promise<number> {
         if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
         // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
         const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
-        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks() });
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks(), rep_notes: readRepNotes() });
       }
       if (path === "/")
         return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
@@ -1943,12 +1947,14 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const client = anthropicClient(opts.guard);
+  // Slice 3: what reps told the hacker, from this event's store, on every plan path (board, CLI, watch, chat).
+  const notes = readRepNotes();
   const events: PlanEvent[] = [];
   for await (const e of planStream({
-    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank),
+    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank, notes),
     repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
     repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
-    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache),
+    gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache, undefined, "likely", notes),
     booths: (tracks, gaps) => boothBlocks(boothQuestions(tracks, input, gaps)),
     joins: planJoins(input, ctx, opts.nowMs ?? Date.now()),
     log: (l) => console.error(l),
@@ -2051,7 +2057,7 @@ async function planCli(args: string[]): Promise<number> {
     for (const s of t.steps) out(`    [ ] ${s.label} (${s.step_kind}): "${s.quote}"`);
     for (const x of g.gaps.filter((x) => x.track_id === t.track_id)) {
       out(`    Gap: ${x.gap}`);
-      out(`      page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
+      out(x.requirement.kind === "told" ? `      ${x.requirement.told_by ?? "told to Donna"}: "${x.requirement.quote}"` : `      page (${x.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${x.requirement.quote}"  ${x.requirement.source_url}`);
       for (const p of x.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
     }
     if (t.fit === "likely" && t.evidence === "stated" && !g.gaps.some((x) => x.track_id === t.track_id)) out(`    Gaps: none found. That says nothing about whether the requirements are met.`);
@@ -2129,7 +2135,11 @@ function shipListAt(entities: Entity[], event: EventConfig, entered: string[], n
   const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), person, loadRepIndex(person).confirmed);
   // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
   const t = canonTimeline();
-  return shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
+  const list = shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
+  // Slice 3: a rep's requirement for an entered track joins its items, after the page's, labeled as told.
+  const notes = readRepNotes().filter((n) => n.kind === "requirement");
+  for (const tr of list.tracks) for (const n of notes.filter((x) => x.track_id === tr.track_id)) tr.items.push({ id: n.id, label: n.text, from: "told", told_by: repSource(n), source_url: "" });
+  return list;
 }
 
 async function shipCli(args: string[]): Promise<number> {
@@ -2186,7 +2196,7 @@ async function shipCli(args: string[]): Promise<number> {
     out(r.gaps.length ? `Open gaps (${r.gaps.length})` : !r.checked ? "Open gaps: nothing to check. None of these tracks states a requirement or entry step on the pages read." : "Open gaps: none found. That says nothing about whether the requirements are met.");
     for (const g of r.gaps) {
       out(`  ${g.track}\n    ${g.gap}`);
-      out(`      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
+      out(g.requirement.kind === "told" ? `      ${g.requirement.told_by ?? "told to Donna"}: "${g.requirement.quote}"` : `      page (${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}): "${g.requirement.quote}"  ${g.requirement.source_url}`);
       for (const p of g.project) out(`      ${p.source}: "${p.quote}"${p.url ? `  ${p.url}` : ""}`);
     }
   }
