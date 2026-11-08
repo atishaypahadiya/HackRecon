@@ -11,6 +11,7 @@ import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, f
 import { callChecked } from "./model.ts";
 import type { Gap } from "./gaps.ts";
 import type { Entity } from "./schema.ts";
+import type { RepNote } from "./told.ts";
 import { NO_USAGE, type Usage } from "./usage.ts";
 
 /** One stack item (user 2026-11-06). In the Plan input each item is a name field plus one optional short field,
@@ -153,7 +154,7 @@ export function boothQuestions(tracks: PlanTrack[], input: PlanInput, gaps: Gap[
     if (gap) {
       const from = gap.project.map((p) => `${p.source} “${unstop(p.quote)}”`).join("; ");
       const ask = gap.question.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
-      out.push(q({ track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url }, `We ${gap.instead}`, ask, `the gap check: ${from}; the page's ${gap.requirement.kind === "entry_step" ? "entry step" : "requirement"} “${unstop(gap.requirement.quote)}”`));
+      out.push(q({ track_id: t.track_id, sponsor: t.sponsor, source_url: t.source_url }, `We ${gap.instead}`, ask, `the gap check: ${from}; ${gap.requirement.kind === "told" ? `a rep's requirement, ${gap.requirement.told_by ?? "told to Donna"},` : `the page's ${gap.requirement.kind === "entry_step" ? "entry step" : "requirement"}`} “${unstop(gap.requirement.quote)}”`));
       continue;
     }
     const sp = stackProduct(t.product_names, input.stack);
@@ -300,10 +301,23 @@ export function capLikely(r: Ranked, card: TrackCard | undefined, input: PlanInp
   return card.products.some((p) => productMentioned(p, text)) ? { fit: "likely", capped: false } : { fit: "possible", capped: true };
 }
 
-/** A stack change told to Donna (told.ts): the input before it and the item names it added, removed or re-used. */
+/** A change told to Donna (told.ts): the input and rep notes before it, the stack item names it added, removed or
+ *  re-used, and any track it names directly (a rep's note). */
 export interface StackRerank {
   before: PlanInput;
   changed: string[];
+  beforeNotes?: RepNote[];
+  tracks?: string[];
+}
+
+/** Rep notes ride on their track's card as context: the ranker reads them but can never quote them, so the page
+ *  stays the only quotable source. */
+export function withRepNotes(cards: TrackCard[], notes: RepNote[]): TrackCard[] {
+  if (!notes.length) return cards;
+  return cards.map((c) => {
+    const mine = notes.filter((n) => n.track_id === c.id);
+    return mine.length ? { ...c, context: [...c.context, ...mine.map((n) => `a rep told the hacker (not on the page; the page wins where they differ), ${n.kind}: "${n.text}"`)] } : c;
+  });
 }
 
 /** The tracks a stack change can move: those whose sponsor or products the changed item names, and those whose last
@@ -321,9 +335,10 @@ export function affectedTracks(cards: TrackCard[], prior: Ranked[], changed: str
 /** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). With
  *  `rerank`, only the tracks the stack change affects go to the model, and the merged ranking is cached under the new
  *  input, so a later full plan of the same input (the board's refresh) is a cache hit. */
-export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now(), rerank?: StackRerank): Promise<PlanSection<PlanTrack> | { error: string }> {
+export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now(), rerank?: StackRerank, notes: RepNote[] = []): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
-  const cards = trackCards(entities, e, aliases);
+  const base = trackCards(entities, e, aliases);
+  const cards = withRepNotes(base, notes);
   // Tracks not announced yet (Iterate, 2026-11-08): an empty ranking, saved as such, and no model call.
   const overall = overallTracks(entities, e);
   if (!cards.length) return { items: [], overall, from: "none", ms: Math.round(now() - t0), usage: null };
@@ -333,9 +348,10 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   let ranked = cache[hash]?.ranked;
   let usage: Usage | null = null;
   let from: "cache" | "model" | "partial" = ranked ? "cache" : "model";
-  const prior = !ranked && rerank && rerank.before.idea === input.idea ? cache[fitHash(system, fitRequest(rerank.before.idea, stackForRanker(rerank.before.stack)))]?.ranked : undefined;
+  const priorSystem = rerank?.beforeNotes ? fitSystemPrompt(e, withRepNotes(base, rerank.beforeNotes)) : system;
+  const prior = !ranked && rerank && rerank.before.idea === input.idea ? cache[fitHash(priorSystem, fitRequest(rerank.before.idea, stackForRanker(rerank.before.stack)))]?.ranked : undefined;
   if (prior) {
-    const hit = affectedTracks(cards, prior, rerank!.changed);
+    const hit = new Set([...affectedTracks(cards, prior, rerank!.changed), ...(rerank!.tracks ?? []).filter((id) => cards.some((c) => c.id === id))]);
     let fresh: Ranked[] = [];
     if (hit.size) {
       if (!client) return { error: "no API key, and this stack hasn't been ranked before" };

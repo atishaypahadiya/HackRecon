@@ -1252,6 +1252,10 @@ function applyTold(m) {
   if (enteredMoved) { S.entered = ent; store.set(enterKey(), JSON.stringify(S.entered)); S.gaps = null; loadShip(); }
   if (ticksMoved || enteredMoved) { P.steps = new Set(tk); store.set(stepKey(), JSON.stringify(tk)); if (P.input) paintResults(); if (S.list) paintShip(); }
   if (claimsMoved) { mergeClaims(); if (P.input) paintResults(); }
+  // Slice 3: a rep's note told to Donna re-ran the Plan server-side; fetch it (a cache hit) and Ship's items.
+  const notesMoved = (m.rep_notes || []).map((n) => n.id).join() !== (P.meta.rep_notes || []).map((n) => n.id).join();
+  P.meta.rep_notes = m.rep_notes || [];
+  if (notesMoved && P.input) { runPlan(); if (S.list) { S.gaps = null; loadShip(); } }
   if (m.told_at && m.told_at !== P.toldAt && m.input?.idea) {
     P.toldAt = m.told_at;
     P.input = m.input;
@@ -1325,8 +1329,13 @@ function liveMark(key) {
 }
 const stepBox = (s) => `<label class="ck"><input type="checkbox" data-step="${esc(s.id)}"${P.steps.has(s.id) ? " checked" : ""}><span>${esc(s.label)}${P.steps.has(s.id) ? toldMark(P.meta?.ticks?.[s.id]) : ""}</span></label>`;
 const srcLink = (u) => (safeUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(/(^|\.)devpost\.com$/.test(host(u)) ? "devpost" : /(^|\.)slack\.com$/.test(host(u)) ? "slack" : host(u))} ↗</a>` : "");
+const repNotes = (id) => (P.meta?.rep_notes || []).filter((n) => n.track_id === id);
+// "The page's requirement" or "A rep's requirement, told to Donna by Sam": a told line never reads as the page's.
+const reqSource = (r) => (r.kind === "told" ? `A rep's requirement, ${r.told_by || "told to Donna"}` : `The page's ${r.kind === "entry_step" ? "entry step" : "requirement"}`);
+
 function trackRow(t) {
-  const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label].filter(Boolean).map(esc).join(" · ");
+  const notes = repNotes(t.track_id).length;
+  const meta = [t.fit === "likely" ? "likely fits" : "possible", t.label, notes ? `${notes === 1 ? "a rep's note" : `${notes} rep notes`}, told to Donna` : ""].filter(Boolean).map(esc).join(" · ");
   // D3/D12: entry steps show at rest on likely tracks; a possible track keeps them in its drawer.
   const steps = t.fit === "likely" ? t.steps.map(stepBox).join("") : "";
   const gaps = gapsOf(t.track_id).map((g) => `<span class="pr pg"><b>Gap:</b> ${esc(g.gap)}</span>`).join("");
@@ -1438,14 +1447,16 @@ function openTrack(id, from) {
     changedPart(`tracks:${t.track_id}`, { cur: t, list: [["Fit", (x) => x.fit], ["Why", (x) => x.reason], ["Entry steps", (x) => (x.steps || []).map((s) => s.label).join("; ")]] }),
     `<h3>Why it fits</h3><div class="item"><p>${esc(t.reason)}</p>${t.evidence === "stated" ? `<q>${esc(t.quote)}</q>` : `<p class="note">Devpost states no requirements or judging criteria for this track; its title is the evidence.</p>`}</div>`,
     gapsOf(t.track_id).length
-      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">The page's ${g.requirement.kind === "entry_step" ? "entry step" : "requirement"}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
+      ? `<h3>Gaps</h3>${gapsOf(t.track_id).map((g) => `<div class="item"><p>${esc(g.gap)}</p><p class="note">${esc(reqSource(g.requirement))}</p><q>${esc(g.requirement.quote)}</q>${g.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")}`
       : t.fit === "likely" && t.evidence === "stated" && P.gaps && !P.gaps.error ? `<h3>Gaps</h3><div class="item"><p class="note">None found: nothing in your description, stack${P.input.repo ? " or repo" : ""} differs from this track's stated requirements. That doesn't say they're met.</p></div>` : "",
     t.steps.length ? `<h3>Entry steps</h3><div class="item">${t.steps.map((s) => `${stepBox(s)}<q>${esc(s.quote)}</q>`).join("")}</div>` : "",
     d.requirements.length ? `<h3>Requirements</h3><div class="item">${list(d.requirements.map(esc))}</div>` : "",
     d.criteria.length ? `<h3>Judging criteria</h3><div class="item">${list(d.criteria.map((c) => esc(c.description ? `${c.name}: ${c.description}` : c.name)))}</div>` : "",
+    // Slice 3: kept beside the page's lines above, never in place of them; the page wins where they differ.
+    repNotes(t.track_id).length ? `<h3>What a rep told you</h3>${repNotes(t.track_id).map((n) => `<div class="item"><p class="note">${n.kind === "criterion" ? "Judging" : "Requirement"}, told to Donna by ${esc(n.rep || "a rep")} · ${esc(shipFmt(n.told.at))}</p><q>${esc(n.text)}</q></div>`).join("")}<p class="note">Not on the event's pages${d.requirements.length || d.criteria.length ? "; where it differs from them, the page wins" : ""}.</p>` : "",
     d.descriptions.length ? `<h3>On the page</h3><div class="item">${list(d.descriptions.map(esc))}</div>` : "",
     d.prizes.length ? `<h3>Prizes</h3><div class="item">${list(d.prizes.map((p) => esc(p.place ? `${p.place}: ${p.award}` : p.award)))}</div>` : "",
-    safeUrl(t.source_url) ? `<div class="item acts"><a href="${esc(t.source_url)}" target="_blank" rel="noopener">Open on Devpost ↗</a></div>` : "",
+    safeUrl(t.source_url) ? `<div class="item acts"><a href="${esc(t.source_url)}" target="_blank" rel="noopener">Open the event's page ↗</a></div>` : "",
   ];
   $("dr-body").innerHTML = parts.join("");
   if (!$("drawer").open) { $("drawer").showModal(); $("dr-title").focus(); }
@@ -1500,7 +1511,7 @@ function countdown(ms) {
   return d ? `${d} d${h ? ` ${h} h` : ""}` : h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
 }
 function shipItem(x) {
-  const src = x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? (safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">added in #${esc(x.channel)} ↗</a>` : `added in #${esc(x.channel)}`) : srcLink(x.source_url);
+  const src = x.from === "told" ? esc(x.told_by || "told to Donna") : x.from === "standing" ? "HackRecon's standing item" : x.from === "slack" ? (safeUrl(x.source_url) ? `<a href="${esc(x.source_url)}" target="_blank" rel="noopener">added in #${esc(x.channel)} ↗</a>` : `added in #${esc(x.channel)}`) : srcLink(x.source_url);
   const when = x.at ? `${shipFmt(x.at)}${x.until ? `–${pfmt(x.until, { hour: "numeric", minute: "2-digit" })}` : ""} · ` : "";
   return `<li><label class="ck"><input type="checkbox" data-step="${esc(x.id)}"${P.steps.has(x.id) ? " checked" : ""}><span>${esc(x.label)}${P.steps.has(x.id) ? toldMark(P.meta?.ticks?.[x.id]) : ""}</span></label>${x.quote ? `<q>${esc(x.quote)}</q>` : ""}<div class="pmeta m">${when}${src}</div></li>`;
 }
@@ -1549,7 +1560,7 @@ function paintGaps() {
     : g?.error ? `<span class="cap">${esc(g.error)}</span>`
     : g ? `<span class="m">${esc(g.repo.replace(/^https:\/\/github\.com\//, ""))} @ ${esc(g.commit.slice(0, 7))}, latest as of ${esc(shipFmt(g.latest_at))}; checked ${esc(pfmt(g.checked_at, { hour: "numeric", minute: "2-digit" }))}</span>` : "";
   const res = !g || g.error ? ""
-    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p><p class="note">The page's ${x.requirement.kind === "entry_step" ? "entry step" : "requirement"} · ${srcLink(x.requirement.source_url)}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
+    : g.gaps.length ? g.gaps.map((x) => `<div class="sgap"><p><b>${esc(x.track)}</b></p><p>${esc(x.gap)}</p><p class="note">${esc(reqSource(x.requirement))}${x.requirement.kind === "told" ? "" : ` · ${srcLink(x.requirement.source_url)}`}</p><q>${esc(x.requirement.quote)}</q>${x.project.map((p) => `<p class="note">${p.url && safeUrl(p.url) ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.source)} ↗</a>` : esc(p.source[0].toUpperCase() + p.source.slice(1))}</p><q>${esc(p.quote)}</q>`).join("")}</div>`).join("")
     : `<p class="note">${g.checked ? "No open gaps found. That doesn't say the requirements are met." : "Nothing to check: none of these tracks states a requirement or entry step on the pages read."}${g.from === "reused" ? " The commit hasn't changed since the last check." : ""}</p>`;
   body.innerHTML = `<div class="go-row">${btn}${why}</div>${res}`;
 }
