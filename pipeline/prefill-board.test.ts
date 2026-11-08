@@ -70,12 +70,14 @@ describe("Board drafts from a repo", () => {
     expect(root.querySelector("img")).toBeNull();
     expect(root.querySelector("b")).toBeNull();
   });
-  test("the module never reads or writes browser storage, and the page saves the input only on submit", () => {
+  test("the module never reads or writes browser storage, and the page saves the input only on submit or from the event's stored input", () => {
     const src = readFileSync(new URL("../board/prefill.js", import.meta.url), "utf8");
     expect(src).not.toMatch(/localStorage|sessionStorage|indexedDB|store\./);
     const page = readFileSync(BOARD_PAGE, "utf8");
     expect(page).toContain("<!-- prefill.js -->");
-    expect(page.match(/store\.set\(planKey\(\)/g)?.length).toBe(1);
+    // Chat writes (told.ts): the other saves copy the event's stored input from /plan/meta, never a draft.
+    expect(page.match(/store\.set\(planKey\(\)/g)?.length).toBe(3);
+    expect(page.match(/P\.input = m\.input;\s*store\.set\(planKey\(\), JSON\.stringify\(P\.input\)\)/g)?.length).toBe(2);
     const submit = page.slice(page.indexOf('$("pf").onsubmit'));
     expect(submit.slice(0, submit.indexOf("\n  };")).includes("store.set(planKey()")).toBe(true);
   });

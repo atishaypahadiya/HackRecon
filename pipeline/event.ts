@@ -51,6 +51,12 @@ export const DISCORD_UNREAD_PATH = "data/discord_unread.json";
 export const PAGE_CHECK_PATH = "data/page_check.json";
 /** Track changes a page re-read found (new tracks, noted lines gone), for alerts. */
 export const PAGE_CHANGES_PATH = "data/page_changes.json";
+/** Chat writes (told.ts): credits the hacker has claimed, by credit id, with who told and when. */
+export const CLAIMS_PATH = "data/claims.json";
+/** Every write, from chat or the board: time, source, the hacker's words, the operation and its one-line result. */
+export const WRITES_LOG_PATH = "data/writes.jsonl";
+/** A destructive write waiting for the hacker's "yes". */
+export const PENDING_WRITE_PATH = "data/pending_write.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";

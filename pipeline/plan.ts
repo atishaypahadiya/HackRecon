@@ -19,6 +19,8 @@ import type { Usage } from "./usage.ts";
 export interface StackItem {
   name: string;
   used_for: string | null;
+  /** Set when the item was told to Donna (told.ts), not typed into the Plan form; kept through the board's edits. */
+  told?: { source: "chat" | "board"; at: string; quote: string | null };
 }
 
 export interface PlanInput {
@@ -348,12 +350,14 @@ export function parsePlanBody(body: unknown): PlanInput | { error: string } {
   if (raw.length > PLAN_LIMITS.items) return { error: `the stack has over ${PLAN_LIMITS.items} items` };
   const stack: StackItem[] = [];
   for (const x of raw) {
-    const it = x as { name?: unknown; used_for?: unknown };
+    const it = x as { name?: unknown; used_for?: unknown; told?: unknown };
     const name = typeof it?.name === "string" ? it.name.trim() : "";
     const used = typeof it?.used_for === "string" ? it.used_for.trim() : "";
     if (!name) continue;
     if (name.length > PLAN_LIMITS.name || used.length > PLAN_LIMITS.used_for) return { error: `a stack item is over ${PLAN_LIMITS.name} characters, or its use over ${PLAN_LIMITS.used_for}` };
-    stack.push({ name, used_for: used || null });
+    const t = it.told as { source?: unknown; at?: unknown; quote?: unknown } | undefined;
+    const told = t && (t.source === "chat" || t.source === "board") && typeof t.at === "string" && (typeof t.quote === "string" || t.quote === null) ? { source: t.source as "chat" | "board", at: t.at, quote: t.quote as string | null } : null;
+    stack.push({ name, used_for: used || null, ...(told ? { told } : {}) });
   }
   const repo = typeof b.repo === "string" ? b.repo.trim() : "";
   if (repo && !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?(?:\.git)?\/?$/.test(repo)) return { error: "the repo link must be a public https://github.com/<owner>/<repo> link" };
