@@ -5,7 +5,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { join } from "node:path";
 import { alertFor, deliver, isFresh, EMPTY_NOTIFY, unreadAlert, unsend, type Alert, type NotifyState, type PlanFacts, type Sms } from "./alerts.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
-import { channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
+import { channelKey, channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
 import { pollBot, type BotState, type DiscordBot, type BotPollLog } from "./discordbot.ts";
 import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PLAN_PATH, SMS_OUTBOX_PATH } from "./event.ts";
 import { readMessages, saveRun } from "./runs.ts";
@@ -28,7 +28,7 @@ export interface UnreadRecord {
 
 const DOM_FILE = /^[0-9TZ-]+-\d+\.json$/;
 
-export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | null; now: Date }): Promise<{ files: number; posts: number; added: number; unread: number; bot?: BotPollLog; errors: string[]; proposed: string[] }> {
+export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | null; now: Date }): Promise<{ files: number; posts: number; added: number; unread: number; bot?: BotPollLog; errors: string[]; proposed: { key: string; channel: string; guild: string }[] }> {
   const st = readJsonFile<DiscordState>(DISCORD_STATE_PATH, { files: [], bot: { channels: {} }, guilds: {} });
   const done = new Set(st.files);
   const posts: { post: DiscordPost; at: string }[] = [];
@@ -61,10 +61,17 @@ export async function ingestDiscord(o: { dir: string | null; bot: DiscordBot | n
     }
   }
   for (const { post } of posts) st.guilds[post.channel_id] = post.crosspost?.guild_name ?? post.guild_name;
-  // Authority only where the user said so (D19): event.json authority_channels. A channel that is read-only for the
-  // user and named like announcements is proposed, never trusted: a server may lock everything until you verify.
-  const trusted = new Set(readJsonFile<{ authority_channels?: string[] }>(EVENT_PATH, {}).authority_channels ?? []);
-  const proposed = [...new Set(posts.filter(({ post }) => post.read_only_channel && !post.crosspost && !trusted.has(post.channel_name) && channelRole(post.channel_name) === "announcement").map(({ post }) => post.channel_name))];
+  // Authority only where the user said so (D19): event.json discord_authority_channels, by ids. A channel that is
+  // read-only for the user and named like announcements is proposed, never trusted: a server may lock everything
+  // until you verify.
+  const trusted = new Set(readJsonFile<{ discord_authority_channels?: string[] }>(EVENT_PATH, {}).discord_authority_channels ?? []);
+  const proposed = [
+    ...new Map(
+      posts
+        .filter(({ post }) => post.read_only_channel && !post.crosspost && !trusted.has(channelKey(post.guild_id, post.channel_id)) && channelRole(post.channel_name) === "announcement")
+        .map(({ post }) => [channelKey(post.guild_id, post.channel_id), { key: channelKey(post.guild_id, post.channel_id), channel: post.channel_name, guild: post.guild_name }] as const),
+    ).values(),
+  ];
   const have = new Set(existsSync(MESSAGES_PATH) ? readMessages().map((m) => m.id) : []);
   const runId = `discord-${o.now.toISOString().replace(/[:.]/g, "-")}`;
   const fresh = new Map<string, Message>();

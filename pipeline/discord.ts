@@ -21,7 +21,8 @@ export interface DiscordPost {
   /** A post Discord relayed from a followed announcement channel: where it was first posted. */
   crosspost?: { guild_name: string; channel_name: string; guild_id?: string; channel_id?: string; message_id?: string };
   /** The composer says this user can't post here. An observation only, never authority: servers lock every channel
-   *  for a member who hasn't verified yet. A read-only announcement-named channel is proposed for authority_channels. */
+   *  for a member who hasn't verified yet. A read-only announcement-named channel is proposed for
+   *  discord_authority_channels. */
   read_only_channel?: boolean;
   /** Message text, then each embed's title and description on their own lines; links as `label <href>`. */
   text: string;
@@ -75,10 +76,16 @@ export function crosspostSource(webhookName: string): { guild_name: string; chan
 
 export const permalink = (guild: string, channel: string, message: string) => `https://discord.com/channels/${guild}/${channel}/${message}`;
 
+/** A Discord channel as event.json discord_authority_channels lists it: by ids, never by name, so another server's
+ *  #announcements (or a Slack channel of that name) never counts. */
+export const channelKey = (guildId: string, channelId: string) => `${guildId}/${channelId}`;
+
 /** As a Message: channel ids are prefixed so they never meet a Slack id; a crosspost is filed under its source
  *  channel's name (where it was posted), linked to its source when Discord gave one. Authority (D19) only from what
- *  the user chose: a channel they followed into their own server, or one listed in event.json authority_channels. */
-export function toMessage(p: DiscordPost, runId: string, capturedAt: string, authorityChannels: ReadonlySet<string> = new Set()): Message {
+ *  the user chose: a crosspost the bot read in their own server (it arrives there only through a Follow they made), or
+ *  a channel listed by id in event.json discord_authority_channels. A crosspost seen in some other server's tab is
+ *  that server's choice, not the user's: no authority unless its channel is listed. */
+export function toMessage(p: DiscordPost, runId: string, capturedAt: string, authority: ReadonlySet<string> = new Set()): Message {
   const channel_id = `discord-${p.channel_id}`;
   const ts = snowflakeTs(p.message_id);
   const src = p.crosspost;
@@ -90,7 +97,7 @@ export function toMessage(p: DiscordPost, runId: string, capturedAt: string, aut
     ts,
     author_name: src ? `${src.guild_name} #${src.channel_name}` : p.author_name,
     author_kind: p.author_kind,
-    ...(src || authorityChannels.has(p.channel_name) ? { authority: true as const } : {}),
+    ...((src && p.via === "bot") || authority.has(channelKey(p.guild_id, p.channel_id)) ? { authority: true as const } : {}),
     text: p.text,
     links: p.links,
     permalink: link,

@@ -59,13 +59,14 @@ Only channels of Discord's Announcement type have Follow. Discord also sends a p
 staff publish it. An announcement they don't publish shows up only in the event's server, so keep that channel open
 in a tab as well, and the extension reads it there.
 
-Tracks, judging and room-change alerts fire only for posts HackRecon knows came from the event's staff: the followed
-crossposts, and channels you list under `authority_channels` in the event's `config/event.json`. A channel you can't
+Tracks, judging and room-change alerts fire only for posts HackRecon knows came from the event's staff: the
+crossposts the bot reads in your own server, and channels you list by id under `discord_authority_channels` in the
+event's `config/event.json`. Ids, not names, so another server's `#announcements` never counts. A channel you can't
 post in is not proof on its own (some servers lock every channel until you verify), so `hr discord-ingest` only
-suggests a read-only, announcement-named channel; add it to the list yourself if only staff post there:
+suggests a read-only, announcement-named channel, with the entry to add if only staff post there:
 
 ```json
-"authority_channels": ["announcements"]
+"discord_authority_channels": ["<server id>/<channel id>"]
 ```
 
 ## 4. Twilio

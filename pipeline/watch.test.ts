@@ -14,11 +14,12 @@ import { EVENT_PATH, ITEMS_PATH, PLAN_PATH } from "./event.ts";
 import { readMessages } from "./runs.ts";
 import type { Item } from "./schema.ts";
 import { channelPage, idOf, replay, type ReplayPost } from "./testdata/discord-replay.ts";
-import { snowflakeMs } from "./discord.ts";
+import { snowflakeMs, toMessage } from "./discord.ts";
 import { ingestDiscord, runAlerts } from "./watch.ts";
 
 const TOKEN = "MTQwMDAwMDAwMDAwMDAwMDAwMQ.Gx1y2z.abcdefghijklmnopqrstuvwxyz0123456789ABCD";
 const G = replay.guild.id;
+const ANNOUNCE_ID = replay.posts.find((p) => p.channel.name === "announcements")!.channel.id;
 let home = "";
 let downloads = "";
 const was = process.cwd();
@@ -66,7 +67,7 @@ beforeAll(async () => {
   process.chdir(join(home, "event"));
   writeJsonFile(PLAN_PATH, replay.plan);
   // The user's choice (D19): #announcements is where only staff post. Without it, nothing there has authority.
-  writeJsonFile(EVENT_PATH, { authority_channels: ["announcements"] });
+  writeJsonFile(EVENT_PATH, { discord_authority_channels: [`${G}/${ANNOUNCE_ID}`] });
   const seen = new Map<string, Set<string>>();
   const rendered = new Map<string, ReplayPost[]>();
   let first = true;
@@ -99,6 +100,17 @@ afterAll(() => {
 });
 
 describe("authority is the user's choice, never the composer's say-so (security review, 2026-11-07)", () => {
+  test("by server and channel id, never by name; crossposts only when the bot read them in the user's own server", () => {
+    const post = { via: "dom" as const, guild_id: G, guild_name: "Example Hacks", channel_id: ANNOUNCE_ID, channel_name: "announcements", message_id: "1300000000000009001", author_name: "Team", author_kind: "user" as const, text: "Tracks are live", links: [] };
+    const listed = new Set([`${G}/${ANNOUNCE_ID}`]);
+    expect(toMessage(post, "r", "", listed).authority).toBe(true);
+    expect(toMessage({ ...post, guild_id: "1999999999999999999" }, "r", "", listed).authority).toBeUndefined();
+    expect(toMessage({ ...post, channel_id: "1300000000000000099" }, "r", "", listed).authority).toBeUndefined();
+    const crosspost = { ...post, channel_id: "1300000000000000099", crosspost: { guild_name: "Some Server", channel_name: "announcements" } };
+    expect(toMessage(crosspost, "r", "").authority).toBeUndefined();
+    expect(toMessage({ ...crosspost, via: "bot" }, "r", "").authority).toBe(true);
+  });
+
   test("a read-only channel alone grants nothing: its posts can't set off organizer alerts; it is proposed instead", async () => {
     const dir = mkdtempSync(join(tmpdir(), "hr-discord-noauth-"));
     const prev = process.cwd();
@@ -114,8 +126,10 @@ describe("authority is the user's choice, never the composer's say-so (security 
         const view = readChannel(document as unknown as Document, `/channels/${G}/${p.channel.id}`, document.title)!;
         writeFileSync(join(dir, "dl", `2026-11-14T17-01-00-000Z-${p.channel.id}.json`), JSON.stringify({ kind: "discord-dom", captured_at: "2026-11-14T17:01:00.000Z", guild_id: G, guild_name: "Example Hacks", posts: view.posts, unread: [] }));
       }
+      // Slack's names never apply, and neither does another server's id for the same channel.
+      writeJsonFile(EVENT_PATH, { authority_channels: ["announcements", "general"], discord_authority_channels: [`1999999999999999999/${ANNOUNCE_ID}`] });
       const r = await ingestDiscord({ dir: join(dir, "dl"), bot: null, now: new Date("2026-11-14T17:01:00Z") });
-      expect(r.proposed).toEqual(["announcements"]);
+      expect(r.proposed).toEqual([{ key: `${G}/${ANNOUNCE_ID}`, channel: "announcements", guild: "Example Hacks" }]);
       expect(readMessages().filter((m) => m.authority)).toEqual([]);
       const a = await runAlerts({ nowMs: Date.parse("2026-11-14T09:02:00-08:00"), tz: "America/Los_Angeles", organizerIds: new Set(), send: null });
       expect(a.fresh).toEqual([]);
@@ -127,7 +141,7 @@ describe("authority is the user's choice, never the composer's say-so (security 
 });
 
 describe("replayed Discord event → texts", () => {
-  test("every post is read once; organizer authority only from authority_channels and the followed crossposts", () => {
+  test("every post is read once; organizer authority only from discord_authority_channels and the bot's crossposts", () => {
     const ms = readMessages();
     expect(ms).toHaveLength(replay.posts.length);
     expect(ms.filter((m) => m.authority).map((m) => m.channel_name).sort()).toEqual(["announcements", "announcements", "announcements", "announcements", "announcements", "announcements"]);

@@ -377,7 +377,7 @@ async function discordIngestRun(dir: string): Promise<number> {
     `discord-ingest: ${r.files} file${r.files === 1 ? "" : "s"} from ${dir}, ${r.posts} posts read, ${r.added} new; ${r.unread} unread badge${r.unread === 1 ? "" : "s"}` +
       (r.bot ? `; bot: ${r.bot.crossposts} crossposts from ${r.bot.channels} channel${r.bot.channels === 1 ? "" : "s"} in ${r.bot.guilds} server${r.bot.guilds === 1 ? "" : "s"}, ${r.bot.calls} calls, ${r.bot.retries} retries` : bot ? "" : "; bot: off (no DISCORD_BOT_TOKEN)"),
   );
-  for (const c of r.proposed) console.log(`  #${c} is read-only for you and named like announcements. If only the event's staff post there, add "${c}" to authority_channels in ${EVENT_PATH} so its tracks, judging and room-change posts can alert`);
+  for (const c of r.proposed) console.log(`  #${c.channel} (${c.guild}) is read-only for you and named like announcements. If only the event's staff post there, add "${c.key}" to discord_authority_channels in ${EVENT_PATH} so its tracks, judging and room-change posts can alert`);
   if (r.bot?.empty) console.log(`  ${r.bot.empty} crossposts arrived with no text: turn on the Message Content Intent (docs/discord-bot.md, step 2)`);
   for (const e of r.errors) console.error(`  ${e}`);
   return r.added;
