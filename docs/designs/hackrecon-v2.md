@@ -127,7 +127,7 @@ Verified (2026-11-07):
   1. Stack updates and claims, end to end (this change).
   2. Entered tracks (confirm unset) and Ship ticks, both moved from localStorage to the store (built 2026-11-08).
   3. Rep requirements and criteria, at the weakest tier (built 2026-11-08).
-  4. Teammates and their skills.
+  4. Teammates and their skills (built 2026-11-08).
 
 Slice 1 built (2026-11-08):
 - **Where it lives:**
@@ -186,6 +186,22 @@ Slice 1 built (2026-11-08):
     - Iterate (Exa states no requirements): "Sam at the Exa booth said the project has to call the Exa search API from the agents themselves" → noted. Exa re-ranked, its reason now turning on Exa search; no gap. The board showed "a rep's note, told to Donna" on the row about 45 s later. Cost $0.0046 re-rank + $0.0030 gap check. After "I'm entering the Exa track", Ship listed the requirement under Exa.
     - Cal Hacks copy (Convex's page: "Build it on Convex: database, functions, workflows, sync, search, and file storage in one TypeScript backend"): "Priya at the Convex booth said it's fine to use Convex only for the database and keep our Python backend". Donna's reply quoted both page lines; the drawer showed both. The gap from the page's requirement stayed. Convex went likely → possible: with the conflict in front of it and the page winning, the ranker judged the Python backend against the page. Cost $0.0229 re-rank (cache cold) + $0.0040 gap check.
     - A rep saying something looser than the page can't raise a fit. That is the "never override the page" rule, and it can lower one by drawing attention to the conflict.
+- **Slice 4, teammates and their skills (user, 2026-11-08):** "a teammate's skills count toward a track's entry steps and requirements, and gaps should distinguish 'nobody on the team can do this' from 'we haven't done it yet'. If I say someone joined, re-rank and re-check gaps with the team's combined skills, not just mine."
+  - **Store:** `data/team.json`, one entry per person (id "me" for the hacker), each skill with the words that added it. Donna's `set_teammate` adds a person or skills, drops skills, or records someone leaving. The message must name the person ("I", "my" or "me" for the hacker) and each skill as whole words. Leaving is confirmed first.
+  - **Ranking:** the team's skill lines go in the ranker's request (`<team>`, "skills, not things the project does yet"), only when a team is told, so a teamless request and its cached ranking are unchanged.
+  - A team change re-judges every track on the Plan plus any track a changed skill names, all with the combined skills. Two rules held in code, because a skill can only add capability:
+    - When skills are only added, a track the ranker leaves out or rates lower keeps its last judgment.
+    - When skills are only taken away, no fit rises.
+  - **Bug found live:** `checkFit` required exactly five tracks and cut at five, so re-judging seven tracks dropped two every time. Partial re-judges now take any number and cut none.
+  - **Gaps:** each person who lists skills is a team fact ("Priya's skills: TypeScript, React"). With a team told, the gap check also returns, per gap, the team skills that cover it, each quoted exactly as one listed skill. A team fact can never be evidence of a gap.
+    - With a covering skill, the gap reads "Not done yet: Priya lists TypeScript". With none, it reads "Nobody on the team lists a skill for this". The wording is "lists", since Donna only knows what she was told.
+    - With no team told, gaps carry no team line and the check is the same request as before, keeping its cache.
+    - Entry steps are among the requirements checked, so skills count toward them too. Ship's gap recheck includes the team, and a team change means a new recheck.
+  - **Board:** a "Team, told to Donna" line under the summary. Gaps on the Plan row, in the drawer and on Ship carry the team line. A team change repaints the Plan on the next refresh.
+  - **Live on the Cal Hacks copy** (gap: Convex's page asks for one TypeScript backend; the stack has Python FastAPI):
+    - "Priya joined the team, she does TypeScript and React" → Convex possible → likely. The gap reads "Not done yet: Priya lists TypeScript". No track dropped. $0.0134 re-rank + $0.0043 gaps.
+    - "Lee joined the team and builds Apify Actors" → Apify's 1st Customer Award came in as possible. $0.0159 + $0.0043.
+    - "Priya left the team" was asked first. After "yes", the gap reads "Nobody on the team lists a skill for this"; the board showed it on the next refresh. Convex stayed likely (the ranker's call; the rule only stops a fit rising when someone leaves). $0.0158 + $0.0041.
 - **The board on Iterate (2026-11-08, user: "point the board at Iterate"):**
   - `hr board` now starts on an event with no posts: Plan and Ship come from the event's page, and Claim says "No offers posted yet." The organizers file is optional there and in Ship.
   - On a fresh copy of Iterate with the board open:

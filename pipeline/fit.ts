@@ -166,8 +166,13 @@ export interface Ranked {
   quote: string;
 }
 
-export function fitRequest(idea: string, stack: string[] | null): string {
-  return `<idea>${idea}</idea>${stack?.length ? `\n<stack>${stack.join(", ")}</stack>` : ""}`;
+/** `team`: each person's skills as told to Donna ("Priya: React, Figma"). Absent with no team, so a teamless request
+ *  (and its cached ranking) is unchanged. */
+export function fitRequest(idea: string, stack: string[] | null, team: string[] = []): string {
+  const t = team.length
+    ? `\n<team>What the hacker's team can do, as they told it (the hacker is "you"). Count these toward what a track asks for, as you would the stack; a reason may cite one, like "Priya lists React". They are skills, not things the project does yet.\n${team.join("\n")}</team>`
+    : "";
+  return `<idea>${idea}</idea>${stack?.length ? `\n<stack>${stack.join(", ")}</stack>` : ""}${t}`;
 }
 
 export function fitHash(system: string, request: string): string {
@@ -178,9 +183,10 @@ export function fitHash(system: string, request: string): string {
  *  sentences and more than its name, any other track's quote is in its title; a cash_only track is never "likely";
  *  no reason uses eligibility language. A failure goes back to the model (callChecked). The result keeps the
  *  model's order with cash_only tracks moved last, so the eval scores the order Plan shows. */
-export function checkFit(parsed: unknown, cards: TrackCard[]): Ranked[] | { error: string } {
+export function checkFit(parsed: unknown, cards: TrackCard[], partial = false): Ranked[] | { error: string } {
+  // partial: re-judging only some tracks (plan.ts), where any number can come back, none left out by the top-5 cut.
   const r = (parsed as { ranked?: Ranked[] })?.ranked;
-  if (!Array.isArray(r) || !r.length) return { error: "missing ranked[]" };
+  if (!Array.isArray(r) || (!r.length && !partial)) return { error: "missing ranked[]" };
   const byId = new Map(cards.map((c) => [c.id, c]));
   const errors: string[] = [];
   const seen = new Set<string>();
@@ -201,9 +207,9 @@ export function checkFit(parsed: unknown, cards: TrackCard[]): Ranked[] | { erro
     const bad = ELIGIBILITY.exec(x.reason);
     if (bad) errors.push(`reason for ${c.name} says "${bad[0]}": state the condition, never eligibility`);
   }
-  if (r.length < Math.min(FIT_TOP, cards.length)) errors.push(`ranked ${r.length} tracks, expected ${Math.min(FIT_TOP, cards.length)}`);
+  if (!partial && r.length < Math.min(FIT_TOP, cards.length)) errors.push(`ranked ${r.length} tracks, expected ${Math.min(FIT_TOP, cards.length)}`);
   if (errors.length) return { error: errors.join("; ") };
-  const top = r.slice(0, FIT_TOP);
+  const top = partial ? r : r.slice(0, FIT_TOP);
   const last = (x: Ranked) => (byId.get(x.track_id)!.evidence === "cash_only" ? 1 : 0);
   return top.map((x, i) => ({ x, i })).sort((a, b) => last(a.x) - last(b.x) || a.i - b.i).map(({ x }) => x);
 }

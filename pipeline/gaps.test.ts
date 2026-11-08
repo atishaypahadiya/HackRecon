@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkGaps, copies, gapRequirements, shortTrack, inputFacts, planGaps, type GapCache } from "./gaps.ts";
+import { checkGaps, copies, gapHash, gapRequest, gapRequirements, shortTrack, inputFacts, planGaps, teamFacts, teamGapLine, type GapCache } from "./gaps.ts";
 import { NOT_STATED, type PlanTrack } from "./plan.ts";
 import { parseRepoUrl, repoFacts, repoTexts } from "./repo.ts";
 import type { Entity } from "./schema.ts";
@@ -129,5 +129,43 @@ describe("Linked repo", () => {
       ["api/scan.py:2", 'ACTOR = "apify/cheerio-scraper"'],
     ]);
     expect(facts[1]!.url).toBe(`https://github.com/o/r/blob/${repo.sha}/api/scan.py#L2`);
+  });
+});
+
+describe("gaps with a team (slice 4)", () => {
+  const told = { source: "chat" as const, at: "2026-11-14T19:00:00.000Z", quote: "x" };
+  const team = [
+    { id: "me", name: null, skills: [{ name: "Python", told }], told },
+    { id: "priya", name: "Priya", skills: [{ name: "Apify Actors", told }, { name: "TypeScript", told }], told },
+    { id: "lee", name: "Lee", skills: [], told },
+  ];
+  const reqs = gapRequirements(tracks, [actor]);
+  const facts = [...inputFacts(input), ...teamFacts(team), repoLine].map((f, k) => ({ ...f, id: `F${k + 1}` }));
+  const gap = (skills: { fact_id: string; quote: string }[], cite = "F3") => ({ gaps: [{ requirement_id: "R1", facts: [{ fact_id: cite, quote: "Apify: scrape campus calendars" }], skills, gap: "Best Actor asks for building an Actor; the stack scrapes calendars with Apify.", instead: "run a prebuilt scraper", question: "does Best Actor need a new Actor built this weekend?" }] });
+  test("one team fact per person who lists skills; the hacker is \"your skills\"", () => {
+    expect(teamFacts(team).map((f) => [f.kind, f.source, f.text])).toEqual([["team", "your skills", "Python"], ["team", "Priya's skills", "Apify Actors, TypeScript"]]);
+  });
+  test("a skill that covers it: we haven't done it yet, naming who", () => {
+    const r = checkGaps(gap([{ fact_id: "F5", quote: "Apify Actors" }]), reqs, facts);
+    if ("error" in r) throw new Error(r.error);
+    expect(r[0]!.team).toEqual([{ who: "Priya", skill: "Apify Actors" }]);
+    expect(teamGapLine(r[0]!.team!)).toBe("we haven't done it yet; Priya lists Apify Actors");
+  });
+  test("no skill covers it: nobody on the team lists one", () => {
+    const r = checkGaps(gap([]), reqs, facts);
+    if ("error" in r) throw new Error(r.error);
+    expect([r[0]!.team, teamGapLine(r[0]!.team!)]).toEqual([[], "nobody on the team lists a skill for this"]);
+  });
+  test("a skill is never evidence of a gap, and must be one whole skill as told", () => {
+    expect(checkGaps(gap([], "F5"), reqs, facts)).toEqual({ error: "F5 is a team fact: it says what someone can do, not what the project does; cite it in skills, not facts" });
+    expect(checkGaps(gap([{ fact_id: "F5", quote: "Apify" }]), reqs, facts)).toEqual({ error: '"Apify" is not one of the skills in F5; quote one skill exactly' });
+    expect(checkGaps(gap([{ fact_id: "F3", quote: "Apify" }]), reqs, facts)).toEqual({ error: "F3 is not a team fact" });
+  });
+  test("with no team told, gaps carry no team line and the check is the same one as before", () => {
+    const solo = [...inputFacts(input), repoLine].map((f, k) => ({ ...f, id: `F${k + 1}` }));
+    const r = checkGaps(gap([]), reqs, solo);
+    if ("error" in r) throw new Error(r.error);
+    expect(r[0]!.team).toBeUndefined();
+    expect(gapHash(gapRequest(reqs, solo))).not.toBe(gapHash(gapRequest(reqs, solo), true));
   });
 });
