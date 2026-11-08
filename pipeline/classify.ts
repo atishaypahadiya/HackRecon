@@ -48,6 +48,9 @@ export interface EventConfig {
   schedule_pages?: string[];
   /** v2 (D19): channels whose posts carry organizer authority. Unset: channels Slack marks restricted-posting. */
   authority_channels?: string[];
+  /** Discord channels where only the event's staff post, as "<server id>/<channel id>" (discord.ts channelKey). Ids,
+   *  not names: Slack's authority_channels never apply to Discord. */
+  discord_authority_channels?: string[];
   /** Channels only hackers post in (reps.ts signal 3: a likely rep never posts there). Unset: channels named like
    *  team formation or introductions (reps.ts HACKER_ONLY). */
   hacker_only_channels?: string[];

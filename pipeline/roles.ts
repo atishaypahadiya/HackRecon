@@ -104,6 +104,7 @@ export function rolesById(messages: Message[], sponsors: Record<string, SponsorE
     }
   }
   return (m) => {
+    if (m.authority) return "organizer";
     if (!m.author_id) return "other";
     const who = person(m.author_id);
     if (organizer.has(who)) return "organizer";

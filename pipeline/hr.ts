@@ -72,6 +72,9 @@ import {
   type Labels,
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
+import { DiscordBot } from "./discordbot.ts";
+import { sendSms, smsConfig } from "./sms.ts";
+import { ingestDiscord, runAlerts } from "./watch.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import type { ExportUser } from "./export.ts";
@@ -106,6 +109,10 @@ import {
   JUDGE_RUN_PATH,
   LABELS_PATH,
   MESSAGES_PATH,
+  ALERTS_LOG_PATH,
+  DISCORD_UNREAD_PATH,
+  PLAN_PATH,
+  SMS_OUTBOX_PATH,
   ORGANIZERS_PATH,
   PAGE_FIXTURES_DIR,
   PAGES_DIR,
@@ -293,9 +300,22 @@ const USAGE = `usage:
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
       --new: only posts never classified under any prompt (a sync's new posts); the rest keep their newest
       answer, even after event.json changed the prompt. --dry-run builds every request and prints one and the
-      estimate, with no API call. Needs ANTHROPIC_API_KEY (.env).`;
+      estimate, with no API call. Needs ANTHROPIC_API_KEY (.env).
+  bun run hr discord-ingest [DIR]
+      Discord (read-only): what the extension saved from your open Discord tabs (DIR, default
+      ~/Downloads/hackrecon/discord), and, with DISCORD_BOT_TOKEN in .env, the crossposts the HackRecon bot reads
+      in your own server (docs/discord-bot.md). New posts go to ${MESSAGES_PATH}; unread badges to ${DISCORD_UNREAD_PATH}.
+  bun run hr alerts [--dry-run] [--at ISO] [--list]
+      Texts for fresh posts: tracks or judging posted, a deadline or room change, a workshop or sponsor offer
+      that matches your Plan (${PLAN_PATH}, saved by \`hr plan\`), unread badges. Important ones at once (one per 10
+      minutes, four an hour), the rest in a digest every 2 hours. Sends through Twilio (TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN, TWILIO_FROM, HACKRECON_SMS_TO in .env); --dry-run, or no Twilio settings, writes the texts
+      to ${SMS_OUTBOX_PATH} only. --list prints every alert found so far.
+  bun run hr watch [--every 2m] [--once] [--dry-run] [DIR]
+      discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
+      the posts wait; watch never passes --yes), then alerts, every --every.`;
 
-const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "discover", "compare-api", "plan", "ship", "prefill", "prefill-eval"];
+const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "discover", "compare-api", "plan", "ship", "prefill", "prefill-eval", "discord-ingest", "alerts", "watch"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -325,6 +345,9 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "sync") return sync(rest);
   if (cmd === "discover") return discover(rest);
   if (cmd === "compare-api") return compareApi(rest);
+  if (cmd === "discord-ingest") return discordIngest(rest);
+  if (cmd === "alerts") return alerts(rest);
+  if (cmd === "watch") return watch(rest);
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -332,6 +355,90 @@ async function main(argv: string[]): Promise<number> {
   }
   console.error(USAGE);
   return cmd ? 2 : 0;
+}
+
+const DISCORD_DOWNLOADS = join(homedir(), "Downloads", "hackrecon", "discord");
+
+function discordBot(): DiscordBot | null {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  return token ? new DiscordBot(token, { fetch: (u, i) => fetch(u, i), sleep: (ms) => Bun.sleep(ms), now: Date.now }) : null;
+}
+
+/** New Discord posts in, as Messages. Returns how many were added. */
+async function discordIngestRun(dir: string): Promise<number> {
+  let bot: DiscordBot | null = null;
+  try {
+    bot = discordBot();
+  } catch (e) {
+    console.error(`discord-ingest: ${(e as Error).message}`);
+  }
+  const r = await ingestDiscord({ dir, bot, now: new Date() });
+  console.log(
+    `discord-ingest: ${r.files} file${r.files === 1 ? "" : "s"} from ${dir}, ${r.posts} posts read, ${r.added} new; ${r.unread} unread badge${r.unread === 1 ? "" : "s"}` +
+      (r.bot ? `; bot: ${r.bot.crossposts} crossposts from ${r.bot.channels} channel${r.bot.channels === 1 ? "" : "s"} in ${r.bot.guilds} server${r.bot.guilds === 1 ? "" : "s"}, ${r.bot.calls} calls, ${r.bot.retries} retries` : bot ? "" : "; bot: off (no DISCORD_BOT_TOKEN)"),
+  );
+  for (const c of r.proposed) console.log(`  #${c.channel} (${c.guild}) is read-only for you and named like announcements. If only the event's staff post there, add "${c.key}" to discord_authority_channels in ${EVENT_PATH} so its tracks, judging and room-change posts can alert`);
+  if (r.bot?.empty) console.log(`  ${r.bot.empty} crossposts arrived with no text: turn on the Message Content Intent (docs/discord-bot.md, step 2)`);
+  for (const e of r.errors) console.error(`  ${e}`);
+  return r.added;
+}
+
+async function discordIngest(args: string[]): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  await discordIngestRun(positionals[0] ? fromCaller(positionals[0]) : DISCORD_DOWNLOADS);
+  return 0;
+}
+
+async function alertsRun(dryRun: boolean, nowMs: number): Promise<void> {
+  const cfg = smsConfig(process.env);
+  if (!dryRun && "missing" in cfg) console.log(`alerts: Twilio not set up (${cfg.missing.join(", ")} missing or malformed in .env): texts go to ${SMS_OUTBOX_PATH} only`);
+  const send = dryRun || "missing" in cfg ? null : (body: string) => sendSms(cfg, body, (u, i) => fetch(u, i));
+  let organizerIds = new Set<string>();
+  try {
+    organizerIds = loadOrganizerIds();
+  } catch {}
+  const tz = existsSync(EVENT_PATH) ? readEvent().timezone : "America/Los_Angeles";
+  const r = await runAlerts({ nowMs, tz, organizerIds, send });
+  for (const a of r.fresh) console.log(`  ${a.level === "now" ? "now   " : "digest"} ${a.kind}: ${a.what} (${a.source}). Why: ${a.why}`);
+  for (const o of r.outbox) console.log(`  text (${o.level}, ${o.status}${o.error ? `: ${o.error}` : ""}):\n${o.body.replace(/^/gm, "    | ")}`);
+  console.log(`alerts: ${r.fresh.length} new, ${r.outbox.filter((o) => o.status === "sent").length} texts sent, ${r.outbox.filter((o) => o.status === "dry-run").length} to the outbox only; waiting: ${r.queued.now} important, ${r.queued.digest} for the digest`);
+}
+
+async function alerts(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, at: { type: "string" }, list: { type: "boolean", default: false } } });
+  if (values.list) {
+    for (const l of existsSync(ALERTS_LOG_PATH) ? readFileSync(ALERTS_LOG_PATH, "utf8").trim().split("\n").filter(Boolean) : []) {
+      const a = JSON.parse(l) as { found_at: string; level: string; kind: string; what: string; source: string; why: string };
+      console.log(`${a.found_at}  ${a.level.padEnd(6)} ${a.kind}: ${a.what} (${a.source}). Why: ${a.why}`);
+    }
+    return 0;
+  }
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
+    return 2;
+  }
+  await alertsRun(values["dry-run"]!, nowMs);
+  return 0;
+}
+
+async function watch(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { every: { type: "string", default: "2m" }, once: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
+  const m = /^(\d+)(s|m)$/.exec(values.every!);
+  if (!m || Number(m[1]) * (m[2] === "m" ? 60 : 1) < 30) {
+    console.error(`--every ${values.every}: use 30s or more, e.g. 2m`);
+    return 2;
+  }
+  const everyMs = Number(m[1]) * (m[2] === "m" ? 60_000 : 1000);
+  const dir = positionals[0] ? fromCaller(positionals[0]) : DISCORD_DOWNLOADS;
+  for (;;) {
+    console.log(`\nwatch ${new Date().toLocaleTimeString()}`);
+    // classify --new only when posts arrived: it costs nothing otherwise, and a refused run isn't re-asked every tick.
+    if ((await discordIngestRun(dir)) > 0) await classify(["--new"]);
+    await alertsRun(values["dry-run"]!, Date.now());
+    if (values.once) return 0;
+    await Bun.sleep(everyMs);
+  }
 }
 
 function compare(args: string[]): number {
@@ -1562,6 +1669,14 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
     on(e);
   }
   const of = (section: string) => events.find((e) => e.section === section && !("error" in e)) as Extract<PlanEvent, { from: string }> | undefined;
+  // The SMS alerts read the last Plan for "why it matters" (watch.ts): idea, stack and ranked tracks only.
+  const ranked = events.find((e) => e.section === "tracks" && !("error" in e)) as Extract<PlanEvent, { section: "tracks"; tracks: unknown }> | undefined;
+  if (ranked)
+    writeJsonFile(PLAN_PATH, {
+      saved_at: new Date().toISOString(),
+      input: { idea: input.idea, stack: input.stack },
+      tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names })),
+    });
   if (!opts.fresh) {
     if (of("tracks")?.from === "model") writeJsonFile(FIT_CACHE_PATH, fcache);
     if (of("gaps")?.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
