@@ -1,0 +1,23 @@
+{
+  "note": "Replayed posts for a fake Discord event (user 2026-11-07). Invented content, invented ids. Each post is rendered into a channel page as Discord would and read back; the bot posts arrive through a fake API.",
+  "guild": { "id": "1300000000000000001", "name": "Example Hacks" },
+  "own_server": { "id": "1400000000000000001", "name": "HackRecon", "feed_channel": { "id": "1400000000000000010", "name": "event-feed" } },
+  "plan": {
+    "input": { "idea": "A study planner that turns course syllabi into weekly plans for transfer students", "stack": [{ "name": "Modal", "used_for": "GPU inference for the planner" }, { "name": "Claude API", "used_for": null }] },
+    "tracks": [
+      { "track_id": "t-modal", "name": "Best Use of Modal", "sponsor": "Modal", "fit": "likely", "product_names": ["Modal"] },
+      { "track_id": "t-edu", "name": "Best Education Hack", "sponsor": "event", "fit": "possible", "product_names": [] }
+    ]
+  },
+  "posts": [
+    { "via": "dom", "channel": { "id": "1300000000000000010", "name": "announcements" }, "read_only": true, "at": "2026-11-14T09:00:00-08:00", "author": "Example Hacks Team", "tag": "", "html": "Tracks and prizes are live! See every track on Devpost: <a href=\"https://example-hacks.devpost.com/\">example-hacks.devpost.com</a>" },
+    { "via": "dom", "channel": { "id": "1300000000000000010", "name": "announcements" }, "read_only": true, "at": "2026-11-14T09:00:40-08:00", "author": null, "tag": "", "html": "Judging criteria: technical depth, design, impact. Judging starts Sunday 10:00 AM." },
+    { "via": "dom", "channel": { "id": "1300000000000000010", "name": "announcements" }, "read_only": true, "at": "2026-11-14T10:15:00-08:00", "author": "Example Hacks Team", "tag": "", "html": "Workshop: Build and deploy agents on Modal, today at 3:00 PM in Room 105." },
+    { "via": "dom", "channel": { "id": "1300000000000000011", "name": "sponsor-modal" }, "read_only": false, "at": "2026-11-14T10:40:00-08:00", "author": "Priya (Modal)", "tag": "", "html": "Every hacker gets $50 in Modal credits. Claim them here: <a href=\"https://modal.com/credits/example-hacks\">https://modal.com/credits/example-hacks</a>" },
+    { "via": "dom", "channel": { "id": "1300000000000000013", "name": "general" }, "read_only": false, "at": "2026-11-14T10:41:00-08:00", "author": "sam_k", "tag": "", "html": "anyone want to team up? I do frontend" },
+    { "via": "dom", "channel": { "id": "1300000000000000012", "name": "acme-booth" }, "read_only": false, "at": "2026-11-14T11:00:00-08:00", "author": "Acme Recruiting", "tag": "", "html": "Acme is hiring summer interns. Stop by our booth or apply at <a href=\"https://acme.example/jobs\">acme.example/jobs</a>" },
+    { "via": "dom", "channel": { "id": "1300000000000000010", "name": "announcements" }, "read_only": true, "at": "2026-11-14T13:30:00-08:00", "author": "Example Hacks Team", "tag": "", "html": "Room change: the Modal workshop has moved to Room 210, same time." },
+    { "via": "bot", "channel": { "id": "1400000000000000010", "name": "event-feed" }, "read_only": false, "at": "2026-11-14T16:00:00-08:00", "author": "Example Hacks #announcements", "tag": "SERVER", "source_message": "1300000000000009001", "source_channel": "1300000000000000010", "html": "Reminder: project submissions are due Sunday at 9:00 AM on Devpost. Late submissions won't be judged." },
+    { "via": "bot", "channel": { "id": "1400000000000000010", "name": "event-feed" }, "read_only": false, "at": "2026-11-14T18:00:00-08:00", "author": "Example Hacks #announcements", "tag": "SERVER", "source_message": "1300000000000009002", "source_channel": "1300000000000000010", "html": "Dinner is served in the main hall." }
+  ]
+}

@@ -42,6 +42,14 @@ export const RUNS_PATH = "data/runs.json";
 export const MESSAGES_PATH = "data/messages.json";
 /** What `hr discover` found and wrote (autoconfig.ts), with the hash of each config file it wrote. */
 export const DISCOVERY_PATH = "data/discovery.json";
+/** The user's last Plan (`hr plan` or the board): idea, stack and ranked tracks, for the SMS alerts' "why". */
+export const PLAN_PATH = "data/plan.json";
+/** Discord (user 2026-11-07): files ingested, the bot's cursors, each channel's server; unread badges; alert state. */
+export const DISCORD_STATE_PATH = "data/discord_state.json";
+export const DISCORD_UNREAD_PATH = "data/discord_unread.json";
+export const ALERTS_STATE_PATH = "data/alerts_state.json";
+export const ALERTS_LOG_PATH = "data/alerts.jsonl";
+export const SMS_OUTBOX_PATH = "data/sms_outbox.jsonl";
 export const BOARD_DATA_PATH = "data/board.json";
 export const LABELS_PATH = "review/labels.csv";
 export const POOL_META_PATH = "review/pool.json";
