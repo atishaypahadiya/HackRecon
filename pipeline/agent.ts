@@ -89,6 +89,7 @@ export function buildContext(d: AgentData, boundary = randomBytes(6).toString("h
   if (d.plan) {
     head.push(`Your Plan's idea: ${d.plan.input.idea}`);
     if (d.plan.input.stack?.length) head.push(`Your stack: ${d.plan.input.stack.map((s) => `${s.name}${s.used_for ? ` (${s.used_for})` : ""}`).join("; ")}`);
+    for (const o of d.plan.overall ?? []) head.push(`The event's overall track (every team is in it; not ranked): ${o.name}. ${o.descriptions.join(" ")}${o.prizes.length ? ` Prizes: ${o.prizes.join("; ")}.` : ""} (${o.source_url})`);
     if (d.plan.tracks.length) head.push("Tracks your Plan fits:", ...d.plan.tracks.map((t) => `- ${t.fit}: ${t.name} (${[t.sponsor, ...t.product_names.filter((n) => n !== t.sponsor)].join("; ")})`));
   } else head.push("Your Plan: not saved yet (run hr plan).");
   // Only what existed at d.nowMs: a replay or `hr ask --at` must not see the future.

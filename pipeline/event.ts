@@ -47,6 +47,10 @@ export const PLAN_PATH = "data/plan.json";
 /** Discord (user 2026-11-07): files ingested, the bot's cursors, each channel's server; unread badges; alert state. */
 export const DISCORD_STATE_PATH = "data/discord_state.json";
 export const DISCORD_UNREAD_PATH = "data/discord_unread.json";
+/** hr watch's hourly check of the event's pages (user 2026-11-08): when it last fetched them. */
+export const PAGE_CHECK_PATH = "data/page_check.json";
+/** Track changes a page re-read found (new tracks, noted lines gone), for alerts. */
+export const PAGE_CHANGES_PATH = "data/page_changes.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";
