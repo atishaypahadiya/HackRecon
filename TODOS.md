@@ -27,7 +27,7 @@ Built and verified offline (design doc, Zero setup). First live pull (2026-11-07
 Built and verified on a fake event (design doc, "Discord read + text push"). Still to check live:
 - **Selectors on the real server.** Once registration is approved, open the event's announcement and a sponsor channel, and compare `hr discord-ingest`'s posts with what the channel shows. The selectors (`DSEL`, the sidebar aria-labels, the tab title) follow Discord's web client as of 2026-11 and are untested on a real page.
 - **The bot against Discord's API.** Follow a channel into the HackRecon server (any public announcement channel works), then run `bun run hr discord-ingest` and check that the crosspost arrives with its text.
-- **A real text.** Set Twilio in `.env` and run `bun run hr alerts`. A trial account needs the number verified, and US numbers need Twilio's registration.
+- **A real Telegram round trip.** Once `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are in `.env`: run `bun run hr watch --once`, send the bot a question, and check the answer and an alert arrive. (Twilio SMS stays available one-way via `HACKRECON_CHANNEL=sms`.)
 - **The first open of a busy channel.** It reads its last ~50 posts. Those under 6 hours old alert (3 per text, rate-limited). Check that this isn't too much on the day.
 
 ### main can't require CI yet (2026-11-07)

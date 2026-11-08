@@ -89,6 +89,16 @@ Changes, organizer deadlines, tracks and judging go out at once. Workshops and o
 - The bot against Discord's API.
 - A real Twilio send.
 
+**Telegram instead of SMS, and two-way (user, 2026-11-07).** For Nov 14 the alerts go to a Telegram bot chat only the user uses: no carrier registration. The channel is pluggable (`pipeline/channels.ts`, `HACKRECON_CHANNEL`): Telegram is built and two-way, SMS (Twilio) one-way, iMessage and WhatsApp planned. Telegram (`pipeline/telegram.ts`) calls four Bot API methods (getMe, getUpdates, sendMessage, sendChatAction), sends plain text to `TELEGRAM_CHAT_ID` only, reads replies by long polling with a saved offset, and drops anything not from that private chat unread. The token is scrubbed from every error.
+
+Replies go to the chat agent (`pipeline/agent.ts`): one `claude-haiku-5-5` call per question, no tools, over the current time, the schedule, the Plan, alerts so far, and organizer and classified posts (newest first, 60k characters at most, names redacted as for classify, quoted as data with whether organizers posted them). It answers only from that data and says when it doesn't know. Limits: the cost guard per watch session ($1, then it tells the user), 20 answers an hour, and questions over 15 minutes old when watch reads them are skipped. `/help` costs nothing.
+
+Verified (2026-11-07):
+- Unit tests: the allowlist, token scrubbing (including a transport error that echoes the URL), 429 backoff, the only-my-chat filter, the cursor, channel choice, context building (redaction, provenance, the size cap, no posts from after "now"), the guard's refusal, the hourly cap.
+- Live, `hr ask` on the replayed fake event with real Haiku: it answered the moved workshop (Room 210, 3:00 PM, from #announcements) and the deadline, and said it didn't know a prize the posts don't state. At 2:00 PM it didn't see the 4:00 PM deadline post and hedged instead.
+- Live against Telegram with a made-up token: 401 explained, token absent from the output.
+- Not yet: a real bot, real chat ID, and a real round trip (user setup pending).
+
 ## The brief (user, 2026-10-28, verbatim)
 
 > v1 is done (tag it v1). Starting v2: HackRecon becomes the hacker's operating system for a hackathon, with five views: Build (tracks + track stacker), Claim (v1 offers), Now (schedule + live changes), Meet (reps + booths + openers), Ship (submission checklist). Key architecture change: multi-source. Public pages are canon (Devpost: tracks, prizes, judging criteria, submission rules; event site: schedule), Slack is the live layer (changes, credits, reps, fixes). Merge rule: page is canon, Slack updates override with both shown. Also add thread capture to the extension. Per-event config so it runs at the next hackathon. Build order: sources → entities + Opus-judged eval → merge → views (Build, Ship, Now, Meet) → generalize.

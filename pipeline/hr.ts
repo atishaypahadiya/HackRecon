@@ -73,7 +73,9 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { sendSms, smsConfig } from "./sms.ts";
+import { answer, buildContext, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
+import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
+import { TelegramApi, telegramSenders } from "./telegram.ts";
 import { ingestDiscord, runAlerts } from "./watch.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
@@ -112,7 +114,9 @@ import {
   ALERTS_LOG_PATH,
   DISCORD_UNREAD_PATH,
   PLAN_PATH,
-  SMS_OUTBOX_PATH,
+  OUTBOX_PATH,
+  CHAT_LOG_PATH,
+  CHANNEL_STATE_PATH,
   ORGANIZERS_PATH,
   PAGE_FIXTURES_DIR,
   PAGES_DIR,
@@ -306,16 +310,22 @@ const USAGE = `usage:
       ~/Downloads/hackrecon/discord), and, with DISCORD_BOT_TOKEN in .env, the crossposts the HackRecon bot reads
       in your own server (docs/discord-bot.md). New posts go to ${MESSAGES_PATH}; unread badges to ${DISCORD_UNREAD_PATH}.
   bun run hr alerts [--dry-run] [--at ISO] [--list]
-      Texts for fresh posts: tracks or judging posted, a deadline or room change, a workshop or sponsor offer
+      Alerts for fresh posts: tracks or judging posted, a deadline or room change, a workshop or sponsor offer
       that matches your Plan (${PLAN_PATH}, saved by \`hr plan\`), unread badges. Important ones at once (one per 10
-      minutes, four an hour), the rest in a digest every 2 hours. Sends through Twilio (TWILIO_ACCOUNT_SID,
-      TWILIO_AUTH_TOKEN, TWILIO_FROM, HACKRECON_SMS_TO in .env); --dry-run, or no Twilio settings, writes the texts
-      to ${SMS_OUTBOX_PATH} only. --list prints every alert found so far.
+      minutes, four an hour), the rest in a digest every 2 hours. Sent to your channel (HACKRECON_CHANNEL in .env,
+      default telegram: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID; sms: the four TWILIO_* / HACKRECON_SMS_TO keys);
+      --dry-run, or a channel not set up, writes them to ${OUTBOX_PATH} only. --list prints every alert found so far.
   bun run hr watch [--every 2m] [--once] [--dry-run] [DIR]
       discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
-      the posts wait; watch never passes --yes), then alerts, every --every.`;
+      the posts wait; watch never passes --yes), then alerts, every --every. On a two-way channel (Telegram) it
+      also answers your messages from your Plan and the event's data, with claude-haiku-5-5, up to $1 of
+      answers per watch session (the cost guard) and 20 an hour; questions and answers go to ${CHAT_LOG_PATH}.
+  bun run hr ask [--at ISO] [--yes] "QUESTION"
+      The same answer the chat would give, printed here: for checking the agent without a channel.
+  bun run hr telegram-chat-id
+      After you message your bot in Telegram: prints the bot's name and your chat ID for TELEGRAM_CHAT_ID.`;
 
-const COMMANDS = ["compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "discover", "compare-api", "plan", "ship", "prefill", "prefill-eval", "discord-ingest", "alerts", "watch"];
+const COMMANDS = ["ask", "telegram-chat-id", "compare", "scrub-dom", "sync-ingest", "rebuild-threads", "record-run", "pool", "organizers", "person-links", "rep-signals", "classify", "gate", "label", "prelabel", "preview", "group", "board", "pages", "canon", "fit-eval", "sync", "discover", "compare-api", "plan", "ship", "prefill", "prefill-eval", "discord-ingest", "alerts", "watch"];
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -348,6 +358,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === "discord-ingest") return discordIngest(rest);
   if (cmd === "alerts") return alerts(rest);
   if (cmd === "watch") return watch(rest);
+  if (cmd === "ask") return ask(rest);
+  if (cmd === "telegram-chat-id") return telegramChatId();
   if (cmd) {
     // Name the bad command first (a stray "board." used to print only the usage), and suggest the near miss.
     const near = COMMANDS.find((c) => cmd.replace(/[^a-z-]/g, "") === c);
@@ -389,10 +401,16 @@ async function discordIngest(args: string[]): Promise<number> {
   return 0;
 }
 
-async function alertsRun(dryRun: boolean, nowMs: number): Promise<void> {
-  const cfg = smsConfig(process.env);
-  if (!dryRun && "missing" in cfg) console.log(`alerts: Twilio not set up (${cfg.missing.join(", ")} missing or malformed in .env): texts go to ${SMS_OUTBOX_PATH} only`);
-  const send = dryRun || "missing" in cfg ? null : (body: string) => sendSms(cfg, body, (u, i) => fetch(u, i));
+/** The user's channel, or null (said why) when it can't send. */
+function userChannel(): MessageChannel | null {
+  const c = channelFromEnv(process.env);
+  if (isChannel(c)) return c;
+  console.log(`channel: ${whyNoChannel(c)}; alerts go to ${OUTBOX_PATH} only`);
+  return null;
+}
+
+async function alertsRun(dryRun: boolean, nowMs: number, channel: MessageChannel | null = dryRun ? null : userChannel()): Promise<void> {
+  const send = dryRun || !channel ? null : { channel: channel.kind, send: (body: string) => channel.send(body) };
   let organizerIds = new Set<string>();
   try {
     organizerIds = loadOrganizerIds();
@@ -400,8 +418,8 @@ async function alertsRun(dryRun: boolean, nowMs: number): Promise<void> {
   const tz = existsSync(EVENT_PATH) ? readEvent().timezone : "America/Los_Angeles";
   const r = await runAlerts({ nowMs, tz, organizerIds, send });
   for (const a of r.fresh) console.log(`  ${a.level === "now" ? "now   " : "digest"} ${a.kind}: ${a.what} (${a.source}). Why: ${a.why}`);
-  for (const o of r.outbox) console.log(`  text (${o.level}, ${o.status}${o.error ? `: ${o.error}` : ""}):\n${o.body.replace(/^/gm, "    | ")}`);
-  console.log(`alerts: ${r.fresh.length} new, ${r.outbox.filter((o) => o.status === "sent").length} texts sent, ${r.outbox.filter((o) => o.status === "dry-run").length} to the outbox only; waiting: ${r.queued.now} important, ${r.queued.digest} for the digest`);
+  for (const o of r.outbox) console.log(`  message (${o.level}, ${o.status}${o.error ? `: ${o.error}` : ""}):\n${o.body.replace(/^/gm, "    | ")}`);
+  console.log(`alerts: ${r.fresh.length} new, ${r.outbox.filter((o) => o.status === "sent").length} sent${channel ? ` by ${channel.label}` : ""}, ${r.outbox.filter((o) => o.status === "dry-run").length} to the outbox only; waiting: ${r.queued.now} important, ${r.queued.digest} for the digest`);
 }
 
 async function alerts(args: string[]): Promise<number> {
@@ -431,13 +449,114 @@ async function watch(args: string[]): Promise<number> {
   }
   const everyMs = Number(m[1]) * (m[2] === "m" ? 60_000 : 1000);
   const dir = positionals[0] ? fromCaller(positionals[0]) : DISCORD_DOWNLOADS;
+  const dryRun = values["dry-run"]!;
+  const channel = dryRun ? null : userChannel();
+  // One guard for the whole session's answers: they stop at COST_LIMIT_USD, and the user is told so in the chat.
+  const guard = new CostGuard("chat", false);
+  const chat = channel?.receive && !dryRun ? chatLoop(channel, guard, values.once!) : null;
+  if (channel && !channel.receive) console.log(`watch: ${channel.label} is one-way; replies aren't read`);
   for (;;) {
     console.log(`\nwatch ${new Date().toLocaleTimeString()}`);
     // classify --new only when posts arrived: it costs nothing otherwise, and a refused run isn't re-asked every tick.
     if ((await discordIngestRun(dir)) > 0) await classify(["--new"]);
-    await alertsRun(values["dry-run"]!, Date.now());
-    if (values.once) return 0;
+    await alertsRun(dryRun, Date.now(), channel);
+    if (values.once) {
+      await chat;
+      return 0;
+    }
     await Bun.sleep(everyMs);
+  }
+}
+
+/** The user's replies, answered as they arrive (long polling), beside the watch ticks. --once reads what's waiting. */
+async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean): Promise<void> {
+  const client = anthropicClient(guard);
+  const state = readJsonFile<Record<string, { cursor?: string }>>(CHANNEL_STATE_PATH, {});
+  let cursor = state[channel.kind]?.cursor;
+  console.log(`chat: reading your ${channel.label} messages${client ? "" : " (no ANTHROPIC_API_KEY: they'll be told answers are off)"}`);
+  for (;;) {
+    let r: Awaited<ReturnType<NonNullable<MessageChannel["receive"]>>>;
+    try {
+      r = await channel.receive!(cursor, once ? 0 : 25);
+    } catch (e) {
+      console.error(`chat: ${(e as Error).message}`);
+      if (once) return;
+      await Bun.sleep(10_000);
+      continue;
+    }
+    if (r.ignored) console.log(`chat: ${r.ignored} message${r.ignored === 1 ? "" : "s"} not from your chat (or not text) ignored`);
+    const { turns, stale } = await handleInbound({
+      channel,
+      inbound: r.messages,
+      nowMs: Date.now(),
+      tz: existsSync(EVENT_PATH) ? readEvent().timezone : "America/Los_Angeles",
+      history: readChatLog(),
+      ask: async (question, history) => {
+        if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
+        const d = readAgentData(Date.now());
+        return answer(client, { question, history, context: buildContext(d), eventName: d.event?.event ?? "", tz: d.tz });
+      },
+    });
+    for (const t of turns) {
+      appendFileSync(CHAT_LOG_PATH, JSON.stringify(t) + "\n");
+      console.log(`chat: ${t.status}: ${t.q.slice(0, 80)}`);
+    }
+    if (stale) console.log(`chat: ${stale} question${stale === 1 ? "" : "s"} sent while watch was off skipped (older than 15 minutes)`);
+    if (r.cursor !== cursor) {
+      cursor = r.cursor;
+      writeJsonFile(CHANNEL_STATE_PATH, { ...readJsonFile<Record<string, { cursor?: string }>>(CHANNEL_STATE_PATH, {}), [channel.kind]: { cursor } });
+    }
+    if (once) return;
+  }
+}
+
+async function ask(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { at: { type: "string" }, yes: { type: "boolean", default: false } } });
+  const question = positionals.join(" ").trim();
+  if (!question) {
+    console.error('Usage: bun run hr ask "what\'s next on the schedule?"');
+    return 2;
+  }
+  const nowMs = values.at ? Date.parse(values.at) : Date.now();
+  if (Number.isNaN(nowMs)) {
+    console.error(`--at ${values.at}: not a date (use ISO 8601 with an offset)`);
+    return 2;
+  }
+  const client = anthropicClient(new CostGuard("ask", values.yes!));
+  if (!client) return 1;
+  const d = readAgentData(nowMs);
+  const context = buildContext(d);
+  console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"})`);
+  try {
+    const r = await answer(client, { question, history: [] as ChatTurn[], context, eventName: d.event?.event ?? "", tz: d.tz });
+    console.log("text" in r ? r.text : `no answer: ${r.error}`);
+    return "text" in r ? 0 : 1;
+  } catch (e) {
+    console.error((e as Error).message);
+    return 1;
+  }
+}
+
+async function telegramChatId(): Promise<number> {
+  let api: TelegramApi;
+  try {
+    api = new TelegramApi(process.env.TELEGRAM_BOT_TOKEN ?? "", { fetch: (u, i) => fetch(u, i), sleep: Bun.sleep });
+  } catch (e) {
+    console.error(`${(e as Error).message}: add TELEGRAM_BOT_TOKEN=... to .env (docs/discord-bot.md)`);
+    return 2;
+  }
+  try {
+    const r = await telegramSenders(api);
+    if (!r.senders.length) {
+      console.log(`No messages yet. In Telegram, open @${r.bot}, send it any message (or tap Start), then run this again.`);
+      return 1;
+    }
+    for (const s of r.senders) console.log(`@${r.bot} has a message from ${s.name || "someone"}: chat ID ${s.chat_id}`);
+    console.log(`If that's you, add TELEGRAM_CHAT_ID=${r.senders.length === 1 ? r.senders[0]!.chat_id : "<your chat ID>"} to .env.`);
+    return 0;
+  } catch (e) {
+    console.error((e as Error).message);
+    return 1;
   }
 }
 

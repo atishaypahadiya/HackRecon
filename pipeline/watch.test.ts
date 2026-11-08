@@ -90,7 +90,7 @@ beforeAll(async () => {
     await ingestDiscord({ dir: downloads, bot, now: new Date(tick) });
     // classify --new, stood in for: items for every captured post it would find something in.
     writeJsonFile(ITEMS_PATH, readMessages().flatMap((m) => (Object.entries(CLASSIFIED).find(([k]) => m.text.startsWith(k))?.[1] ?? []).map((it, i) => ({ message_id: m.id, item_index: i, offer_key: "", amount_text: "", amount_unit: "other", amount_basis: "unknown", deadline_status: "none", urls: [], model: "fake", classified_at: "", ...it }))));
-    const r = await runAlerts({ nowMs: tick, tz: "America/Los_Angeles", organizerIds: new Set(), send: async (body) => (sent.push({ at: p.at, body }), { sid: `SM${sent.length}` }) });
+    const r = await runAlerts({ nowMs: tick, tz: "America/Los_Angeles", organizerIds: new Set(), send: { channel: "fake", send: async (body) => (sent.push({ at: p.at, body }), { id: String(sent.length) }) } });
     ticks.push(r.fresh.map((a) => `${a.level} ${a.kind}`));
   }
 });
@@ -183,8 +183,8 @@ describe("replayed Discord event → texts", () => {
   test("ingesting again adds nothing, and alerts never repeat", async () => {
     const last = Date.parse(replay.posts.at(-1)!.at) + 120_000;
     expect((await ingestDiscord({ dir: downloads, bot: new DiscordBot(TOKEN, fakeOwnServer(() => last)), now: new Date(last) })).added).toBe(0);
-    const r = await runAlerts({ nowMs: last, tz: "America/Los_Angeles", organizerIds: new Set(), send: async () => ({ sid: "x" }) });
+    const r = await runAlerts({ nowMs: last, tz: "America/Los_Angeles", organizerIds: new Set(), send: { channel: "fake", send: async () => ({ id: "x" }) } });
     expect([r.fresh, r.outbox]).toEqual([[], []]);
-    expect(existsSync("data/sms_outbox.jsonl")).toBe(true);
+    expect(existsSync("data/outbox.jsonl")).toBe(true);
   });
 });
