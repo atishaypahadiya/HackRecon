@@ -14,7 +14,7 @@ export type PlanSectionName = "tracks" | "booths" | "gaps" | "credits" | "sessio
 const CHAIN = ["tracks", "booths", "gaps", "credits", "sessions", "people"] as const;
 
 export type PlanEvent =
-  | { section: "tracks"; ms: number; from: "cache" | "model" | "none"; tracks: PlanTrack[]; overall: OverallTrack[]; usage: Usage | null }
+  | { section: "tracks"; ms: number; from: "cache" | "model" | "none" | "partial"; tracks: PlanTrack[]; overall: OverallTrack[]; usage: Usage | null }
   | { section: "booths"; ms: number; booths: BoothBlock[] }
   | { section: "gaps"; ms: number; from: GapResult["from"]; gaps: GapResult["gaps"]; checked: number; facts: GapResult["facts"]; usage: Usage | null; repo?: { url: string; commit: string } }
   | { section: "credits"; ms: number; sponsors: JoinSponsor[]; credits: PlanCredit[]; dropped: number }

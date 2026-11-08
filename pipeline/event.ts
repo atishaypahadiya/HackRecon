@@ -57,6 +57,10 @@ export const CLAIMS_PATH = "data/claims.json";
 export const WRITES_LOG_PATH = "data/writes.jsonl";
 /** A destructive write waiting for the hacker's "yes". */
 export const PENDING_WRITE_PATH = "data/pending_write.json";
+/** Slice 2: the tracks the hacker is entering, by track id, with who told and when. */
+export const ENTERED_PATH = "data/entered.json";
+/** Slice 2: Ship checklist ticks (entry steps shared with Plan), by item id. */
+export const SHIP_TICKS_PATH = "data/ship_ticks.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";

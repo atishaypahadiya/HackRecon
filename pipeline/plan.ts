@@ -11,7 +11,7 @@ import { checkFit, FIT_EFFORT, FIT_MAX_TOKENS, FIT_MODEL, FIT_SCHEMA, fitHash, f
 import { callChecked } from "./model.ts";
 import type { Gap } from "./gaps.ts";
 import type { Entity } from "./schema.ts";
-import type { Usage } from "./usage.ts";
+import { NO_USAGE, type Usage } from "./usage.ts";
 
 /** One stack item (user 2026-11-06). In the Plan input each item is a name field plus one optional short field,
  *  placeholder "what it does in your project". used_for is the user's own words, so Booths and the fit reason may
@@ -235,7 +235,7 @@ export interface PlanSection<T> {
   overall?: OverallTrack[];
   /** "cache" when the same idea and stack were ranked before (D4: cached results show instantly); "none" when the
    *  event has no tracks yet (announced later), so nothing was ranked and no model was called. */
-  from: "cache" | "model" | "none";
+  from: "cache" | "model" | "none" | "partial";
   ms: number;
   usage: Usage | null;
 }
@@ -300,8 +300,28 @@ export function capLikely(r: Ranked, card: TrackCard | undefined, input: PlanInp
   return card.products.some((p) => productMentioned(p, text)) ? { fit: "likely", capped: false } : { fit: "possible", capped: true };
 }
 
-/** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). */
-export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now()): Promise<PlanSection<PlanTrack> | { error: string }> {
+/** A stack change told to Donna (told.ts): the input before it and the item names it added, removed or re-used. */
+export interface StackRerank {
+  before: PlanInput;
+  changed: string[];
+}
+
+/** The tracks a stack change can move: those whose sponsor or products the changed item names, and those whose last
+ *  reason mentions it (a removed item the ranker leaned on). A track the last ranking didn't have is ranked too only
+ *  when it matches; the rest keep their last ranking. */
+export function affectedTracks(cards: TrackCard[], prior: Ranked[], changed: string[]): Set<string> {
+  const reason = new Map(prior.map((r) => [r.track_id, r.reason]));
+  return new Set(
+    cards
+      .filter((c) => changed.some((n) => [...c.products, c.sponsor].some((p) => p && p !== "event" && (productMentioned(p, n) || productMentioned(n, p))) || productMentioned(n, reason.get(c.id) ?? "")))
+      .map((c) => c.id),
+  );
+}
+
+/** Tracks to target. Likely fits first, then possible (D12), each in checkFit's order (cash_only last). With
+ *  `rerank`, only the tracks the stack change affects go to the model, and the merged ranking is cached under the new
+ *  input, so a later full plan of the same input (the board's refresh) is a cache hit. */
+export async function planTracks(client: Anthropic | null, input: PlanInput, entities: Entity[], e: EventConfig, cache: FitCache, aliases: SponsorAliases = {}, now = () => performance.now(), rerank?: StackRerank): Promise<PlanSection<PlanTrack> | { error: string }> {
   const t0 = now();
   const cards = trackCards(entities, e, aliases);
   // Tracks not announced yet (Iterate, 2026-11-08): an empty ranking, saved as such, and no model call.
@@ -312,7 +332,30 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
   const hash = fitHash(system, request);
   let ranked = cache[hash]?.ranked;
   let usage: Usage | null = null;
-  const from = ranked ? "cache" : "model";
+  let from: "cache" | "model" | "partial" = ranked ? "cache" : "model";
+  const prior = !ranked && rerank && rerank.before.idea === input.idea ? cache[fitHash(system, fitRequest(rerank.before.idea, stackForRanker(rerank.before.stack)))]?.ranked : undefined;
+  if (prior) {
+    const hit = affectedTracks(cards, prior, rerank!.changed);
+    let fresh: Ranked[] = [];
+    if (hit.size) {
+      if (!client) return { error: "no API key, and this stack hasn't been ranked before" };
+      // The whole event's tracks stay in the prompt (the same cached system prompt as a full ranking, so the judgment
+      // has the same context); the request asks for only the affected ones.
+      const sub = cards.filter((c) => hit.has(c.id));
+      const only = `${request}\n<rerank>The hacker's stack just changed. Return only these tracks, each judged as you would in a full ranking: ${sub.map((c) => c.id).join(", ")}</rerank>`;
+      const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request: only, check: (p) => checkFit(p, sub) });
+      if ("error" in r) return { error: r.error };
+      fresh = r.value;
+      usage = r.usage;
+    }
+    // The last ranking's order, each affected track replaced by its new ranking (or dropped if the ranker left it
+    // out), then affected tracks the last ranking didn't have. The list can pass FIT_TOP when an added item brings
+    // tracks in; a full re-rank (a new idea, or hr plan --fresh) chooses the top again.
+    const byId = new Map(fresh.map((x) => [x.track_id, x]));
+    ranked = [...prior.map((x) => byId.get(x.track_id) ?? (hit.has(x.track_id) ? null : x)).filter((x): x is Ranked => !!x), ...fresh.filter((x) => !prior.some((p) => p.track_id === x.track_id))];
+    cache[hash] = { ranked, usage: usage ?? NO_USAGE, calls: hit.size ? 1 : 0 };
+    from = "partial";
+  }
   if (!ranked) {
     if (!client) return { error: "no API key, and this idea hasn't been ranked before" };
     const r = await callChecked(client, { model: FIT_MODEL, effort: FIT_EFFORT, max_tokens: FIT_MAX_TOKENS, system, schema: FIT_SCHEMA, request, check: (p) => checkFit(p, cards) });
