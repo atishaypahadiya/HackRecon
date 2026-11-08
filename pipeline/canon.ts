@@ -6,7 +6,7 @@
 // model with the error.
 // Logged-in pages (access not "public") are redacted first and checked against the redacted text (D12).
 import { createHash } from "node:crypto";
-import { scheduleLines, type EventConfig } from "./classify.ts";
+import { scheduleLines, type CanonNote, type EventConfig } from "./classify.ts";
 import { coverage } from "./coverage.ts";
 import { pageKey } from "./pages.ts";
 import { JUDGE_EFFORT, JUDGE_MODEL } from "./prelabel.ts";
@@ -16,6 +16,10 @@ export const CANON_MODEL = JUDGE_MODEL;
 export const CANON_EFFORT = JUDGE_EFFORT;
 /** One page per request; thinking counts toward max_tokens. */
 export const CANON_MAX_TOKENS = 64000;
+/** hr watch's unattended re-read of a changed page (user 2026-11-08): a lower ceiling, so one page's estimate stays
+ *  under the $1 spend limit without --yes. A page whose extraction needs more fails the read; canon stays as it was
+ *  and the next hourly check retries. Iterate's Luma page took 4,933 output tokens on 2026-11-08. */
+export const CANON_WATCH_MAX_TOKENS = 32000;
 
 export const CANON_KINDS = ["track", "prize", "criterion", "rule", "entry_step"] as const;
 export type CanonKind = (typeof CANON_KINDS)[number];
@@ -490,4 +494,38 @@ export function keepDropped(prev: Entity[], next: Entity[], snap: PageSnapshot):
     out[i] = { ...t, fields };
   }
   return { entities: out, kept };
+}
+
+/** event.json canon_notes for this page (user 2026-11-08): a note joins canon as a hand-noted entity while its quote
+ *  is on the page and the read has nothing quoting it; once the quote is gone from the page it's returned as gone,
+ *  never kept. A prize note hangs off the page's one event-level track when there is exactly one. */
+export function applyNotes(entities: Entity[], notes: CanonNote[], snap: PageSnapshot, hash: string): { entities: Entity[]; added: string[]; gone: CanonNote[] } {
+  const low = (s: string) => norm(s).toLowerCase();
+  const mine = notes.filter((n) => pageKey(n.url) === pageKey(snap.url));
+  const out = [...entities];
+  const added: string[] = [];
+  const gone: CanonNote[] = [];
+  const event = entities.filter((e) => e.kind === "track" && e.sponsor === "event");
+  for (const n of mine) {
+    const block = snap.blocks.findIndex((b) => low(b.text).includes(low(n.quote)));
+    if (block < 0) {
+      gone.push(n);
+      continue;
+    }
+    if (entities.some((e) => low(e.name.source.quote).includes(low(n.quote)))) continue;
+    const source = { kind: "page" as const, url: snap.url, quote: n.quote, captured_at: snap.captured_at, snapshot_hash: hash, block };
+    const id = `${n.kind}:${pageKey(snap.url)}#${pathOf(snap, block)}/noted-${slug(n.name)}`;
+    out.push({
+      id,
+      kind: n.kind,
+      sponsor: n.sponsor,
+      name: { value: n.name, source },
+      fields: { ...(event.length === 1 ? { track_id: { value: event[0]!.id, source } } : {}), award_text: { value: n.quote, source } },
+      history: [],
+      origin: "page",
+      noted: true,
+    });
+    added.push(id);
+  }
+  return { entities: out, added, gone };
 }

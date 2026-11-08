@@ -60,6 +60,19 @@ export interface EventConfig {
   event_level_prizes?: string[];
   /** v2 (D23): a reporting tag for the fit eval ("*" matches any rest); never an exclusion. */
   tool_gated_prizes?: string[];
+  /** Page lines the canon read missed, noted by hand (user 2026-11-08): each joins canon while its quote is still on
+   *  the page (canon.ts applyNotes), and is reported gone, so watch alerts, once the page drops it. */
+  canon_notes?: CanonNote[];
+}
+
+export interface CanonNote {
+  kind: "prize";
+  /** The sponsor as the page writes it, or "event". */
+  sponsor: string;
+  name: string;
+  /** Verbatim from the page. */
+  quote: string;
+  url: string;
 }
 
 export function readEvent(path = EVENT_PATH): EventConfig {

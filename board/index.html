@@ -1139,6 +1139,7 @@ async function runPlan() {
   P.abort?.abort();
   const ctl = (P.abort = new AbortController());
   P.res = { tracks: null, booths: null, credits: null, sessions: null, people: null };
+  P.overall = [];
   P.gaps = null;
   P.sec = { tracks: "busy", booths: "busy", credits: "busy", sessions: "busy", people: "busy" };
   paintResults();
@@ -1155,6 +1156,7 @@ async function runPlan() {
     } else {
       P.res[e.section] = e[e.section];
       P.sec[e.section] = "ok";
+      if (e.section === "tracks") P.overall = e.overall || [];
     }
     paintResults();
   };
@@ -1295,9 +1297,11 @@ function paintResults() {
     // D4: when the last sync couldn't read a Devpost page, the tracks say how old the page is.
     const asOf = P.meta?.stale?.length && P.meta.as_of ? `Devpost as of ${pfmt(P.meta.as_of, { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "";
     $("pt-ctx").textContent = [ts.length ? `${likely.length} likely · ${possible.length} possible` : "", asOf].filter(Boolean).join(" · ");
-    $("pt-body").innerHTML = !ts.length
-      ? state("No track's stated requirements match this description")
-      : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`;
+    // The event's own track: every team is in it, so it isn't ranked, but its description says what the event rewards.
+    const overall = (P.overall || []).map((o) => `<ul class="prows"><li class="prow"><div class="pmain"><span class="pn">${esc(o.name)}</span><span class="pr">${esc(o.descriptions.join(" "))}</span></div><div class="pmeta m">${["Every team is in it; not ranked", o.prizes.length ? `Prizes: ${esc(o.prizes.join("; "))}` : "", srcLink(o.source_url)].filter(Boolean).join(" · ")}</div></li></ul>`).join("");
+    $("pt-body").innerHTML = overall + (!ts.length
+      ? state(overall ? "No sponsor tracks announced yet" : "No track's stated requirements match this description")
+      : `<ul class="prows">${likely.map(trackRow).join("")}</ul>${possible.length ? `<p class="also m">Also possible</p><ul class="prows">${possible.map(trackRow).join("")}</ul>` : ""}`);
   }
   // P3 Credits: Claim's offers from the joined sponsors, open now, soonest limit first. A row opens its drawer.
   const cr = P.res.credits;

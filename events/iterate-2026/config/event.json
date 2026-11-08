@@ -12,5 +12,14 @@
   "schedule_pages": [
     "https://luma.com/sht6n8du"
   ],
-  "discord_authority_channels": []
+  "discord_authority_channels": [],
+  "canon_notes": [
+    {
+      "kind": "prize",
+      "sponsor": "event",
+      "name": "Thematic prizes from challenge partners",
+      "quote": "Thematic prizes from challenge partners",
+      "url": "https://luma.com/sht6n8du"
+    }
+  ]
 }

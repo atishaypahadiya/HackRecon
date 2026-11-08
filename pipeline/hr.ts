@@ -76,7 +76,8 @@ import { DiscordBot } from "./discordbot.ts";
 import { budgetedAnswer, buildContext, CHAT_DAILY_USD, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
-import { ingestDiscord, runAlerts } from "./watch.ts";
+import { canonTrackDiff, ingestDiscord, runAlerts } from "./watch.ts";
+import type { PlanFacts, TrackChange } from "./alerts.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
 import type { ExportUser } from "./export.ts";
@@ -113,6 +114,8 @@ import {
   MESSAGES_PATH,
   ALERTS_LOG_PATH,
   DISCORD_UNREAD_PATH,
+  PAGE_CHANGES_PATH,
+  PAGE_CHECK_PATH,
   PLAN_PATH,
   OUTBOX_PATH,
   CHAT_LOG_PATH,
@@ -135,12 +138,14 @@ import { findTokens, scrubTokens, total } from "./domscrub.ts";
 import { BUNDLE_DIR, summarizeSync, wholeFiles, type SyncLogLite } from "./syncbundle.ts";
 import { threadRunFromRaw, type ThreadRaw } from "../extension/src/thread.ts";
 import { loadPages, needsRedaction, pageCoverage, pageKey, redactSnapshot, snapshotHash, type LoadedPage } from "./pages.ts";
-import type { EventConfig } from "./classify.ts";
+import type { CanonNote, EventConfig } from "./classify.ts";
 import {
   CANON_EFFORT,
   CANON_JUDGE_SCHEMA,
   CANON_MAX_TOKENS,
   CANON_MODEL,
+  CANON_WATCH_MAX_TOKENS,
+  applyNotes,
   CANON_SCHEMA,
   canonHash,
   canonInputHash,
@@ -225,11 +230,13 @@ const USAGE = `usage:
       Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
       flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
       --from-html builds a test fixture snapshot from saved HTML into ${PAGE_FIXTURES_DIR} (never canon).
-  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force] [--yes]
+  bun run hr canon [--fixtures] [--judge] [--dry-run] [--force] [--yes] [--unattended]
       Extracts tracks, prizes, judging criteria and rules from each canon page's latest snapshot (one
       ${CANON_MODEL} call per page; cached by input), verifies every quote, then runs the D15 coverage
       checks. --judge adds the Opus judge ("what's missing or misplaced"). --fixtures reads
       ${PAGE_FIXTURES_DIR} and writes ${CANON_FIXTURES_PATH}, never ${CANON_PATH}. Exit 1 on any failed check.
+      event.json canon_notes (lines a read missed) join canon while their quote is on the page. --unattended (hr
+      watch) caps output at ${CANON_WATCH_MAX_TOKENS} tokens so one page stays under the spend limit.
   bun run hr fit-eval [--fixtures] [--dry-run] [--limit N] [--concurrency 6] [--set-baseline] [--yes]
   bun run hr plan (--idea "..." | --from fixtures/dogfood/<name>.json) [--stack "Apify: pull course catalogs, Claude API, ..."] [--repo URL] [--fresh] [--at ISO] [--yes]
       Each stack item is a name with an optional ": used for" (what it does in your project); --stack overrides --from's.
@@ -318,7 +325,10 @@ const USAGE = `usage:
       --dry-run, or a channel not set up, writes them to ${OUTBOX_PATH} only. --list prints every alert found so far.
   bun run hr watch [--every 2m] [--once] [--dry-run] [DIR]
       discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
-      the posts wait; watch never passes --yes), then alerts, every --every. On a two-way channel (Telegram) it
+      the posts wait; watch never passes --yes), then alerts, every --every. Hourly it also fetches event.json's
+      canon and schedule pages; a changed canon page is re-read (hr canon --unattended, under the same guard,
+      retried next hour if refused), and new tracks or a canon_notes line gone from the page are re-ranked
+      against your Plan and sent as an alert. On a two-way channel (Telegram) it
       also answers your messages from your Plan and the event's data, with claude-haiku-5-5, up to $1 of
       answers per watch session (the cost guard), $3 a day per event (event.json chat_daily_usd; kept in
       ${CHAT_SPEND_PATH} across restarts), and 20 an hour; questions and answers go to ${CHAT_LOG_PATH}.
@@ -442,6 +452,56 @@ async function alerts(args: string[]): Promise<number> {
   return 0;
 }
 
+/** How often hr watch fetches the event's own pages (user 2026-11-08: hourly is fine). */
+const PAGE_CHECK_MS = 3600_000;
+
+/** hr watch's hourly look at event.json's pages (user 2026-11-08). Fetches them (one request each, robots.txt
+ *  respected), and when a canon page's latest snapshot isn't the one canon was read from, re-reads canon unattended:
+ *  no --yes, so the spend limit applies; a refused or failed read leaves canon as it was and retries next hour. New
+ *  tracks, or a canon_notes line gone from the page, are re-ranked against the saved Plan and become an alert. */
+async function pagesRun(nowMs: number): Promise<void> {
+  if (!existsSync(EVENT_PATH)) return;
+  const event = readEvent();
+  const canonPages = event.canon_pages ?? [];
+  const schedulePages = event.schedule_pages ?? [];
+  if (!canonPages.length && !schedulePages.length) return;
+  const last = readJsonFile<{ checked_at?: string }>(PAGE_CHECK_PATH, {});
+  if (last.checked_at && nowMs - Date.parse(last.checked_at) < PAGE_CHECK_MS) return;
+  console.log("pages: the hourly check of the event's pages");
+  await fetchEventPages(canonPages, schedulePages, new PoliteFetcher());
+  writeJsonFile(PAGE_CHECK_PATH, { checked_at: new Date(nowMs).toISOString() });
+  const before = readJsonFile<CanonPage[]>(CANON_PATH, []);
+  const read = new Map(before.map((p) => [pageKey(p.url), p.snapshot_hash]));
+  const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, canonPages);
+  const stale = [...latest.values()].filter((p) => read.get(pageKey(p.snapshot.url)) !== p.hash);
+  if (!stale.length) return;
+  console.log(`pages: ${stale.map((p) => p.snapshot.url).join(", ")} changed since canon was read; re-reading`);
+  const code = await canon(["--unattended"]);
+  if (code) {
+    console.log(`pages: the canon re-read didn't finish (exit ${code}); canon is unchanged, and the next hourly check retries`);
+    return;
+  }
+  const after = readJsonFile<CanonPage[]>(CANON_PATH, []);
+  const changes = canonTrackDiff(before, after, new Date(nowMs).toISOString());
+  if (!changes.length) return;
+  // Rank the new tracks against the saved Plan (its idea and stack), under the Plan's own spend guard.
+  const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+  const fits = new Map<string, "likely" | "possible">();
+  if (plan) {
+    const ctx: PlanContext = { entities: after.flatMap((p) => p.entities), event, aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
+    const events = await runPlanStream({ idea: plan.input.idea, stack: plan.input.stack }, ctx, { via: "watch", nowMs, guard: new CostGuard("plan", false) }, () => {});
+    const tr = events.find((e) => e.section === "tracks" && !("error" in e));
+    if (tr && tr.section === "tracks" && !("error" in tr)) for (const t of tr.tracks) fits.set(t.track_id, t.fit);
+  }
+  const recorded = readJsonFile<TrackChange[]>(PAGE_CHANGES_PATH, []);
+  for (const c of changes) {
+    const rec: TrackChange = { ...c, tracks: c.tracks.map((t) => ({ name: t.name, sponsor: t.sponsor, fit: fits.get(t.id) ?? null })) };
+    recorded.push(rec);
+    console.log(`pages: ${[rec.tracks.length ? `new tracks: ${rec.tracks.map((t) => `${t.name}${t.fit ? ` (${t.fit})` : ""}`).join(", ")}` : "", ...rec.notes_gone.map((q) => `"${q}" gone from the page`)].filter(Boolean).join("; ")}`);
+  }
+  writeJsonFile(PAGE_CHANGES_PATH, recorded);
+}
+
 async function watch(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { every: { type: "string", default: "2m" }, once: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
   const m = /^(\d+)(s|m)$/.exec(values.every!);
@@ -461,6 +521,11 @@ async function watch(args: string[]): Promise<number> {
     console.log(`\nwatch ${new Date().toLocaleTimeString()}`);
     // classify --new only when posts arrived: it costs nothing otherwise, and a refused run isn't re-asked every tick.
     if ((await discordIngestRun(dir)) > 0) await classify(["--new"]);
+    try {
+      await pagesRun(Date.now());
+    } catch (e) {
+      console.error(`pages: ${(e as Error).message}; the next hourly check retries`);
+    }
     await alertsRun(dryRun, Date.now(), channel);
     if (values.once) {
       await chat;
@@ -1358,6 +1423,8 @@ interface CanonPage {
   no_longer_on_page: { id: string; reason: "no match" | "ambiguous"; best: number }[];
   /** Entry steps and requirements this read lacked, carried over from the previous read (canon.ts keepDropped). */
   kept_from_previous?: KeptField[];
+  /** event.json canon_notes whose quote this read no longer finds on the page. */
+  notes_gone?: CanonNote[];
   match_keys: Keyed[];
   usage: Usage;
   cost_usd: number;
@@ -1434,8 +1501,10 @@ interface StoredExtraction {
 async function canon(args: string[]): Promise<number> {
   const { values } = parseArgs({
     args,
-    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false } },
+    options: { fixtures: { type: "boolean", default: false }, judge: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, force: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, unattended: { type: "boolean", default: false } },
   });
+  // --unattended (hr watch only): no judge, and the lower output ceiling that keeps one page under the spend limit.
+  const maxTokens = values.unattended ? CANON_WATCH_MAX_TOKENS : CANON_MAX_TOKENS;
   const event = readEvent();
   const dir = values.fixtures ? PAGE_FIXTURES_DIR : PAGES_DIR;
   const outPath = values.fixtures ? CANON_FIXTURES_PATH : CANON_PATH;
@@ -1464,7 +1533,7 @@ async function canon(args: string[]): Promise<number> {
       const c = canonInput(p, event);
       const page = prev.get(pageKey(p.snapshot.url));
       const stored = store[`${c.prompt_hash}|${c.input_hash}`];
-      return (stored && !values.force) || (page && page.input_hash === c.input_hash && !values.force) ? [] : [plannedCall(CANON_MODEL, c.system, c.request, CANON_SCHEMA, CANON_MAX_TOKENS)];
+      return (stored && !values.force) || (page && page.input_hash === c.input_hash && !values.force) ? [] : [plannedCall(CANON_MODEL, c.system, c.request, CANON_SCHEMA, maxTokens)];
     });
     if (!guard.preflight(calls)) return 2;
     if (values.judge) console.log("canon: the judge's calls are estimated as they run, and stop at the same limit");
@@ -1510,7 +1579,7 @@ async function canon(args: string[]): Promise<number> {
       const r = await callChecked(client, {
         model: CANON_MODEL,
         effort: CANON_EFFORT,
-        max_tokens: CANON_MAX_TOKENS,
+        max_tokens: maxTokens,
         system: c.system,
         schema: CANON_SCHEMA,
         request: c.request,
@@ -1549,9 +1618,15 @@ async function canon(args: string[]): Promise<number> {
     } else {
       // Same input: ids are re-derived anyway, so a change to the id scheme reaches cached pages (marks follow, D7).
       const { entities, gone } = carryIds(page, assignIds(page.entities, c.snap), c.snap);
-      page = { ...page, entities, no_longer_on_page: gone, match_keys: keyed(entities, c.snap), coverage: coverage(c.snap, entities) };
+      // Same text in a new snapshot (markup changed): canon now covers that snapshot, so watch doesn't re-read it hourly.
+      page = { ...page, snapshot_hash: p.hash, entities, no_longer_on_page: gone, match_keys: keyed(entities, c.snap), coverage: coverage(c.snap, entities) };
       console.log(`cached (${page.entities.length} entities, input unchanged); --force to rerun`);
     }
+    // Hand-noted lines (event.json canon_notes): re-applied on every read, so one the page dropped never lingers.
+    const noted = applyNotes(page.entities.filter((e) => !e.noted), event.canon_notes ?? [], c.snap, p.hash);
+    page = { ...page, entities: noted.entities, notes_gone: noted.gone };
+    for (const id of noted.added) console.log(`noted (event.json canon_notes): ${id}`);
+    for (const n of noted.gone) console.log(`noted line no longer on the page: "${n.quote}"`);
     out.push(page);
     const byKind = new Map<string, number>();
     for (const e of page.entities) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
@@ -1618,6 +1693,44 @@ async function canon(args: string[]): Promise<number> {
   return failed ? 1 : 0;
 }
 
+type Fetched = FetchResult & { saved?: string; hash?: string; changed?: boolean; role: string };
+
+/** Fetches the event's canon and schedule pages once each and saves every changed snapshot to PAGES_DIR (hr sync,
+ *  and hr watch's hourly check). Prints one line per page and the request count. */
+async function fetchEventPages(canonPages: string[], schedulePages: string[], fetcher: PoliteFetcher): Promise<Fetched[]> {
+  const results: Fetched[] = [];
+  const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
+  const { parseHTML } = await import("linkedom");
+  const done = new Set<string>();
+  for (const [role, list] of [["canon", canonPages], ["schedule", schedulePages]] as const)
+    for (const url of list) {
+      // A page listed as both canon and schedule (a Luma event page) is one page: fetched, saved and counted once.
+      if (done.has(pageKey(url))) continue;
+      done.add(pageKey(url));
+      const r: Fetched = { ...(await fetcher.get(url)), role };
+      if (r.status === "fetched" && r.html) {
+        const { document } = parseHTML(r.html);
+        const snap = snapshotPage(document as unknown as Document, { url, captured_at: new Date().toISOString(), access: "public", captured_by: "fetch" });
+        const why = needsExtension(snap, r.html);
+        if (why) Object.assign(r, { status: "needs_extension", detail: why });
+        else {
+          const hash = snapshotHash(snap);
+          const prev = latest.get(pageKey(url));
+          r.hash = hash;
+          r.changed = !prev || prev.hash !== hash;
+          // Same text from another path (a fixture or the extension): rewrite so provenance says "fetch".
+          if (r.changed || prev!.snapshot.captured_by !== "fetch") writeJsonFile((r.saved = `${PAGES_DIR}/${pageFileName(url)}`), snap);
+        }
+      }
+      delete r.html;
+      results.push(r);
+      console.log(`${r.status.padEnd(17)} ${url}  ${r.detail}${r.hash ? `; hash ${r.hash}${r.changed ? ", changed: saved" : r.saved ? ", same text, now saved as fetched" : ", unchanged"}` : ""}`);
+    }
+  const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
+  console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
+  return results;
+}
+
 async function sync(args: string[]): Promise<number> {
   // --canon: re-read changed pages with the model (hr canon --judge); never without it (user 2026-11-07).
   const { values } = parseArgs({ args, options: { canon: { type: "boolean", default: false }, yes: { type: "boolean", default: false }, offline: { type: "boolean", default: false } } });
@@ -1672,39 +1785,7 @@ async function sync(args: string[]): Promise<number> {
   for (const f of found.schedule) console.log(`schedule candidate: ${f.url} (${f.why}, ${f.posts.length} post${f.posts.length === 1 ? "" : "s"})`);
 
   // Fetch: every public page, once each this sync.
-  type Fetched = FetchResult & { saved?: string; hash?: string; changed?: boolean; role: string };
-  const results: Fetched[] = [];
-  if (!values.offline) {
-    const { latest } = pageCoverage(loadPages(PAGES_DIR).pages, [...canonPages, ...schedulePages]);
-    const { parseHTML } = await import("linkedom");
-    const done = new Set<string>();
-    for (const [role, list] of [["canon", canonPages], ["schedule", schedulePages]] as const)
-      for (const url of list) {
-        // A page listed as both canon and schedule (a Luma event page) is one page: fetched, saved and counted once.
-        if (done.has(pageKey(url))) continue;
-        done.add(pageKey(url));
-        const r: Fetched = { ...(await fetcher.get(url)), role };
-        if (r.status === "fetched" && r.html) {
-          const { document } = parseHTML(r.html);
-          const snap = snapshotPage(document as unknown as Document, { url, captured_at: new Date().toISOString(), access: "public", captured_by: "fetch" });
-          const why = needsExtension(snap, r.html);
-          if (why) Object.assign(r, { status: "needs_extension", detail: why });
-          else {
-            const hash = snapshotHash(snap);
-            const prev = latest.get(pageKey(url));
-            r.hash = hash;
-            r.changed = !prev || prev.hash !== hash;
-            // Same text from another path (a fixture or the extension): rewrite so provenance says "fetch".
-            if (r.changed || prev!.snapshot.captured_by !== "fetch") writeJsonFile((r.saved = `${PAGES_DIR}/${pageFileName(url)}`), snap);
-          }
-        }
-        delete r.html;
-        results.push(r);
-        console.log(`${r.status.padEnd(17)} ${url}  ${r.detail}${r.hash ? `; hash ${r.hash}${r.changed ? ", changed: saved" : r.saved ? ", same text, now saved as fetched" : ", unchanged"}` : ""}`);
-      }
-    const reqs = results.reduce((n, r) => n + r.requests, 0) + fetcher.robotsRequests;
-    console.log(`${results.length} pages, ${reqs} HTTP requests (${fetcher.robotsRequests} robots.txt)`);
-  }
+  const results = values.offline ? [] : await fetchEventPages(canonPages, schedulePages, fetcher);
 
   // Pages the extension read in a background tab during "Sync this event" (Devpost refuses most plain fetches).
   const inbox = join(homedir(), "Downloads", "hackrecon", "pages");
@@ -1789,7 +1870,7 @@ interface FitCached {
 
 type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
 
-async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli" | "watch"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const client = anthropicClient(opts.guard);
@@ -1815,6 +1896,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
       saved_at: new Date().toISOString(),
       input: { idea: input.idea, stack: input.stack },
       tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names })),
+      overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
   if (!opts.fresh) {
     if (of("tracks")?.from === "model") writeJsonFile(FIT_CACHE_PATH, fcache);
@@ -1879,6 +1961,12 @@ async function planCli(args: string[]): Promise<number> {
   const out = (line: string) => console.log(wrapText(line, width));
   out(r.from === "none" ? "Tracks to target: none yet; the event hasn't announced its tracks. Your Plan is saved, and tracks get ranked once they're on the event's pages." : `Tracks to target (${r.from}, ready at ${r.ms} ms${r.usage ? `; ${formatUsage(1, r.usage, FIT_MODEL)}` : ""})`);
   out(`Gaps (${g.from}, ready at ${g.ms} ms${g.usage ? `; ${formatUsage(1, g.usage, FIT_MODEL)}` : ""}): ${g.checked} stated requirements and entry steps on likely tracks, against ${g.facts.description} description sentences, ${g.facts.stack} stack lines and ${g.facts.repo} repo lines${repoNote ? ` (${repoNote})` : ""}`);
+  for (const o of tr.overall) {
+    out(`\n  ${o.name}   every team is in it; not ranked`);
+    for (const d of o.descriptions) out(`    "${d}"`);
+    if (o.prizes.length) out(`    Prizes: ${o.prizes.join("; ")}`);
+    out(`    ${o.source_url}`);
+  }
   let shown = "";
   for (const t of r.items) {
     if (t.fit === "possible" && shown !== "possible") out("\n  Also possible");

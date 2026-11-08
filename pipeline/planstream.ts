@@ -5,7 +5,7 @@
 // sessions and people join as their own tasks when they're built: each emits into the same queue, unordered.
 import type { BoothBlock } from "./plan.ts";
 import type { GapResult, ProjectFact } from "./gaps.ts";
-import type { PlanSection, PlanTrack } from "./plan.ts";
+import type { OverallTrack, PlanSection, PlanTrack } from "./plan.ts";
 import type { JoinSponsor, PlanCredit, PlanPeople, PlanSession, SubmissionDeadline } from "./planjoin.ts";
 import type { Repo } from "./repo.ts";
 import type { Usage } from "./usage.ts";
@@ -14,7 +14,7 @@ export type PlanSectionName = "tracks" | "booths" | "gaps" | "credits" | "sessio
 const CHAIN = ["tracks", "booths", "gaps", "credits", "sessions", "people"] as const;
 
 export type PlanEvent =
-  | { section: "tracks"; ms: number; from: "cache" | "model" | "none"; tracks: PlanTrack[]; usage: Usage | null }
+  | { section: "tracks"; ms: number; from: "cache" | "model" | "none"; tracks: PlanTrack[]; overall: OverallTrack[]; usage: Usage | null }
   | { section: "booths"; ms: number; booths: BoothBlock[] }
   | { section: "gaps"; ms: number; from: GapResult["from"]; gaps: GapResult["gaps"]; checked: number; facts: GapResult["facts"]; usage: Usage | null; repo?: { url: string; commit: string } }
   | { section: "credits"; ms: number; sponsors: JoinSponsor[]; credits: PlanCredit[]; dropped: number }
@@ -87,7 +87,7 @@ export async function* planStream(s: PlanSteps): AsyncGenerator<PlanEvent> {
       for (const section of owed) emit({ section, ms: ms(), error: r.error });
       return;
     }
-    emit({ section: "tracks", ms: ms(), from: r.from, tracks: r.items, usage: r.usage });
+    emit({ section: "tracks", ms: ms(), from: r.from, tracks: r.items, overall: r.overall ?? [], usage: r.usage });
     emit({ section: "booths", ms: ms(), booths: s.booths(r.items) });
     const repo = repoP ? await repoP : null;
     if (repo && "error" in repo) s.log?.(`plan: ${repo.error}; checking gaps against the description and stack only`);

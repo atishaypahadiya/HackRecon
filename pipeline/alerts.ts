@@ -11,6 +11,8 @@ export interface PlanFacts {
   saved_at?: string;
   input: { idea: string; stack: { name: string; used_for: string | null }[] | null };
   tracks: { track_id: string; name: string; sponsor: string; fit: "likely" | "possible"; product_names: string[] }[];
+  /** The event's own unranked track(s), verbatim (plan.ts OverallTrack); absent in Plans saved before 2026-11-08. */
+  overall?: { name: string; descriptions: string[]; prizes: string[]; source_url: string }[];
 }
 
 export const ALERT_KINDS = ["change", "deadline", "tracks", "judging", "workshop", "offer", "unread"] as const;
@@ -118,6 +120,37 @@ export function alertFor(m: Message, items: Item[], plan: PlanFacts | null, o: {
 }
 
 /** A sidebar badge on a discovered channel no open tab shows: something landed there, content unknown. */
+/** What a re-read of the event's page changed about tracks (hr watch's hourly check, user 2026-11-08): tracks that
+ *  weren't in canon before, with the re-ranked Plan's fit when the re-rank ran, and event.json canon_notes whose
+ *  line the page dropped (e.g. "Thematic prizes from challenge partners" turning into named tracks). */
+export interface TrackChange {
+  at: string;
+  url: string;
+  tracks: { name: string; sponsor: string; fit: "likely" | "possible" | null }[];
+  notes_gone: string[];
+}
+
+export function pageChangeAlert(c: TrackChange): Alert {
+  const named = c.tracks.map((t) => `${t.name}${t.sponsor !== "event" ? ` (${t.sponsor})` : ""}`);
+  const likely = c.tracks.filter((t) => t.fit === "likely").map((t) => t.name);
+  const gone = c.notes_gone.map((q) => `"${q}" is no longer on the event page`);
+  const ranked = c.tracks.some((t) => t.fit);
+  return {
+    key: `page:${c.url}:${c.at}`,
+    kind: "tracks",
+    level: "now",
+    what: [named.length ? `New tracks on the event page: ${named.join(", ")}` : "", ...gone].filter(Boolean).join(". "),
+    why: likely.length
+      ? `Your Plan likely fits ${likely.join(", ")}`
+      : c.tracks.length
+        ? ranked ? "Ranked against your Plan: possible fits at most" : "Not ranked against your Plan yet"
+        : "Its prizes may now be named tracks",
+    source: "the event page",
+    link: c.url,
+    posted_at: c.at,
+  };
+}
+
 export function unreadAlert(u: { channel_id: string; channel_name: string; role: string; since: string; guild_id: string; guild_name: string }): Alert {
   return {
     key: `unread:${u.channel_id}:${u.since}`,
