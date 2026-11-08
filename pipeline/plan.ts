@@ -314,6 +314,9 @@ export interface StackRerank {
    *  takes them away (a fit can't go up). A move the other way is the ranker's run-to-run noise, so the last
    *  judgment stands. */
   monotone?: "up" | "down";
+  /** A departure: each track the leaver's join raised, with its judgment just before (null: it wasn't ranked). The
+   *  re-judged rating can't go above it, so the track falls back; a fallback restores that judgment whole. */
+  ceilings?: Record<string, Pick<Ranked, "fit" | "reason" | "quote"> | null>;
 }
 
 /** Rep notes ride on their track's card as context: the ranker reads them but can never quote them, so the page
@@ -382,7 +385,13 @@ export async function planTracks(client: Anthropic | null, input: PlanInput, ent
       if ((m === "up" && rank[now.fit] < rank[was.fit]) || (m === "down" && rank[now.fit] > rank[was.fit])) return was;
       return now;
     };
-    ranked = [...prior.map((x) => keep(x, byId.get(x.track_id))).filter((x): x is Ranked => !!x), ...fresh.filter((x) => !prior.some((p) => p.track_id === x.track_id))];
+    const cap = (x: Ranked | null): Ranked | null => {
+      const c = x && rerank!.ceilings && x.track_id in rerank!.ceilings ? rerank!.ceilings[x.track_id] : undefined;
+      if (!x || c === undefined) return x;
+      if (c === null) return null;
+      return rank[x.fit] > rank[c.fit] ? (c.reason ? { track_id: x.track_id, ...c } : { ...x, fit: c.fit }) : x;
+    };
+    ranked = [...prior.map((x) => cap(keep(x, byId.get(x.track_id)))), ...fresh.filter((x) => !prior.some((p) => p.track_id === x.track_id)).map(cap)].filter((x): x is Ranked => !!x);
     cache[hash] = { ranked, usage: usage ?? NO_USAGE, calls: hit.size ? 1 : 0 };
     from = "partial";
   }

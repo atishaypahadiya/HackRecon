@@ -1981,7 +1981,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
       saved_at: new Date().toISOString(),
       input: { idea: input.idea, stack: input.stack, ...(input.repo ? { repo: input.repo } : {}) },
       counts: { gaps: countOf("gaps"), booths: countOf("booths"), gaps_nobody: nobodyCount() },
-      tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names })),
+      tracks: ranked.tracks.map((t) => ({ track_id: t.track_id, name: t.name, sponsor: t.sponsor, fit: t.fit, product_names: t.product_names, reason: t.reason, quote: t.quote })),
       overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
   if (!opts.fresh) {

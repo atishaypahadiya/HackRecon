@@ -12,7 +12,7 @@ export interface PlanFacts {
   input: { idea: string; stack: { name: string; used_for: string | null; told?: { source: "chat" | "board"; at: string; quote: string | null } }[] | null; repo?: string | null };
   /** Gaps and booth questions in the last run (chat writes report the change). */
   counts?: { gaps: number | null; booths: number | null; /** Slice 4: gaps no teammate lists a skill for. */ gaps_nobody?: number | null };
-  tracks: { track_id: string; name: string; sponsor: string; fit: "likely" | "possible"; product_names: string[] }[];
+  tracks: { track_id: string; name: string; sponsor: string; fit: "likely" | "possible"; product_names: string[]; /** Since slice 4's leave fix: what a departure restores. */ reason?: string; quote?: string }[];
   /** The event's own unranked track(s), verbatim (plan.ts OverallTrack); absent in Plans saved before 2026-11-08. */
   overall?: { name: string; descriptions: string[]; prizes: string[]; source_url: string }[];
 }
