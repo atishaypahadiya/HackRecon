@@ -49,7 +49,13 @@ export const DISCORD_STATE_PATH = "data/discord_state.json";
 export const DISCORD_UNREAD_PATH = "data/discord_unread.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
-export const SMS_OUTBOX_PATH = "data/sms_outbox.jsonl";
+export const OUTBOX_PATH = "data/outbox.jsonl";
+/** The user's questions from their chat and the agent's answers (agent.ts). */
+export const CHAT_LOG_PATH = "data/chat.jsonl";
+/** Where each two-way channel left off reading (Telegram's update offset). */
+export const CHANNEL_STATE_PATH = "data/channel_state.json";
+/** Chat answers' spend per event day (agent.ts ChatBudget). */
+export const CHAT_SPEND_PATH = "data/chat_spend.json";
 export const BOARD_DATA_PATH = "data/board.json";
 export const LABELS_PATH = "review/labels.csv";
 export const POOL_META_PATH = "review/pool.json";
