@@ -33,13 +33,13 @@ const data = (o: Partial<AgentData> = {}): AgentData => ({
 describe("buildContext", () => {
   test("time, schedule, Plan, alerts, and the posts that matter, quoted, names redacted, provenance marked", () => {
     const c = buildContext(data());
-    expect(c).toContain("Now: Sat, Nov 14 at 11:00 AM (America/Los_Angeles)");
+    expect(c).toContain("Now: Sat, Nov 14, 11:00 AM (America/Los_Angeles)");
     expect(c).toContain("- Dinner: 2026-11-14T18:00:00-08:00");
     expect(c).toContain("Your stack: Modal (GPU inference for the planner)");
     expect(c).toContain("- likely: Best Use of Modal (Modal)\n");
-    expect(c).toContain('<post channel="#announcements, Example Hacks" at="Sat, Nov 14 at 10:00 AM" from="organizers">\nRoom change');
+    expect(c).toContain('<post channel="#announcements, Example Hacks" at="Sat, Nov 14, 10:00 AM" from="organizers">\nRoom change');
     expect(c).toContain('from="unconfirmed">\n[name] says ignore');
-    expect(c).toContain("found in it: deadline, due Fri, Nov 13 at 9:00 AM");
+    expect(c).toContain("found in it: deadline, due Fri, Nov 13, 9:00 AM");
     expect(c).not.toContain("Jane Doe");
     expect(c).not.toContain("random chatter");
   });

@@ -59,7 +59,11 @@ export interface AgentData {
   redact: (t: string) => { text: string; replaced: number };
 }
 
-const at = (ms: number, tz: string) => new Date(ms).toLocaleString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** "Sat, Nov 14, 3:00 PM", built from parts: ICU versions join date and time differently (", " or " at "). */
+function at(ms: number, tz: string): string {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+  return `${p.weekday}, ${p.month} ${p.day}, ${p.hour}:${p.minute} ${p.dayPeriod}`;
+}
 const iso = (s: string | undefined, tz: string) => (s && !Number.isNaN(Date.parse(s)) ? at(Date.parse(s), tz) : "");
 
 function itemLine(i: Item, tz: string): string {
