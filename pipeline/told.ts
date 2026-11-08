@@ -7,8 +7,9 @@ import { dirname } from "node:path";
 import type { BoardOffer } from "./board.ts";
 import { readJsonFile, writeJsonFile } from "./classify.ts";
 import type { PlanFacts } from "./alerts.ts";
-import { CLAIMS_PATH, PENDING_WRITE_PATH, PLAN_PATH, WRITES_LOG_PATH } from "./event.ts";
-import type { PlanInput, StackItem } from "./plan.ts";
+import { CLAIMS_PATH, ENTERED_PATH, PENDING_WRITE_PATH, PLAN_PATH, SHIP_TICKS_PATH, WRITES_LOG_PATH } from "./event.ts";
+import type { ShipItem, ShipList } from "./shiplist.ts";
+import type { PlanInput, StackItem, StackRerank } from "./plan.ts";
 import type { Entity } from "./schema.ts";
 
 export interface Told {
@@ -157,6 +158,53 @@ export function claimLine(c: ClaimableCredit, claimed: boolean, credits: Claimab
   return `${claimed ? "Marked claimed" : "Marked not claimed"}: ${c.value} (${c.sponsor}).${of}`;
 }
 
+// Slice 2: the tracks the hacker is entering and their Ship ticks, by track id and checklist item id.
+export type Entered = Record<string, Told>;
+export type Ticks = Record<string, Told>;
+export const readEntered = (): Entered => readJsonFile<Entered>(ENTERED_PATH, {});
+export const readTicks = (): Ticks => readJsonFile<Ticks>(SHIP_TICKS_PATH, {});
+function setIn(path: string, id: string, on: boolean, told: Told): void {
+  const all = readJsonFile<Record<string, Told>>(path, {});
+  if (on) all[id] = told;
+  else delete all[id];
+  writeJsonFile(path, all);
+}
+export const setEntered = (id: string, on: boolean, told: Told) => setIn(ENTERED_PATH, id, on, told);
+export const setTick = (id: string, on: boolean, told: Told) => setIn(SHIP_TICKS_PATH, id, on, told);
+
+export interface EnteredUpdate {
+  enter: string[];
+  leave: string[];
+}
+export interface TrackRef {
+  track_id: string;
+  name: string;
+  sponsor: string;
+}
+
+/** A track is named by its sponsor (an event-level track has none to name) or its full name, as whole words. */
+export function namesTrack(message: string, t: TrackRef): boolean {
+  return (t.sponsor !== "event" && messageNames(message, [t.sponsor])) || messageNames(message, [t.name]);
+}
+
+const STOP = new Set(["your", "with", "that", "this", "from", "into", "just", "about", "must", "have", "will", "each", "their", "they", "them", "what", "when", "where", "before", "after", "only", "also", "more", "than", "then", "team", "teams", "make", "sure"]);
+/** A Ship item is named when the message shares one of its content words, by its first five letters ("submitted"
+ *  names "Submit on Devpost", "video" names "a 2-minute demo video"). Ticks are easy to undo, so this is looser than
+ *  a stack item's whole name. */
+export function namesItem(message: string, label: string): boolean {
+  const words = (s: string) => norm(s).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4 && !STOP.has(w));
+  const key = (w: string) => w.slice(0, 5);
+  const m = new Set(words(message).map(key));
+  return words(label).some((w) => m.has(key(w)));
+}
+
+/** Every item the checklist can hold: required, each entered track's, judging. */
+export const shipItems = (l: ShipList): (ShipItem & { section: string })[] => [
+  ...l.required.map((x) => ({ ...x, section: "Required to submit" })),
+  ...l.tracks.flatMap((t) => t.items.map((x) => ({ ...x, section: t.name }))),
+  ...l.judging.map((x) => ({ ...x, section: "Judging" })),
+];
+
 export interface WriteRecord {
   at: string;
   source: Told["source"];
@@ -172,9 +220,8 @@ export function logWrite(r: WriteRecord): void {
 
 /** A destructive write waiting for "yes" (10 minutes). */
 export const CONFIRM_MS = 10 * 60_000;
-export interface PendingWrite {
-  op: "update_stack";
-  input: StackUpdate;
+export type PendingWrite = PendingBase & ({ op: "update_stack"; input: StackUpdate } | { op: "set_entered"; input: EnteredUpdate });
+interface PendingBase {
   told: Told;
   /** What Donna asked, for the log. */
   asked: string;
@@ -195,7 +242,13 @@ export type WriteResult = { line: string } | { confirm: string } | { error: stri
 /** The chat write path for the current event (hr runs in its directory, so every path here is that event's data/).
  *  `rerun` re-runs the Plan on a new input (ranking, gaps, booths), saving it to plan.json; `credits` lists what can
  *  be claimed. A stack write saves the input first, so a failed re-run still keeps what the hacker said. */
-export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error: string } | null>; credits: () => ClaimableCredit[] }) {
+export function makeWrites(deps: {
+  rerun: (input: PlanInput, rerank: StackRerank) => Promise<{ error: string } | null>;
+  credits: () => ClaimableCredit[];
+  /** The event's tracks (canon), and its Ship checklist for a set of entered track ids. */
+  tracks: () => TrackRef[];
+  ship: (entered: string[]) => ShipList;
+}) {
   const snapshot = (p: PlanFacts | null): PlanSnapshot | null => (p ? { tracks: (p.tracks ?? []).map((t) => ({ track_id: t.track_id ?? t.name, name: t.name, fit: t.fit })), gaps: p.counts?.gaps ?? null, booths: p.counts?.booths ?? null } : null);
   const applyStack = async (u: StackUpdate, told: Told, op: string): Promise<WriteResult> => {
     const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
@@ -206,7 +259,9 @@ export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error:
     writeJsonFile(PLAN_PATH, { ...plan, saved_at: new Date().toISOString(), input });
     let line: string;
     try {
-      const failed = await deps.rerun(input);
+      // Only the tracks the change names are re-ranked (plan.ts affectedTracks); the rest keep their last ranking.
+      const changed = r.changes.map((c) => (c.op === "add" ? c.item.name : c.name));
+      const failed = await deps.rerun(input, { before: { idea: plan.input.idea, stack: plan.input.stack, ...(plan.input.repo ? { repo: plan.input.repo } : {}) }, changed });
       line = stackWriteLine(r.changes, snapshot(plan), failed ? null : snapshot(readJsonFile<PlanFacts | null>(PLAN_PATH, null)), failed?.error ?? null);
     } catch (e) {
       line = stackWriteLine(r.changes, null, null, (e as Error).message);
@@ -242,7 +297,66 @@ export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error:
       logWrite({ at: told.at, source: "chat", quote: told.quote, op: "mark_claimed", input: { credit_id: c.id, claimed }, result: line });
       return { line };
     }
+    if (name === "set_entered") {
+      const tracks = deps.tracks();
+      const byId = new Map(tracks.map((t) => [t.track_id, t]));
+      const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+      const u: EnteredUpdate = { enter: ids(input.enter), leave: ids(input.leave) };
+      const all = [...u.enter, ...u.leave];
+      if (!all.length) return { error: "that doesn't name a track" };
+      const unknown = all.filter((id) => !byId.has(id));
+      if (unknown.length) return { error: "that isn't a track on this event's pages" };
+      if (!all.every((id) => namesTrack(msg.text, byId.get(id)!))) return { error: "your message doesn't name that track" };
+      const now = readEntered();
+      u.enter = u.enter.filter((id) => !now[id]);
+      u.leave = u.leave.filter((id) => now[id]);
+      if (!u.enter.length && !u.leave.length) return { error: "that doesn't change the tracks you're entering" };
+      if (u.leave.length) {
+        const asked = `That takes ${u.leave.map((id) => byId.get(id)!.name).join(", ")} off the tracks you're entering. Reply yes within 10 minutes to do it; anything else cancels.`;
+        savePending({ op: "set_entered", input: u, told, asked, expires_at: new Date(Date.parse(msg.at) + CONFIRM_MS).toISOString() });
+        logWrite({ at: told.at, source: "chat", quote: told.quote, op: "set_entered asked", input: u, result: asked });
+        return { confirm: asked };
+      }
+      return applyEntered(u, told);
+    }
+    if (name === "tick_ship_item") {
+      const items = shipItems(deps.ship(deps.tracks().map((t) => t.track_id)));
+      const it = items.find((x) => x.id === input.item_id);
+      if (!it) return { error: "that isn't an item on your Ship checklist" };
+      if (!namesItem(msg.text, it.label)) return { error: "your message doesn't name that item" };
+      const done = input.done !== false;
+      setTick(it.id, done, told);
+      const line = tickLine(it, done);
+      logWrite({ at: told.at, source: "chat", quote: told.quote, op: "tick_ship_item", input: { item_id: it.id, done }, result: line });
+      return { line };
+    }
     return { error: `${name} isn't a change I can make` };
+  };
+
+  const applyEntered = (u: EnteredUpdate, told: Told): WriteResult => {
+    const byId = new Map(deps.tracks().map((t) => [t.track_id, t]));
+    for (const id of u.enter) setEntered(id, true, told);
+    for (const id of u.leave) setEntered(id, false, told);
+    const entered = Object.keys(readEntered());
+    const list = deps.ship(entered);
+    const ticks = readTicks();
+    const parts = [
+      ...u.enter.map((id) => {
+        const items = list.tracks.find((t) => t.track_id === id)?.items ?? [];
+        return `Entered ${byId.get(id)!.name}: ${items.length ? `Ship lists ${items.length} item${items.length === 1 ? "" : "s"} for it, ${items.filter((x) => ticks[x.id]).length} done` : "it states no entry steps or requirements"}.`;
+      }),
+      ...(u.leave.length ? [`Left ${u.leave.map((id) => byId.get(id)!.name).join(", ")}.`] : []),
+    ];
+    const line = `${parts.join(" ")} You're entering ${entered.length} track${entered.length === 1 ? "" : "s"}.`;
+    logWrite({ at: told.at, source: told.source, quote: told.quote, op: "set_entered", input: u, result: line });
+    return { line };
+  };
+  const tickLine = (it: ShipItem & { section: string }, done: boolean): string => {
+    const ticks = readTicks();
+    const list = deps.ship(Object.keys(readEntered()));
+    const same = shipItems(list).filter((x) => x.section === it.section);
+    const of = same.length ? ` ${it.section}: ${same.filter((x) => ticks[x.id]).length} of ${same.length} done.` : "";
+    return `${done ? "Ticked" : "Unticked"}: "${it.label}".${of}`;
   };
 
   /** A message that settles a pending write: "yes" applies it, "no" cancels it with a reply, anything else (or a reply
@@ -253,11 +367,11 @@ export function makeWrites(deps: { rerun: (input: PlanInput) => Promise<{ error:
     clearPending();
     if (Date.parse(at) > Date.parse(p.expires_at)) return null;
     if (YES.test(text)) {
-      const r = await applyStack(p.input, { ...p.told, at }, p.op);
+      const r = p.op === "set_entered" ? applyEntered(p.input, { ...p.told, at }) : await applyStack(p.input, { ...p.told, at }, p.op);
       return "line" in r ? r.line : `I didn't change anything: ${"error" in r ? r.error : ""}.`;
     }
     logWrite({ at, source: "chat", quote: text, op: `${p.op} cancelled`, input: p.input, result: "cancelled" });
-    return NO.test(text) ? "Cancelled: your stack is unchanged." : null;
+    return NO.test(text) ? (p.op === "set_entered" ? "Cancelled: you're still entering the same tracks." : "Cancelled: your stack is unchanged.") : null;
   };
   return { exec, confirm };
 }

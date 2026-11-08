@@ -73,7 +73,7 @@ import {
 } from "./prelabel.ts";
 import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
-import { logWrite, makeWrites, pageCredits, readClaims, setClaim, type Told, type WriteRecord } from "./told.ts";
+import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
 import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
@@ -177,7 +177,7 @@ import { PREFILL_MAX_TOKENS, PREFILL_SCHEMA, PREFILL_SYSTEM, prefillDraft, prefi
 import { builtWithReport, formatPaired, pairedVsBaseline, scoreBuiltWith } from "./prefilleval.ts";
 import { recheckGaps, shipTracks, type ShipGapStore } from "./ship.ts";
 import { cliWidth, wrapText } from "./wrap.ts";
-import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, trackDetail, type FitCache, type PlanInput, type PlanTrack, type StackItem } from "./plan.ts";
+import { boothBlocks, boothQuestions, parsePlanBody, parseStack, planMeta, planTracks, type StackRerank, trackDetail, type FitCache, type PlanInput, type PlanTrack, type StackItem } from "./plan.ts";
 import { devpostQuery, eventDraft, organizersFrom, organizerTag, slackDeadlines, workspaceSubdomain, type DiscoveredUser } from "./autoconfig.ts";
 import { compareSponsors, devpostCanonPages, discoverUrls, organizersFromRestricted, pickDevpostHit, sponsorsDraft, type DevpostHit } from "./discover.ts";
 import { needsExtension, PoliteFetcher, USER_AGENT, type FetchResult } from "./fetch.ts";
@@ -567,7 +567,7 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
       dailyCapUsd: budget().capUsd,
       ask: async (question, history, at) => {
         if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
-        const d = readAgentData(Date.now());
+        const d = readAgentData(Date.now(), shipNow);
         return budgetedAnswer(client, guard, budget(), { question, at, history, context: buildContext(d, boundary), eventName: d.event?.event ?? "", tz: d.tz }, Date.now, writes.exec);
       },
       confirm: writes.confirm,
@@ -588,14 +588,25 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
 /** Chat writes (told.ts) for this event: a stack change re-runs the Plan under the Plan's own spend guard. */
 function chatWrites() {
   return makeWrites({
-    rerun: async (input) => {
+    rerun: async (input, rerank) => {
       const ctx: PlanContext = { entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) };
-      const events = await runPlanStream(input, ctx, { via: "chat", guard: new CostGuard("plan", false) }, () => {});
+      const events = await runPlanStream(input, ctx, { via: "chat", guard: new CostGuard("plan", false), rerank }, () => {});
       const failed = events.find((e) => e.section === "tracks" && "error" in e) as { error: string } | undefined;
       return failed ? { error: failed.error } : null;
     },
     credits: () => readAgentData(Date.now()).credits ?? [],
+    tracks: eventTracks,
+    ship: (entered) => shipNow(entered),
   });
+}
+
+/** The event's tracks (canon), for entering by chat or on the board. */
+function eventTracks(): TrackRef[] {
+  return readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities).filter((e) => e.kind === "track").map((e) => ({ track_id: e.id, name: e.name.value ?? "", sponsor: e.sponsor }));
+}
+/** Ship's checklist now, for these entered tracks. */
+function shipNow(entered: string[], nowMs = Date.now()): ShipList {
+  return shipListAt(readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), readEvent(), entered, nowMs);
 }
 
 /** The event's daily chat budget, from event.json (read per question, so an edit applies at once). */
@@ -626,7 +637,7 @@ async function ask(args: string[]): Promise<number> {
     console.log(settled);
     return 0;
   }
-  const d = readAgentData(nowMs);
+  const d = readAgentData(nowMs, shipNow);
   const context = buildContext(d);
   const route = routeQuestion(question);
   console.log(`ask: context ${context.length} chars (${d.messages.length} posts known, plan ${d.plan ? "saved" : "missing"}, ${d.past?.length ?? 0} past events); ${route} question, ${route === "deep" ? CHAT_DEEP_MODEL : CHAT_MODEL}`);
@@ -1381,6 +1392,18 @@ async function board(args: string[]): Promise<number> {
         logWrite({ ...told, op: "mark_claimed", input: { credit_id: b.id, claimed: b.claimed }, result: b.claimed ? "claimed" : "not claimed" });
         return json({ claims: readClaims() });
       }
+      if (req.method === "POST" && (path === "/entered" || path === "/ticks")) {
+        // Slice 2: the board's "Tracks you're entering" boxes and checklist ticks, into the store chat writes.
+        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+        const b = (await req.json().catch(() => null)) as { id?: unknown; on?: unknown } | null;
+        const tracks = eventTracks().map((t) => t.track_id);
+        const known = new Set(path === "/entered" ? tracks : shipItems(shipNow(tracks)).map((x) => x.id));
+        if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.on !== "boolean") return json({ error: path === "/entered" ? "not a track on this event" : "not a checklist item on this event" }, 400);
+        const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
+        (path === "/entered" ? setEntered : setTick)(b.id, b.on, told);
+        logWrite({ ...told, op: path === "/entered" ? "set_entered" : "tick_ship_item", input: { id: b.id, on: b.on }, result: b.on ? "on" : "off" });
+        return json({ entered: readEntered(), ticks: readTicks() });
+      }
       if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
       if (path === "/ship/list") {
         // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
@@ -1402,7 +1425,7 @@ async function board(args: string[]): Promise<number> {
         if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
         // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
         const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
-        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims() });
+        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks() });
       }
       if (path === "/")
         return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
@@ -1916,13 +1939,13 @@ interface FitCached {
 
 type PlanContext = { entities: Entity[]; event: EventConfig; aliases: SponsorAliases };
 
-async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli" | "watch" | "chat"; fresh?: boolean; nowMs?: number; guard: CostGuard }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
+async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "board" | "cli" | "watch" | "chat"; fresh?: boolean; nowMs?: number; guard: CostGuard; rerank?: StackRerank }, on: (e: PlanEvent) => void): Promise<PlanEvent[]> {
   const fcache = opts.fresh ? {} : readJsonFile<FitCache>(FIT_CACHE_PATH, {});
   const gcache = opts.fresh ? {} : readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
   const client = anthropicClient(opts.guard);
   const events: PlanEvent[] = [];
   for await (const e of planStream({
-    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases),
+    tracks: () => planTracks(client, input, ctx.entities, ctx.event, fcache, ctx.aliases, undefined, opts.rerank),
     repo: input.repo ? () => checkoutRepoAsync(input.repo!) : null,
     repoLines: (repo, tracks) => repoFacts(repo, tracks.filter((t) => t.fit === "likely").flatMap((t) => t.product_names)),
     gaps: (tracks, lines) => planGaps(client, tracks, ctx.entities, input, lines, gcache),
@@ -1950,7 +1973,7 @@ async function runPlanStream(input: PlanInput, ctx: PlanContext, opts: { via: "b
       overall: ranked.overall.map(({ name, descriptions, prizes, source_url }) => ({ name, descriptions, prizes, source_url })),
     });
   if (!opts.fresh) {
-    if (of("tracks")?.from === "model") writeJsonFile(FIT_CACHE_PATH, fcache);
+    if (of("tracks")?.from === "model" || of("tracks")?.from === "partial") writeJsonFile(FIT_CACHE_PATH, fcache);
     if (of("gaps")?.from === "model") writeJsonFile(GAPS_CACHE_PATH, gcache);
   }
   const done = events.at(-1) as Extract<PlanEvent, { section: "done" }>;

@@ -105,6 +105,57 @@ describe("Plan tracks", () => {
     const r = await planTracks(never, { idea: "AI research labs that compete", stack: null }, [], e, {});
     expect(r).toMatchObject({ items: [], from: "none", usage: null });
   });
+  describe("a stack change told to Donna re-ranks only the tracks it affects", () => {
+    const three = [...ents, track("t3", "Gamma", "[Gamma] Best Use of Gamma")];
+    const before = { idea: "an app", stack: parseStack("Acme") };
+    const prior = [
+      { track_id: "t1", fit: "likely" as const, reason: "your stack lists Acme", quote: "must use Acme" },
+      { track_id: "t2", fit: "possible" as const, reason: "a designed UI could suit it", quote: "judged on design" },
+    ];
+    const seeded = (): FitCache => ({ [fitHash(fitSystemPrompt(e, trackCards(three, e)), fitRequest(before.idea, stackForRanker(before.stack)))]: { ranked: prior, usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, calls: 1 } });
+    // A fake model that records which tracks it was asked to rank and ranks each "likely".
+    const fake = (asked: string[][]) =>
+      ({
+        messages: {
+          stream: (p: { system: { text: string }[]; messages: { content: string }[] }) => ({
+            finalMessage: async () => {
+              const rr = /<rerank>[^:]*: ([^<]*)<\/rerank>/.exec(p.messages[0]!.content)?.[1];
+              const ids = rr ? rr.split(", ") : ["t1", "t2", "t3"].filter((id) => p.system[0]!.text.includes(`id="${id}"`));
+              asked.push(ids);
+              const q = (id: string) => ({ t1: "must use Acme", t2: "judged on design", t3: "[Gamma] Best Use of Gamma" })[id]!;
+              return { stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 50 }, content: [{ type: "text", text: JSON.stringify({ ranked: ids.map((id) => ({ track_id: id, fit: id === "t3" ? "possible" : "likely", reason: `new ${id}`, quote: q(id) })) }) }] };
+            },
+          }),
+        },
+      }) as never;
+    test("affectedTracks: the changed item's sponsor or product, or a track whose last reason leaned on it", async () => {
+      const { affectedTracks } = await import("./plan.ts");
+      const cards = trackCards(three, e);
+      expect([...affectedTracks(cards, prior, ["Gamma"])]).toEqual(["t3"]);
+      expect([...affectedTracks(cards, prior, ["acme sdk"])]).toEqual(["t1"]);
+      expect([...affectedTracks(cards, prior, ["PyTorch"])]).toEqual([]);
+    });
+    test("adding Gamma ranks only Gamma's track; the others keep their ranking; the merge is cached for the board", async () => {
+      const cache = seeded(), asked: string[][] = [];
+      const input = { idea: "an app", stack: parseStack("Acme, Gamma") };
+      const r = await planTracks(fake(asked), input, three, e, cache, {}, undefined, { before, changed: ["Gamma"] });
+      if ("error" in r) throw new Error(r.error);
+      expect(asked).toEqual([["t3"]]);
+      expect([r.from, r.items.map((t) => [t.track_id, t.fit, t.reason])]).toEqual(["partial", [["t1", "likely", "your stack lists Acme"], ["t2", "possible", "a designed UI could suit it"], ["t3", "possible", "new t3"]]]);
+      const again = await planTracks(null, input, three, e, cache);
+      expect("error" in again ? again.error : again.from).toBe("cache");
+    });
+    test("an item no track names makes no model call", async () => {
+      const asked: string[][] = [];
+      const r = await planTracks(fake(asked), { idea: "an app", stack: parseStack("Acme, PyTorch") }, three, e, seeded(), {}, undefined, { before, changed: ["PyTorch"] });
+      expect([asked, "error" in r ? r.error : [r.from, r.usage]]).toEqual([[], ["partial", null]]);
+    });
+    test("a new idea, or no last ranking to start from, ranks everything", async () => {
+      const asked: string[][] = [];
+      await planTracks(fake(asked), { idea: "a different app", stack: parseStack("Acme, Gamma") }, three, e, seeded(), {}, undefined, { before, changed: ["Gamma"] });
+      expect(asked).toEqual([["t1", "t2", "t3"]]);
+    });
+  });
   test("an unranked idea without an API key is an error, never an empty plan", async () => {
     expect(await planTracks(null, { idea: "new", stack: null }, ents, e, {})).toEqual({ error: "no API key, and this idea hasn't been ranked before" });
     expect(parseStack(" , ")).toBeNull();
