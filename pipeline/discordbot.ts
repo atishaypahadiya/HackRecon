@@ -1,4 +1,4 @@
-// The HackRecon bot (user 2026-11-07): a bot account the user created, in a private server they own. When an event's
+// The Donna bot (user 2026-11-07; named Donna 2026-11-08): a bot account the user created, in a private server they own. When an event's
 // announcement channel can be followed, the user clicks Follow once and picks that server; Discord then copies every
 // announcement there as a crosspost, and this reads those copies through the official API with the bot's own token
 // (never the user's). GET only, four read routes, paced far under Discord's limits, backing off on 429.

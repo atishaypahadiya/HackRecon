@@ -8,7 +8,7 @@ Donna reads an event's Discord two ways, both read-only:
 - **Your open tabs (the extension).** Every Discord channel you have open in a tab is read as Discord renders it. For
   announcement and sponsor channels you don't have open, the sidebar's unread badge sends a "new post in #channel"
   alert. The extension never navigates, clicks, scrolls or types, and uses no token and no Discord API.
-- **The HackRecon bot (official API).** A bot you create, in a private server you own. When an event's announcement
+- **The Donna bot (official API).** A bot you create, in a private server you own. When an event's announcement
   channel can be followed, you click Follow once and pick your server; Discord copies each announcement there, and
   the bot reads those copies with its own bot token. Announcements then get full text and Plan matching with no tab
   open.
@@ -16,10 +16,17 @@ Donna reads an event's Discord two ways, both read-only:
 Both feed the same pipeline: `classify --new` under the cost guard, then the alert rules, which send to your
 Telegram chat; you can also ask questions there (section 4).
 
+Already made them under the name HackRecon? Rename them; nothing else changes (the bot token, the invite and any
+Follow keep working):
+- **Server:** right-click the server icon, then **Server Settings**, then **Overview**, set **Server Name** to `Donna`,
+  and click **Save Changes**.
+- **Bot:** in the [Developer Portal](https://discord.com/developers/applications), open the application. On **General
+  Information**, set **Name** to `Donna` and save; on **Bot**, set **Username** to `Donna` and save.
+
 ## 1. Your private server
 
 1. In Discord, click **+** (Add a Server) at the bottom of the server list, then **Create My Own**, then **For me and
-   my friends**. Name it `HackRecon` and click **Create**.
+   my friends**. Name it `Donna` and click **Create**.
 2. Create a text channel named `event-feed` (or keep `#general`). Followed announcements will land there.
 
 The bot reads only crossposts (the copies Discord makes from followed channels). Anything you type in your server
@@ -28,7 +35,7 @@ yourself is skipped.
 ## 2. The bot
 
 1. Open the [Developer Portal](https://discord.com/developers/applications), click **New Application**, name it
-   `HackRecon`, and create it.
+   `Donna`, and create it.
 2. **Installation** page: set **Install Link** to **None**. (Discord won't let a private bot keep its default install
    link.)
 3. **Bot** page:
@@ -44,12 +51,12 @@ yourself is skipped.
 
    That's permissions integer **66560**. The generated URL looks like
    `https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot&permissions=66560`.
-5. Open the URL, pick your `HackRecon` server, and click **Continue**. The screen must list exactly two permissions,
+5. Open the URL, pick your `Donna` server, and click **Continue**. The screen must list exactly two permissions,
    **View Channels** (some screens say Read Messages/View Channels) and **Read Message History**, and nothing else.
    If it shows any other, go back and untick it. Click **Authorize**.
 
 What the bot can do: see your server's channels and read their message history. What it can't: send messages,
-react, edit, delete, manage anything, or see any server you didn't add it to. HackRecon's code enforces the same
+react, edit, delete, manage anything, or see any server you didn't add it to. The code enforces the same
 limits: GET requests only, to three routes (your servers, a server's channels, a channel's messages), with a test
 that fails if anything else appears (`pipeline/discordbot.test.ts`).
 
@@ -58,7 +65,7 @@ that fails if anything else appears (`pipeline/discordbot.test.ts`).
 Once your registration is approved and you're in the event's server:
 
 1. Open its announcement channel (the megaphone icon next to the name).
-2. Click **Follow** at the top of the channel, pick your `HackRecon` server and `#event-feed`, and click **Follow**.
+2. Click **Follow** at the top of the channel, pick your `Donna` server and `#event-feed`, and click **Follow**.
    You need Manage Webhooks in your server; as its owner you have it.
 
 Only channels of Discord's Announcement type have Follow. Discord also sends a post to followers only when the event's

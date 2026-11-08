@@ -1,7 +1,7 @@
 {
   "note": "Replayed posts for a fake Discord event (user 2026-11-07). Invented content, invented ids. Each post is rendered into a channel page as Discord would and read back; the bot posts arrive through a fake API.",
   "guild": { "id": "1300000000000000001", "name": "Example Hacks" },
-  "own_server": { "id": "1400000000000000001", "name": "HackRecon", "feed_channel": { "id": "1400000000000000010", "name": "event-feed" } },
+  "own_server": { "id": "1400000000000000001", "name": "Donna", "feed_channel": { "id": "1400000000000000010", "name": "event-feed" } },
   "plan": {
     "input": { "idea": "A study planner that turns course syllabi into weekly plans for transfer students", "stack": [{ "name": "Modal", "used_for": "GPU inference for the planner" }, { "name": "Claude API", "used_for": null }] },
     "tracks": [

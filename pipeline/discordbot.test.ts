@@ -1,4 +1,4 @@
-// The HackRecon bot (user 2026-11-07): GET only on four read routes, the token only in the Authorization header, paced
+// The Donna bot (user 2026-11-07): GET only on four read routes, the token only in the Authorization header, paced
 // and backing off on 429; a poll reads crossposts from followed announcement channels and nothing else.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
