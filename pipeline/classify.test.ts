@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import { buildInput, checkItems, classifyOne, classifyPlan, promptHash, systemPrompt, toItems, type Cache, type CacheEntry, type EventConfig, type RawItem } from "./classify.ts";
+import { buildInput, checkItems, classifyOne, classifyPlan, eventTimezone, promptHash, readEvent, systemPrompt, toItems, type Cache, type CacheEntry, type EventConfig, type RawItem } from "./classify.ts";
 import type { Sponsors } from "./pool.ts";
 import type { Message } from "./schema.ts";
 
@@ -29,7 +32,7 @@ const noRedact = (t: string) => ({ text: t, replaced: 0 });
 const rules = "## Columns\n\n| `is_dated` | `y` / `n` | Start times of talks or food are not limits. |";
 const hash = promptHash(systemPrompt(event, rules));
 const input = (o: Partial<{ role: "organizer" | "sponsor-side" | "other"; hash: string; text: string }> = {}) =>
-  buildInput({ ...msg, text: o.text ?? msg.text }, { role: o.role ?? "other", sponsor: "Cartesia", redact: noRedact, promptHash: o.hash ?? hash });
+  buildInput({ ...msg, text: o.text ?? msg.text }, { role: o.role ?? "other", sponsor: "Cartesia", redact: noRedact, promptHash: o.hash ?? hash, tz: "America/Los_Angeles" });
 
 describe("cache key (D9)", () => {
   test("same input, same key", () => expect(input().key).toBe(input().key));
@@ -74,6 +77,26 @@ describe("classify prompt", () => {
     const sys = systemPrompt(event, rules);
     expect(sys).toContain(`<rules>\n${rules}\n</rules>`);
     expect(sys).toContain("Start times of talks, workshops, food or other events are not limits: they go in event_start_iso, never here.");
+  });
+  test("the zone's offset is the event's own, at its first known time (audit 2026-11-08)", () => {
+    const at = (iso: string) => ({ ...event, timezone: "America/Los_Angeles", hacking_start: null, schedule: [{ what: "Kickoff", at: iso }] }) as EventConfig;
+    expect(systemPrompt(at("2026-10-24T10:00:00-07:00"), rules)).toContain("(timezone America/Los_Angeles, UTC-07:00 during the event)");
+    expect(systemPrompt(at("2026-11-14T10:00:00-08:00"), rules)).toContain("(timezone America/Los_Angeles, UTC-08:00 during the event)");
+    expect(systemPrompt({ ...at("2026-11-14T10:00:00-05:00"), timezone: "America/New_York" }, rules)).toContain("UTC-05:00 during the event");
+  });
+});
+
+describe("no zone in event.json (audit 2026-11-08)", () => {
+  test("UTC, never Los Angeles or the machine's zone; no event.json at all is UTC too", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hr-tz-"));
+    try {
+      writeFileSync(join(dir, "event.json"), JSON.stringify({ event: "Somewhere Hacks", schedule: [] }));
+      expect(readEvent(join(dir, "event.json")).timezone).toBe("UTC");
+      expect(eventTimezone(join(dir, "event.json"))).toBe("UTC");
+      expect(eventTimezone(join(dir, "missing.json"))).toBe("UTC");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

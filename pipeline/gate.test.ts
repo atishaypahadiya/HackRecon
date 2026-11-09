@@ -38,6 +38,7 @@ const item = (message_id: string, o: Partial<Item> = {}): Item => ({
 });
 
 const input = (rows: LabelRow[], items: Item[], o: Partial<GateInput> = {}): GateInput => ({
+  tz: "America/Los_Angeles",
   rows,
   items,
   classified: new Set(rows.map((r) => r.message_id)),

@@ -43,6 +43,8 @@ describe("alertFor", () => {
   test("deadlines: urgent from organizers, with the time left; a hacker's mention waits for the digest", () => {
     const d = item({ kind: "deadline", deadline_iso: "2026-11-15T09:00:00-08:00", deadline_status: "resolved_relative" });
     expect(alertFor(msg("Submissions are due Sunday at 9:00 AM.", auth), [d], plan, opts)).toMatchObject({ kind: "deadline", level: "now", why: "Due Sun 9:00 AM (in 23 h)" });
+    // No zone in event.json (audit 2026-11-08): the time is UTC and says so.
+    expect(alertFor(msg("Submissions are due Sunday at 9:00 AM.", auth), [d], plan, { ...opts, tz: "UTC" })).toMatchObject({ why: "Due Sun 5:00 PM UTC (in 23 h)" });
     expect(alertFor(msg("isn't the form due tonight?", { channel_name: "general" }), [d], plan, opts)!.level).toBe("digest");
   });
   test("workshops and offers: at once when they match the Plan, else the digest; jobs always wait", () => {

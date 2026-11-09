@@ -8,7 +8,7 @@ import { dirname } from "node:path";
 import type { Sponsors } from "./pool.ts";
 import type { PosterRole } from "./roles.ts";
 import { AMOUNT_BASES, AMOUNT_UNITS, DEADLINE_STATUSES, ITEM_KINDS, type Item, type Message } from "./schema.ts";
-import { ISO_WITH_OFFSET, tsToEventIsoWithDay } from "./time.ts";
+import { ISO_WITH_OFFSET, NO_TZ, tsToEventIsoWithDay, utcOffset } from "./time.ts";
 import { addUsage, NO_USAGE, type Usage } from "./usage.ts";
 import { EVENT_PATH } from "./event.ts";
 
@@ -81,8 +81,27 @@ export interface CanonNote {
   url: string;
 }
 
+let warnedNoTz = false;
+/** event.json. With no "timezone" the event's times are UTC, and stderr says so once per process (audit 2026-11-08):
+ *  before, a missing zone reached toLocaleString as undefined and silently showed the machine's own zone. */
 export function readEvent(path = EVENT_PATH): EventConfig {
-  return JSON.parse(readFileSync(path, "utf8")) as EventConfig;
+  const e = JSON.parse(readFileSync(path, "utf8")) as EventConfig;
+  if (!e.timezone) {
+    if (!warnedNoTz) console.error(`${path} names no "timezone": showing and reading the event's times as UTC until it does.`);
+    warnedNoTz = true;
+    e.timezone = NO_TZ;
+  }
+  return e;
+}
+
+/** The event's zone: event.json's, else UTC (said on stderr by readEvent). Never another event's zone. */
+export const eventTimezone = (path = EVENT_PATH): string => (existsSync(path) ? readEvent(path).timezone : NO_TZ);
+
+/** The instant the prompt's "UTC-07:00 during the event" is taken at: hacking start, else the first schedule entry,
+ *  else now. Cal Hacks (Oct 25) gives UTC-07:00 as the prompt always said; Iterate (Nov 14, after DST) UTC-08:00. */
+function eventInstant(e: EventConfig, nowMs = Date.now()): number {
+  const first = [e.hacking_start, ...(e.schedule ?? []).map((s) => s.at)].find((x) => x && !Number.isNaN(Date.parse(x)));
+  return first ? Date.parse(first) : nowMs;
 }
 
 const nullable = (t: object) => ({ anyOf: [t, { type: "null" }] });
@@ -181,7 +200,7 @@ Fields:
 
 Names in posts are redacted as [person] and @person; ignore them.
 
-Event schedule (timezone ${e.timezone}, UTC-07:00 during the event):
+Event schedule (timezone ${e.timezone}, ${utcOffset(e.timezone, eventInstant(e))} during the event):
 ${scheduleLines(e)}
 
 The same posts are labeled by the rules below, quoted verbatim from the labeling guide. They describe one row per post in a labeling sheet, not your output, but your items must agree with them:
@@ -212,7 +231,7 @@ export function promptHash(system: string): string {
 
 export function buildInput(
   m: Message,
-  o: { role: PosterRole; sponsor: string; redact: (t: string) => { text: string; replaced: number }; promptHash: string },
+  o: { role: PosterRole; sponsor: string; redact: (t: string) => { text: string; replaced: number }; promptHash: string; tz: string },
 ): ClassifyInput {
   const text = o.redact(m.text);
   const links = m.links.map((l) => o.redact(l).text);
@@ -220,7 +239,7 @@ export function buildInput(
     `channel: #${m.channel_name}`,
     `channel sponsor: ${o.sponsor}`,
     `poster_role: ${o.role}`,
-    `posted_at: ${tsToEventIsoWithDay(m.ts)}`,
+    `posted_at: ${tsToEventIsoWithDay(m.ts, o.tz)}`,
     m.subtype === "thread_broadcast" ? "note: a thread reply that was also sent to the channel" : "",
     `links:${links.length ? "\n" + links.map((l) => `- ${l}`).join("\n") : " none"}`,
     `post:\n<post>\n${text.text}\n</post>`,

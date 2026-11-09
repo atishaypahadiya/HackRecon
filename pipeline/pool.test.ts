@@ -6,7 +6,7 @@ import { parseCsv, readTable, toCsv } from "./csv.ts";
 import { COLUMNS, labelProblems, readLabels, type LabelRow } from "./labels.ts";
 import { buildRows, KEYWORD_RE, selectPool, withFlagged, writeSheet, type Candidate, type Sponsors } from "./pool.ts";
 import { messageId, type Message } from "./schema.ts";
-import { tsToEventIso, tsToEventIsoWithDay } from "./time.ts";
+import { tsToEventIso, tsToEventIsoWithDay, utcOffset, zoneMark } from "./time.ts";
 
 describe("csv", () => {
   test("round-trips quotes, commas, newlines and emoji", () => {
@@ -25,8 +25,15 @@ describe("csv", () => {
 
 describe("event time", () => {
   test("ts → America/Los_Angeles with offset (PDT in October 2026; checked against `date -r`)", () => {
-    expect(tsToEventIso("1792918203.114859")).toBe("2026-10-25T01:50:03-07:00");
-    expect(tsToEventIsoWithDay("1792943981.782739")).toBe("2026-10-25T08:59:41-07:00 (Sunday)");
+    expect(tsToEventIso("1792918203.114859", "America/Los_Angeles")).toBe("2026-10-25T01:50:03-07:00");
+    expect(tsToEventIsoWithDay("1792943981.782739", "America/Los_Angeles")).toBe("2026-10-25T08:59:41-07:00 (Sunday)");
+  });
+  test("the event's own zone, never a fixed one (audit 2026-11-08): New York, UTC, and the offset across DST", () => {
+    expect(tsToEventIso("1792918203.114859", "America/New_York")).toBe("2026-10-25T04:50:03-04:00");
+    expect(tsToEventIso("1792918203.114859", "UTC")).toBe("2026-10-25T08:50:03+00:00");
+    expect(utcOffset("America/Los_Angeles", Date.parse("2026-10-25T09:00:00-07:00"))).toBe("UTC-07:00");
+    expect(utcOffset("America/Los_Angeles", Date.parse("2026-11-14T09:00:00-08:00"))).toBe("UTC-08:00");
+    expect([zoneMark("UTC"), zoneMark("America/Los_Angeles")]).toEqual([" UTC", ""]);
   });
 });
 
@@ -84,7 +91,7 @@ describe("miss checks are blinded in the sheet", () => {
     const sel = withFlagged(base, cands, new Set([cands[0]!.id, cands[1]!.id, cands[3]!.id]));
     expect(sel.flagged.map((c) => c.id)).toEqual([cands[1]!.id]);
     const sponsors: Sponsors = { "spons-a": { sponsor: "A", kind: "sponsor", aliases: [] } };
-    const { rows } = buildRows(sel, { sponsors, captured: new Map(), workspace: "https://w", existing: [] });
+    const { rows } = buildRows(sel, { sponsors, captured: new Map(), workspace: "https://w", existing: [], tz: "America/Los_Angeles" });
     expect(rows.map((r) => r.pool)).toEqual(["keyword", "miss_check", "miss_check"]);
   });
 });
@@ -115,7 +122,7 @@ describe("buildRows", () => {
   ]);
 
   test("sponsors.json order, capture text when captured, baseline text and a built permalink when not", () => {
-    const { rows } = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] });
+    const { rows } = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [], tz: "America/Los_Angeles" });
     expect(rows.map((r) => [r.channel, r.in_capture, r.text, r.author, r.permalink])).toEqual([
       ["0-announcements", "n", "deadline tonight", "Ada", "https://w.slack.com/archives/C0/p1792800001000000"],
       ["spons-a", "y", "$10 credits <https://a.dev/claim>", "Ada [A Corp]", "https://w.slack.com/archives/C1/p1792800002000000"],
@@ -123,12 +130,12 @@ describe("buildRows", () => {
   });
 
   test("re-running keeps every label column; labeled rows that left the pool are kept, not dropped", () => {
-    const first = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [] }).rows;
+    const first = buildRows({ keyword: [a, b], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: [], tz: "America/Los_Angeles" }).rows;
     first[1]!.is_credit = "y";
     first[1]!.amount_usd_per_person = "10";
     first[1]!.amount_basis = "per_person";
     first[0]!.notes = "checked";
-    const again = buildRows({ keyword: [a], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: first });
+    const again = buildRows({ keyword: [a], random: [], flagged: [] }, { sponsors, captured, workspace: "https://w.slack.com", existing: first, tz: "America/Los_Angeles" });
     expect(again.rows[0]).toMatchObject({ message_id: a.id, is_credit: "y", amount_usd_per_person: "10", amount_basis: "per_person" });
     expect(again.orphans.map((r) => [r.message_id, r.notes])).toEqual([[b.id, "checked"]]);
 

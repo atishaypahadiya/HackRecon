@@ -117,7 +117,7 @@ describe("repCandidates and preview", () => {
       role,
     });
     expect(p).toMatchObject({ channels: 2, sponsors_in_capture: 1, offers: 2, priced: 1, unpriced: 1, usd_total: 50, with_limit: 1, no_limit: 1, sponsors_with_credit: 1 });
-    const text = formatPreview(p, "test");
+    const text = formatPreview(p, "test", "America/Los_Angeles");
     expect(text).toContain("RECEIPT PREVIEW (not the receipt)");
     expect(text).toContain("$ total of priced per-person offers        $50");
     expect(text).toContain('$50  Acme  "$50 credits"  p/C:1');
