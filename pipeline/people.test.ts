@@ -76,7 +76,7 @@ describe("one person, two accounts: one rep, both accounts behind it", () => {
   const msg = (ts: string, author_id: string, author_name: string): Message => ({ id: `C1:${ts}`, channel_id: "C1", channel_name: "spons-fetch-ai", ts, author_id, author_name, text: "", links: [], permalink: "", captured_at: "", run_id: "r" });
   const messages = [msg("100.0", "UGUEST", "Raj [Fetch AI]"), msg("200.0", "UMEMBER", "Raj"), msg("300.0", "UDEV", "Devam (Fetch AI)")];
   const board = (person?: (id: string) => string) =>
-    boardData({ event: "e", timezone: "America/Los_Angeles", run_id: "r", channels: ["spons-fetch-ai"], messages, sponsors, offers: [], role: rolesById(messages, sponsors, new Set(), person), ...(person ? { person } : {}), basis: { grouping: "g", model: "m", written_at: "w" } });
+    boardData({ event: "e", timezone: "America/Los_Angeles", run_id: "r", channels: ["spons-fetch-ai"], messages, sponsors, offers: [], role: rolesById(messages, sponsors, new Set(), null, person), ...(person ? { person } : {}), basis: { grouping: "g", model: "m", written_at: "w" } });
 
   test("linked: the member account renamed to a bare name is still sponsor-side, and the tile counts one rep", () => {
     const d = board(personKeys([{ ids: ["UGUEST", "UMEMBER"] }]));

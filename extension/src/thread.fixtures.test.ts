@@ -7,13 +7,13 @@ import { join } from "node:path";
 import { parseHTML } from "linkedom";
 import { findThreadPane, paneRows, ThreadRecorder, threadRunFromRaw, type HtmlToRows } from "./thread.ts";
 import { expectedAuthorNames, loadExport, normName, readChannel } from "../../pipeline/export.ts";
-import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
+import { CALHACKS_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
 const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const SAMPLE = /^(.+)--thread-(\d{10})(\d{6})-(top|end|more|empty)\.html$/;
 const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => SAMPLE.test(f)).sort() : [];
-const exp = files.length && existsSync(DEFAULT_EXPORT_DIR) ? loadExport() : null;
+const exp = files.length && existsSync(CALHACKS_EXPORT_DIR) ? loadExport(CALHACKS_EXPORT_DIR) : null;
 const rowsOf: HtmlToRows = (html) => [...(parseHTML(`<html><body><div id="r">${html}</div></body></html>`).document.getElementById("r")?.children ?? [])] as unknown as Element[];
 
 describe.skipIf(!exp)("thread pane samples vs the export", () => {

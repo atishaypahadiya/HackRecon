@@ -8,11 +8,11 @@ import { parseReplyBar, parseRows } from "./parse.ts";
 import { SEL } from "./selectors.ts";
 import { findThreadPane, paneRows, sidebarChannels, syncConfigFrom, syncTargets, threadRunFromRaw, ThreadRecorder, type HtmlToRows, type ThreadRaw } from "./thread.ts";
 import { loadExport, readChannel } from "../../pipeline/export.ts";
-import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
+import { CALHACKS_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => /^spons-moss--.*\.html$/.test(f)).sort() : [];
-const exp = files.length && existsSync(DEFAULT_EXPORT_DIR) ? loadExport() : null;
+const exp = files.length && existsSync(CALHACKS_EXPORT_DIR) ? loadExport(CALHACKS_EXPORT_DIR) : null;
 const load = (f: string) => parseHTML(readFileSync(join(DIR, f), "utf8")).document as unknown as Document;
 const linkedomRows: HtmlToRows = (html) => [...(parseHTML(`<html><body><div id="r">${html}</div></body></html>`).document.getElementById("r")?.children ?? [])] as unknown as Element[];
 

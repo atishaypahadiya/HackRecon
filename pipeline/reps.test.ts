@@ -77,19 +77,19 @@ describe("signal 3: likely staff", () => {
   const items = [item("1", "credit"), item("3", "workshop"), item("4", "prize"), item("2", "other")];
   const base = { messages: [...messages, msg("4", "UX")], replies, items, sponsors, person: (id: string) => id };
   test("a staff post at the top of the channel AND an answer to a hacker's question AND never in a hacker-only channel", () => {
-    const role = rolesById(messages, sponsors, new Set());
+    const role = rolesById(messages, sponsors, new Set(), null);
     const r = likelyReps({ ...base, role, hackerPosters: new Set(["UX", "UH"]) });
     expect(r.map((x) => [x.person, x.sponsor, x.posts.map((e) => e.permalink), x.answers.map((e) => e.permalink)])).toEqual([["UP", "Apify", ["p/1"], ["p/2.1"]]]);
   });
   test("hacker-only channels not read: no one is likely staff", () => {
-    expect(likelyReps({ ...base, role: rolesById(messages, sponsors, new Set()), hackerPosters: null })).toEqual([]);
+    expect(likelyReps({ ...base, role: rolesById(messages, sponsors, new Set(), null), hackerPosters: null })).toEqual([]);
   });
   test("likely staff never gains a role, so no authority over links or offers and no classifier hint", () => {
-    const likely = likelyReps({ ...base, role: rolesById(messages, sponsors, new Set()), hackerPosters: new Set() });
+    const likely = likelyReps({ ...base, role: rolesById(messages, sponsors, new Set(), null), hackerPosters: new Set() });
     const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: repEvidence({ email: [], mention: [], likely, person: (id) => id }) });
     expect([...ix.likely.keys()]).toContain("UP");
     expect(ix.confirmed.size).toBe(0);
-    const role = rolesById(messages, sponsors, new Set(), (id) => id, ix.confirmed);
+    const role = rolesById(messages, sponsors, new Set(), null, (id) => id, ix.confirmed);
     expect(role(messages[0]!)).toBe("other");
   });
   test("hacker-only by name when event.json lists none", () => {
@@ -110,7 +110,7 @@ describe("evidence: one entry per person and sponsor, confirmed outranks likely"
     expect(ev[0]).toMatchObject({ person: "U1", accounts: ["U1", "U9"], standing: "confirmed" });
     const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: ev }, person);
     const m = { id: "C:1", channel_id: "C", channel_name: "spons-apify", ts: "1", author_id: "U9", author_name: "x", text: "", links: [], permalink: "", captured_at: "", run_id: "r" } as Message;
-    expect(rolesById([m], sponsors, new Set(), person, ix.confirmed)(m)).toBe("sponsor-side");
+    expect(rolesById([m], sponsors, new Set(), null, person, ix.confirmed)(m)).toBe("sponsor-side");
     expect(signalLabels(["name or title", "external badge"], ix.signals.get("U1|Apify"))).toEqual([
       "email on apify.com",
       "named by an organizer",
@@ -212,7 +212,7 @@ describe("2b alone, and with the hacker-channel counter-signal", () => {
     expect(signalLabels([], ix(ev).signals.get("US|Apify"))).toEqual(["says they work there (in #1-introductions)"]);
   });
   test("without 2b a hacker-channel post excludes; with it, signal 3 holds from the self-identification on", () => {
-    const role = rolesById(messages, sponsors, new Set());
+    const role = rolesById(messages, sponsors, new Set(), null);
     expect(likelyReps({ ...o, role })).toEqual([]);
     const likely = likelyReps({ ...o, role, selfIdentified: new Set(["UX|Apify"]) });
     const self = [{ person: "UX", accounts: ["UX"], sponsor: "Apify", posts: [{ ts: 3, permalink: "p/3", phrase: "I'm UX with Apify" }] }];

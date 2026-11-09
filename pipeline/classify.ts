@@ -38,6 +38,9 @@ export interface ClassifyRun {
 
 export interface EventConfig {
   event: string;
+  /** This event's Slack export (slackdump), for the commands that read one when --export isn't given. "~/" is the
+   *  home directory; relative paths are from the event's directory. Unset: those commands stop and say so. */
+  slack_export?: string;
   timezone: string;
   hacking_start: string | null;
   hacking_end: string | null;

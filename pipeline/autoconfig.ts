@@ -88,11 +88,7 @@ export function toolGatedPatterns(tracks: Entity[]): string[] {
   return [...by].filter(([, n]) => n >= 2).map(([tag]) => `[${tag}] Best Use of *`);
 }
 
-/** The event's name tag in display names ("CAL HACKS | Dana"): the Devpost title less its edition ("13.0", "2026"). */
-export function organizerTag(eventName: string): RegExp | null {
-  const words = eventName.replace(/\b(\d+(\.\d+)*|20\d\d|'\d\d)\b/g, " ").trim().split(/\s+/).filter(Boolean);
-  return words.length ? new RegExp(`\\b${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*")}\\b`, "i") : null;
-}
+export { organizerTag } from "./roles.ts";
 
 export interface DiscoveredUser {
   id: string;
