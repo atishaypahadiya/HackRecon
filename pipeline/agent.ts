@@ -61,6 +61,8 @@ export interface ChatTurn {
   q: string;
   a: string;
   status: "answered" | "help" | "limited" | "budget" | "error";
+  /** The message of ours it replied to (Telegram message_id), kept for the alert log. */
+  reply_to?: string;
 }
 
 export interface AlertLine {
@@ -541,7 +543,7 @@ export async function handleInbound(o: {
     }
     const sent = await o.channel.send(turn.a);
     if ("error" in sent) log(`chat: reply not sent: ${sent.error}`);
-    turns.push(turn);
+    turns.push(m.reply_to ? { ...turn, reply_to: m.reply_to } : turn);
   }
   return { turns, stale };
 }

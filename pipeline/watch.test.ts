@@ -2,20 +2,21 @@
 // in the bot's fake API, and each tick runs ingest → items → alerts → texts with the clock at that post's time.
 // Classify is stood in for by the items it would return (the live replay runs the real one, under the cost guard).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import type { AlertOutcome, AlertSend } from "./alertlog.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseHTML } from "linkedom";
 import { freshPosts, readChannel, readSidebar } from "../extension/src/discord-dom.ts";
-import { writeJsonFile } from "./classify.ts";
+import { readJsonFile, writeJsonFile } from "./classify.ts";
 import type { DiscordDomFile } from "./discord.ts";
 import { DiscordBot, type BotDeps } from "./discordbot.ts";
-import { EVENT_PATH, ITEMS_PATH, PLAN_PATH } from "./event.ts";
+import { ALERT_OUTCOMES_PATH, CHAT_LOG_PATH, EVENT_PATH, ITEMS_PATH, PLAN_PATH, WRITES_LOG_PATH } from "./event.ts";
 import { readMessages } from "./runs.ts";
 import type { Item } from "./schema.ts";
 import { channelPage, idOf, replay, type ReplayPost } from "./testdata/discord-replay.ts";
 import { snowflakeMs, toMessage } from "./discord.ts";
-import { ingestDiscord, runAlerts } from "./watch.ts";
+import { ingestDiscord, runAlerts, writeAlertOutcomes } from "./watch.ts";
 
 const TOKEN = "MTQwMDAwMDAwMDAwMDAwMDAwMQ.Gx1y2z.abcdefghijklmnopqrstuvwxyz0123456789ABCD";
 const G = replay.guild.id;
@@ -194,6 +195,28 @@ describe("replayed Discord event → texts", () => {
     expect(sent[3]!.body).toBe("Donna's digest, 3 items:\n1. New post: New post in #sponsor-modal (#sponsor-modal, Example Hacks)\n2. New post: New post in #acme-booth (#acme-booth, Example Hacks)\n3. Sponsor offer: Acme is hiring summer interns. Stop by our booth or apply at https://acme.example/jobs (#acme-booth, Example Hacks)");
     expect(sent[4]!.body).toContain("Room or time change\nRoom change: the Modal workshop has moved to Room 210, same time.\nWhy: It's about Modal, in your stack");
     expect(sent[5]!.body).toContain("Deadline\nReminder: project submissions are due Sunday at 9:00 AM on Devpost. Late submissions won't be judged.\nWhy: Due Sun 9:00 AM (in 17 h)\n#announcements, Example Hacks\nhttps://discord.com/channels/1300000000000000001/1300000000000000010/1300000000000009001");
+  });
+
+  test("the alert log (user 2026-11-08): each alert in each text, its category, then what the user did in 30 minutes", () => {
+    const log = readFileSync("data/alert_log.jsonl", "utf8").trim().split("\n").map((l) => JSON.parse(l) as AlertSend);
+    expect(log.map((a) => [a.sent_at, a.category, a.kind, a.via, a.batch, a.ref])).toEqual([
+      ["2026-11-14T17:01:00.000Z", "track", "tracks", "now", 1, "1"],
+      ["2026-11-14T18:16:00.000Z", "other", "judging", "now", 2, "2"],
+      ["2026-11-14T18:16:00.000Z", "workshop", "workshop", "now", 2, "2"],
+      ["2026-11-14T18:41:00.000Z", "credit", "offer", "now", 1, "3"],
+      ["2026-11-14T19:01:00.000Z", "other", "unread", "digest", 3, "4"],
+      ["2026-11-14T19:01:00.000Z", "other", "unread", "digest", 3, "4"],
+      ["2026-11-14T19:01:00.000Z", "other", "offer", "digest", 3, "4"],
+      ["2026-11-14T21:31:00.000Z", "other", "change", "now", 1, "5"],
+      ["2026-11-15T00:01:00.000Z", "deadline", "deadline", "now", 1, "6"],
+    ]);
+    // The user replies to the credit text and claims it from the board; nothing else.
+    appendFileSync(CHAT_LOG_PATH, JSON.stringify({ at: "2026-11-14T18:50:00.000Z", q: "claimed, thanks", a: "", status: "answered", reply_to: "3" }) + "\n");
+    appendFileSync(WRITES_LOG_PATH, JSON.stringify({ at: "2026-11-14T18:52:00.000Z", source: "board", quote: null, op: "mark_claimed", input: {}, result: "claimed" }) + "\n");
+    writeAlertOutcomes(Date.parse("2026-11-15T01:00:00.000Z"));
+    const o = (readJsonFile<{ alerts: AlertOutcome[] }>(ALERT_OUTCOMES_PATH, { alerts: [] })).alerts;
+    expect(o.filter((a) => a.responded || a.acted.length).map((a) => [a.kind, a.responded?.reply, a.responded?.minutes, a.acted.map((w) => w.op)])).toEqual([["offer", true, 9, ["mark_claimed"]]]);
+    expect(o.every((a) => a.window_closed)).toBe(true);
   });
 
   test("ingesting again adds nothing, and alerts never repeat", async () => {
