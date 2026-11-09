@@ -48,6 +48,22 @@ An incremental pull now reads every channel's history: the quiet pull at 13:47 t
 
 `hr discover` can't derive: hacking start and end, event-level prizes, sponsor aliases, event channels with no prefix (Cal Hacks' 2-opportunities), schedule end times. Admin and owner flags come from the export until the API pull reads `users.list`. Name tags and titles are only proposed (self-asserted). The extension doesn't record the workspace's display name; the subdomain searched well on Devpost.
 
+### Discovery beyond Slack and Devpost (user 2026-11-08: after Iterate, not before)
+
+`hr discover` is Slack plus Devpost only, so a Discord plus Luma event, or any event whose page isn't on Devpost, discovers nothing. On a copy of Iterate with its config deleted it wrote no files: it stops at "no captured posts" (it reads only Slack captures), and given a post linking the Luma page it stops at "no Devpost page" (search by "Iterate" found no hackathon by that title, and it rightly picked none). Read from the code, below that step it would also:
+- take the timezone from Devpost deadline text only (UTC for Iterate, whose page says "San Francisco" and no zone);
+- write `canon_pages` as `<page>` and `<page>/rules`, `schedule_pages: []` and `submission: Devpost`;
+- find tool-gated prizes only in Devpost's "[Sponsor] Best Use of …" titles and never write `canon_notes`;
+- draft sponsor channels only from Slack names prefixed `spons-`, `partner-` or `cohost-`, and organizers only from Slack signals (admin and owner flags, restricted channels, users.json);
+- write `authority_channels` (Slack), never `discord_authority_channels`.
+
+The general fix:
+- Take the event page from whatever URL the user has: an invite, a registration page, or a link in an announcement.
+- Read the name, timezone and prizes from that page, whatever the platform.
+- Discover channels and organizers from Discord as well as Slack.
+
+When: after Iterate, tested against its real Discord data. Iterate's hand-written config stays as is until then; discovery isn't touched before the event.
+
 ### Capture is frozen for Cal Hacks (user 2026-11-07)
 
 No more Syncs for Cal Hacks; the export fills gaps. Open from the last sync, for the next live event: the loading-placeholder wait (built, unverified in Slack; 59 Cal Hacks replies were read as placeholders). The no-action-URL rule (`pipeline/urlsafety.ts`) guards the fetcher and the extension's page capture.
