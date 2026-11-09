@@ -1,6 +1,6 @@
 // The redacted request input both models see: `hr classify` (Haiku) and `hr prelabel` (the Opus
 // judge) build it here, so the judge reads exactly the text the classifier read (R3-19/OV2).
-import { buildInput, type ClassifyInput } from "./classify.ts";
+import { buildInput, eventTimezone, type ClassifyInput } from "./classify.ts";
 import type { LabelRow } from "./labels.ts";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, compileRedactor } from "./redact.ts";
@@ -17,12 +17,13 @@ export function redactedInputs(
   extra: Message[] = [],
   organizerIds: Set<string> = loadOrganizerIds(),
   tag: RegExp | null = eventOrganizerTag(),
+  tz: string = eventTimezone(),
 ): ClassifyInput[] {
   const redact = compileRedactor(buildNameList(new Set(captured.filter((m) => m.author_kind !== "bot").map((m) => m.author_name)), sponsors));
   // Confirmed reps (reps.ts) are sponsor-side here too; likely staff never is, so it never changes a hint.
   const person = loadPersonKey();
   const role = rolesById([...captured, ...extra], sponsors, organizerIds, tag, person, loadRepIndex(person).confirmed);
-  return [...captured, ...extra].map((m) => buildInput(m, { role: role(m), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash }));
+  return [...captured, ...extra].map((m) => buildInput(m, { role: role(m), sponsor: sponsors[m.channel_name]?.sponsor ?? "", redact, promptHash, tz }));
 }
 
 /** A sheet row the capture missed, as a message: baseline text (Slack mrkdwn), links from its

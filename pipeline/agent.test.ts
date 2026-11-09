@@ -31,6 +31,12 @@ const data = (o: Partial<AgentData> = {}): AgentData => ({
 });
 
 describe("buildContext", () => {
+  test("no zone set: times are UTC and Donna is told to say so (audit 2026-11-08)", () => {
+    const c = buildContext({ ...data(), tz: "UTC" }, "b0");
+    expect(c).toContain("Now: Sat, Nov 14, 7:00 PM (UTC)");
+    expect(c).toContain("every time here is UTC. Say a time is UTC whenever you give one.");
+    expect(buildContext(data(), "b0")).not.toContain("every time here is UTC");
+  });
   test("time, schedule, Plan, alerts, and the posts that matter, quoted, names redacted, provenance marked", () => {
     const c = buildContext(data(), "b0");
     expect(c).toContain("Now: Sat, Nov 14, 11:00 AM (America/Los_Angeles)");

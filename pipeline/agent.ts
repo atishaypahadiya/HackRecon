@@ -14,6 +14,7 @@ import type { Inbound, MessageChannel } from "./channels.ts";
 import { readEvent, readJsonFile, scheduleLines, type EventConfig } from "./classify.ts";
 import { callOf, COST_LIMIT_USD, CostRefused, estimateUsd, type CostGuard } from "./costguard.ts";
 import { writeJsonFile } from "./classify.ts";
+import { NO_TZ, zoneMark } from "./time.ts";
 import { sourceLine } from "./discord.ts";
 import { ALERTS_LOG_PATH, BOARD_DATA_PATH, CANON_PATH, CHAT_LOG_PATH, CHAT_SPEND_PATH, DEFAULT_EVENT, DISCORD_STATE_PATH, EVENT_PATH, EVENTS_DIR, ITEMS_PATH, MESSAGES_PATH, PLAN_PATH, SPONSORS_PATH } from "./event.ts";
 import { readSponsors } from "./pool.ts";
@@ -227,6 +228,8 @@ const inert = (s: string) => s.replace(/<(\/?)(post)/gi, "‹$1$2").replace(/"/g
 export function buildContext(d: AgentData, boundary = randomBytes(6).toString("hex")): string {
   const tag = `post-${boundary}`;
   const head: string[] = [`Now: ${at(d.nowMs, d.tz)} (${d.tz})`];
+  // Audit 2026-11-08: no zone is ever borrowed; with none set, the hacker hears that times are UTC.
+  if (d.tz === NO_TZ) head.push("The event's timezone isn't set in its config, so every time here is UTC. Say a time is UTC whenever you give one.");
   if (d.event) head.push(`Event: ${d.event.event}`, "Schedule:", scheduleLines(d.event));
   if (d.plan) {
     head.push(`Your Plan's idea: ${d.plan.input.idea}`);
@@ -517,7 +520,7 @@ export async function handleInbound(o: {
     else if (/^\/(start|help)\b/i.test(q)) turn = { at: m.at, q, a: help(o.platform), status: "help" };
     else if (hour.length >= CHAT_MAX_PER_HOUR) {
       const again = new Date(Math.min(...hour.map((t) => Date.parse(t.at))) + 3600_000);
-      turn = { at: m.at, q, a: `That's ${CHAT_MAX_PER_HOUR} answers this hour, my limit. Ask again after ${again.toLocaleTimeString("en-US", { timeZone: o.tz, hour: "numeric", minute: "2-digit" })}.`, status: "limited" };
+      turn = { at: m.at, q, a: `That's ${CHAT_MAX_PER_HOUR} answers this hour, my limit. Ask again after ${again.toLocaleTimeString("en-US", { timeZone: o.tz, hour: "numeric", minute: "2-digit" })}${zoneMark(o.tz)}.`, status: "limited" };
     } else {
       await o.channel.typing?.();
       try {
@@ -551,7 +554,7 @@ export function readAgentData(nowMs: number, shipOf?: (entered: string[]) => Shi
   const sponsors = existsSync(SPONSORS_PATH) ? readSponsors(SPONSORS_PATH) : {};
   return {
     nowMs,
-    tz: event?.timezone ?? "America/Los_Angeles",
+    tz: event?.timezone ?? NO_TZ,
     event,
     plan: readJsonFile<PlanFacts | null>(PLAN_PATH, null),
     messages,
