@@ -16,7 +16,7 @@ const MAX_PAGES = 5;
 /** Text and announcement channels: the kinds a Follow can deliver into. */
 const READABLE = new Set([0, 5]);
 const CROSSPOSTED = 1 << 1;
-const UA = "DiscordBot (https://github.com/atishaypahadiya/hackrecon, 0.5)";
+const UA = "DiscordBot (https://github.com/atishaypahadiya/HackRecon, 0.5)";
 
 export class BotRefused extends Error {}
 export class BotError extends Error {
