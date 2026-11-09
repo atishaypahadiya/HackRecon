@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="hr-token" content="">
+<meta name="hr-build" content="">
 <title>HackRecon</title>
 <style>
   /* Tokens and rules: DESIGN.md ("Daylight glass"). */
@@ -37,6 +38,7 @@
   header { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding-top: 24px; padding-bottom: 20px; }
   .brand { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
   .ev { color: var(--muted); }
+  .codenote { position: relative; z-index: 1; max-width: 1320px; margin: -8px auto 16px; padding: 0 24px; font-size: 14px; font-weight: 600; color: var(--warning); }
   .basis { margin-left: auto; font-size: 12px; color: var(--muted); }
   .names { font-size: 12px; font-weight: 650; color: var(--muted); padding: 4px 10px; border: 1px solid var(--line); border-radius: 9999px; background: var(--surface); }
 
@@ -382,6 +384,7 @@
     <button role="tab" id="t-ship" aria-controls="p-ship" aria-selected="false" tabindex="-1">Ship</button>
   </nav>
 </header>
+<p class="codenote" id="codenote" role="status" hidden></p>
 
 <main class="plan" id="p-plan" role="tabpanel" aria-labelledby="t-plan">
   <section class="band" id="pi" aria-labelledby="h-pi">
@@ -992,6 +995,16 @@ addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if 
 /* ---------- Plan (v2): the default tab ---------- */
 // Every value comes from POST /plan (canon, the ranker, code-built booth questions); nothing here is invented.
 const TOKEN = document.querySelector('meta[name="hr-token"]').content;
+// The page and its server are one build (codeversion.ts). A server from before this check never fills hr-build: it is
+// older than this page and lacks routes it calls. One that is current says, in /plan/meta, when the code on disk moved on.
+const BUILD = document.querySelector('meta[name="hr-build"]').content;
+const codeNote = (text) => { $("codenote").textContent = text; $("codenote").hidden = false; };
+if (!BUILD) codeNote("This board's server started before an update to its code, so parts of the page won't load. Stop it and run bun run hr watch again.");
+const codeMoved = (m) => {
+  if (!m.code?.changed_at) return;
+  const t = (iso) => pfmt(iso, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  codeNote(`Donna's code changed on ${t(m.code.changed_at)}; this board and its alerts still run the code from ${t(m.code.started_at)}. Restart bun run hr watch to use it.`);
+};
 // res holds the sections as they stream in (P2); sec is each one's state: busy, ok or failed.
 const P = { meta: null, input: null, res: null, gaps: null, sec: {}, seq: 0, abort: null, steps: new Set() };
 // D5: rows a sync added or changed ("New", "Changed" with the old row), the sync's full result in its own order
@@ -1276,7 +1289,7 @@ async function liveTick() {
   const seq = P.seq;
   const r = await HRLive.check({
     meta: P.meta,
-    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()).then((m) => (applyTold(m), m)),
+    getMeta: () => fetch(metaUrl(), { cache: "no-store" }).then((x) => x.json()).then((m) => (applyTold(m), codeMoved(m), m)),
     onMeta: (n, du) => {
       P.meta = n;
       P.live.urgent = mergeUrgent(du);
@@ -1624,6 +1637,7 @@ setInterval(() => { if (tab === "ship") paintShip(); }, 30000);
 
 fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
   P.meta = m;
+  codeMoved(m);
   // Slice 2: ticks and entered tracks live in the event's store (told.ts), shared with Donna. A browser that saved
   // them before the store existed sends them there once.
   let localSteps = [], localEntered = [];
@@ -1644,7 +1658,7 @@ fetch(metaUrl(), { cache: "no-store" }).then((r) => r.json()).then((m) => {
   // D5: a sync changes /plan/meta's version; Plan is rebuilt off screen and the differences shown.
   setInterval(() => liveTick().catch(() => {}), 60000);
   if (P.input) runPlan();
-}).catch(() => { $("pi-body").innerHTML = `<p class="pstate">Couldn't load this event's canon.</p>`; });
+}).catch(() => { $("pi-body").innerHTML = BUILD ? `<p class="pstate">Couldn't load this event's canon.</p>` : `<p class="pstate">Plan needs the board restarted (see above).</p>`; });
 
 /* ---------- load ---------- */
 fetch("/board.json", { cache: "no-store" }).then((r) => r.json()).then((data) => {
