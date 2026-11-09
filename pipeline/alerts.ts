@@ -18,10 +18,11 @@ export interface PlanFacts {
   overall?: { name: string; descriptions: string[]; prizes: string[]; source_url: string }[];
 }
 
-export const ALERT_KINDS = ["change", "deadline", "tracks", "judging", "workshop", "offer", "unread"] as const;
+export const ALERT_KINDS = ["change", "submission", "deadline", "tracks", "judging", "workshop", "offer", "unread"] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 export const KIND_LABEL: Record<AlertKind, string> = {
   change: "Room or time change",
+  submission: "How to submit",
   deadline: "Deadline",
   tracks: "Tracks posted",
   judging: "Judging",
@@ -55,6 +56,17 @@ const JUDGING_INFO = /\b(criteria|rubric|starts?|begins?|schedule|slots?|rooms?|
 const CHANGED = /\b(moved|moving|relocat\w*|changed?|rescheduled|postponed|delayed|pushed back|new (room|location|time)|now (in|at)|instead)\b/i;
 const PLACE_OR_TIME = /\b(room|hall|floor|building|location|venue|stage|time)\b|\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i;
 const DUE = /\b(due|deadline|submissions? (close|closes|closing)|closes at)\b/i;
+// How to submit (user 2026-11-08: event.json `submission` is a guess until organizers say): a post about submitting
+// that names a way to do it: a link, a form, portal or page, or "submit on/via <Name>".
+const SUBMIT = /\bsubmi(t|ts|tted|tting|ssions?)\b/i;
+const SUBMIT_WAY = /\b(form|portal|platform|link|page|site)\b|\bsubmi\w*\s+(?:\w+\s+){0,3}?(?:on|via|through|using)\s+(?:the\s+|our\s+)?[A-Z]/;
+const host = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
 
 const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ");
 const mentions = (text: string, name: string) => name.trim().length >= 2 && ` ${words(text)} `.includes(` ${words(name).trim()} `);
@@ -86,7 +98,12 @@ function when(iso: string | undefined, nowMs: number, tz: string): string {
 }
 
 /** One alert at most per post: the most urgent rule that matches; null when none does. */
-export function alertFor(m: Message, items: Item[], plan: PlanFacts | null, o: { nowMs: number; tz: string; guildName?: string; organizer: boolean }): Alert | null {
+export function alertFor(
+  m: Message,
+  items: Item[],
+  plan: PlanFacts | null,
+  o: { nowMs: number; tz: string; guildName?: string; organizer: boolean; /** event.json's, to compare the post with. */ submission?: { platform: string; page: string } },
+): Alert | null {
   const authority = o.organizer || !!m.authority;
   const base = { key: m.id, what: firstLine(m.text), source: sourceLine(m, o.guildName), link: m.permalink, posted_at: new Date(Number(m.ts) * 1000).toISOString() };
   const hits = (sponsor = "") => planHits(m.text, sponsor, plan);
@@ -95,6 +112,20 @@ export function alertFor(m: Message, items: Item[], plan: PlanFacts | null, o: {
   if (authority && CHANGED.test(m.text) && PLACE_OR_TIME.test(m.text)) {
     const h = hits();
     return { ...base, kind: "change", level: "now", why: h.length ? h.join("; ") : "Anything you planned around the old room or time is out of date" };
+  }
+  // Links off the chat itself (a post's own Slack or Discord links aren't a submission site).
+  const out = m.links.filter((u) => host(u) && host(u) !== host(m.permalink) && !/(^|\.)(slack|discord)\.com$|^discord\.gg$/.test(host(u)));
+  if (authority && SUBMIT.test(m.text) && (out.length || SUBMIT_WAY.test(m.text))) {
+    const due = when(deadline?.deadline_iso, o.nowMs, o.tz);
+    const s = o.submission;
+    const same = !!s && (out.some((u) => host(u) === host(s.page)) || mentions(m.text, s.platform));
+    const named = out.length ? `it links ${[...new Set(out.map(host))].join(", ")}` : "it names a way to submit";
+    const fix = !s
+      ? `event.json names no submission platform; ${named}: set "submission" (platform and page) in config/event.json`
+      : same
+        ? `It matches event.json's submission (${s.platform}); nothing to change`
+        : `Ship says "Submit on ${s.platform}", a guess in event.json; ${named}. If this is where to submit, update "submission" (platform and page) in config/event.json`;
+    return { ...base, kind: "submission", level: "now", why: [due ? `Due ${due}` : "", fix].filter(Boolean).join("; ") };
   }
   if (deadline || (authority && DUE.test(m.text))) {
     const due = when(deadline?.deadline_iso, o.nowMs, o.tz);

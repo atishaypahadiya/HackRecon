@@ -5,7 +5,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { alertFor, deliver, isFresh, EMPTY_NOTIFY, pageChangeAlert, unreadAlert, unsend, type Alert, type NotifyState, type TrackChange, type PlanFacts, type Notice } from "./alerts.ts";
-import { readJsonFile, writeJsonFile } from "./classify.ts";
+import { readEvent, readJsonFile, writeJsonFile } from "./classify.ts";
 import { channelKey, channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
 import { pollBot, type BotState, type DiscordBot, type BotPollLog } from "./discordbot.ts";
 import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PAGE_CHANGES_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
@@ -114,8 +114,9 @@ export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Se
   const recent = (iso: string) => isFresh(Date.parse(iso), o.nowMs);
   const messages = existsSync(MESSAGES_PATH) ? readMessages() : [];
   const fresh: Alert[] = [];
+  const submission = existsSync(EVENT_PATH) ? readEvent().submission : undefined;
   for (const m of messages.filter((m) => recent(new Date(Number(m.ts) * 1000).toISOString())).sort((a, b) => (a.ts < b.ts ? -1 : 1))) {
-    const a = alertFor(m, items.get(m.id) ?? [], plan, { nowMs: o.nowMs, tz: o.tz, guildName: st.guilds[m.channel_id.replace(/^discord-/, "")] ?? "", organizer: !!m.author_id && o.organizerIds.has(m.author_id) });
+    const a = alertFor(m, items.get(m.id) ?? [], plan, { nowMs: o.nowMs, tz: o.tz, guildName: st.guilds[m.channel_id.replace(/^discord-/, "")] ?? "", organizer: !!m.author_id && o.organizerIds.has(m.author_id), submission });
     if (a) fresh.push(a);
   }
   for (const u of readJsonFile<UnreadRecord[]>(DISCORD_UNREAD_PATH, []).filter((u) => recent(u.since))) fresh.push(unreadAlert(u));

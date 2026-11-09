@@ -47,6 +47,25 @@ describe("alertFor", () => {
     expect(alertFor(msg("Submissions are due Sunday at 9:00 AM.", auth), [d], plan, { ...opts, tz: "UTC" })).toMatchObject({ why: "Due Sun 5:00 PM UTC (in 23 h)" });
     expect(alertFor(msg("isn't the form due tonight?", { channel_name: "general" }), [d], plan, opts)!.level).toBe("digest");
   });
+  test("how to submit (user 2026-11-08): an organizer post naming a way flags event.json's submission guess", () => {
+    const d = item({ kind: "deadline", deadline_iso: "2026-11-15T09:00:00-08:00", deadline_status: "resolved_relative" });
+    const luma = { ...opts, submission: { platform: "Luma", page: "https://luma.com/sht6n8du" } };
+    const form = msg("Submit your project through this form by 9 AM Sunday: https://forms.gle/abc123", { ...auth, links: ["https://forms.gle/abc123"] });
+    expect(alertFor(form, [d], plan, luma)).toMatchObject({
+      kind: "submission",
+      level: "now",
+      why: 'Due Sun 9:00 AM (in 23 h); Ship says "Submit on Luma", a guess in event.json; it links forms.gle. If this is where to submit, update "submission" (platform and page) in config/event.json',
+    });
+    expect(alertFor(msg("Final projects: submit on Devpost before judging!", auth), [], plan, luma)!.why).toBe(
+      'Ship says "Submit on Luma", a guess in event.json; it names a way to submit. If this is where to submit, update "submission" (platform and page) in config/event.json',
+    );
+    expect(alertFor(msg("Submit via Luma: https://luma.com/sht6n8du", { ...auth, links: ["https://luma.com/sht6n8du"] }), [], plan, luma)!.why).toBe("It matches event.json's submission (Luma); nothing to change");
+    expect(alertFor(form, [], plan, opts)!.why).toBe('event.json names no submission platform; it links forms.gle: set "submission" (platform and page) in config/event.json');
+    // Not a way to submit: a reminder with no link or form; a hacker asking; a link back into the chat.
+    expect(alertFor(msg("Submissions are due Sunday at 9:00 AM.", auth), [d], plan, luma)!.kind).toBe("deadline");
+    expect(alertFor(msg("where do we submit? is it the google form?", { links: ["https://forms.gle/abc123"] }), [], plan, luma)).toBeNull();
+    expect(alertFor(msg("Questions about submitting? Ask in https://discord.com/channels/1/2", { ...auth, links: ["https://discord.com/channels/1/2"] }), [], plan, luma)).toBeNull();
+  });
   test("workshops and offers: at once when they match the Plan, else the digest; jobs always wait", () => {
     expect(alertFor(msg("Workshop: deploy agents on Modal, 3:00 PM in Room 105.", auth), [item({ kind: "workshop", sponsor: "Modal", event_start_iso: "2026-11-14T15:00:00-08:00" })], plan, opts)).toMatchObject({ kind: "workshop", level: "now" });
     expect(alertFor(msg("Intro to Figma plugins, 4pm"), [item({ kind: "workshop", sponsor: "Figma" })], plan, opts)).toMatchObject({ kind: "workshop", level: "digest", why: "Not tied to your stack or tracks" });
