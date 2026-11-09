@@ -14,7 +14,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { PageSnapshot } from "./schema.ts";
 
-export const USER_AGENT = "HackRecon/2.0 (+https://github.com/atishaypahadiya/hackrecon; a hacker's local tool, one request per page per sync)";
+export const USER_AGENT = "HackRecon/2.0 (+https://github.com/atishaypahadiya/HackRecon; a hacker's local tool, one request per page per sync)";
 /** The product token robots.txt groups are matched against. */
 export const ROBOTS_TOKEN = "hackrecon";
 export const MAX_REDIRECTS = 3;
