@@ -6,6 +6,7 @@
 // Nothing here is a model call. The user's Plan (data/plan.json, saved by `hr plan`) says what matters.
 import { sourceLine } from "./discord.ts";
 import type { Item, Message } from "./schema.ts";
+import { zoneMark } from "./time.ts";
 
 export interface PlanFacts {
   saved_at?: string;
@@ -79,7 +80,7 @@ const firstLine = (s: string, n = 160) => {
 function when(iso: string | undefined, nowMs: number, tz: string): string {
   if (!iso) return "";
   const at = Date.parse(iso);
-  const s = new Date(at).toLocaleString("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" });
+  const s = new Date(at).toLocaleString("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "2-digit" }) + zoneMark(tz);
   const h = (at - nowMs) / 3600_000;
   return h > 0 ? `${s} (in ${h < 1 ? `${Math.round(h * 60)} min` : `${Math.round(h)} h`})` : s;
 }

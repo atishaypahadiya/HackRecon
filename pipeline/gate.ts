@@ -50,6 +50,8 @@ export function predictions(items: Item[]): Map<string, Prediction> {
 const NONE: Prediction = { credit: false, dated: false, credits: [], deadlines: [] };
 
 export interface GateInput {
+  /** The event's zone (event.json), for date-only deadline labels. */
+  tz: string;
   rows: LabelRow[];
   items: Item[];
   /** Message ids data/items.json covers (classified under the scored prompt; zero items is an answer). */
@@ -128,12 +130,12 @@ const describeDeadlines = (p: Prediction) =>
   p.deadlines.length ? p.deadlines.map((d) => `${d.deadline_iso ?? d.deadline_status} [${d.kind}]`).join("; ") : "no deadline";
 
 /** Label target for deadline accuracy: deadline_iso, else the claim window end (D15). */
-function deadlineMatch(r: LabelRow, p: Prediction): boolean {
+function deadlineMatch(r: LabelRow, p: Prediction, tz: string): boolean {
   const target = r.deadline_iso.trim() || r.window_end.trim();
   const dateOnly = /\bdate-only\b/i.test(r.notes);
   return p.deadlines.some((d) => {
     if (!d.deadline_iso) return false;
-    if (dateOnly) return eventDate(d.deadline_iso) === eventDate(target);
+    if (dateOnly) return eventDate(d.deadline_iso, tz) === eventDate(target, tz);
     return Math.floor(Date.parse(d.deadline_iso) / 60000) === Math.floor(Date.parse(target) / 60000);
   });
 }
@@ -179,7 +181,7 @@ export function scoreGate(g: GateInput): GateReport {
   const deadlineRows = scored.filter((r) => yes(r.is_dated) && (r.deadline_iso.trim() || r.window_end.trim()));
   const deadlineMisses: Miss[] = [];
   const deadlineScored = deadlineRows.map((r) => {
-    const ok = deadlineMatch(r, pred(r));
+    const ok = deadlineMatch(r, pred(r), g.tz);
     if (!ok) {
       const target = r.deadline_iso.trim() || `${r.window_end.trim()} (window_end)`;
       deadlineMisses.push(miss(r, /\bdate-only\b/i.test(r.notes) ? `${target}, date only` : target, describeDeadlines(pred(r))));

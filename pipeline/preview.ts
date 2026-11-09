@@ -238,7 +238,8 @@ export function preview(o: {
   };
 }
 
-export function formatPreview(p: Preview, basis: string): string {
+/** `tz`: the event's zone (event.json), for the offers' post times. */
+export function formatPreview(p: Preview, basis: string, tz: string): string {
   const L: string[] = [];
   L.push(`RECEIPT PREVIEW (not the receipt) — ${basis}`);
   L.push("");
@@ -256,7 +257,7 @@ export function formatPreview(p: Preview, basis: string): string {
   L.push("");
   if (p.grouping === "opus") {
     L.push("Offers and their source posts:");
-    const when = (ts: string) => new Date(Number(ts) * 1000).toLocaleString("en-US", { timeZone: "America/Los_Angeles", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const when = (ts: string) => new Date(Number(ts) * 1000).toLocaleString("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     const sorted = [...p.groups].sort((a, b) => Number(a.offers[0]!.ts) - Number(b.offers[0]!.ts));
     sorted.forEach((g, i) => {
       const f = g.offers[0]!;

@@ -124,6 +124,8 @@ export interface BuildOpts {
   captured: Map<string, Message>;
   workspace: string;
   existing: LabelRow[];
+  /** The event's zone (event.json), for posted_at. */
+  tz: string;
 }
 
 export interface Built {
@@ -144,7 +146,7 @@ export function buildRows(sel: Selection, o: BuildOpts): Built {
       message_id: c.id,
       channel: c.channel,
       sponsor: o.sponsors[c.channel]?.sponsor ?? "",
-      posted_at: tsToEventIso(c.ts),
+      posted_at: tsToEventIso(c.ts, o.tz),
       author: m?.author_name ?? c.author,
       subtype: c.cls === "broadcast" ? "thread_broadcast" : "",
       pool,

@@ -14,6 +14,7 @@ import {
   MAX_TOKENS,
   MODEL,
   OUTPUT_SCHEMA,
+  eventTimezone,
   promptHash,
   readEvent,
   readJsonFile,
@@ -71,6 +72,7 @@ import {
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
+import { NO_TZ } from "./time.ts";
 import { buildOrganizers, eventOrganizerTag, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
 import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNotes, readTeam, repSource, teamLines, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
@@ -431,7 +433,7 @@ async function alertsRun(dryRun: boolean, nowMs: number, channel: MessageChannel
   try {
     organizerIds = loadOrganizerIds();
   } catch {}
-  const tz = existsSync(EVENT_PATH) ? readEvent().timezone : "America/Los_Angeles";
+  const tz = eventTimezone();
   const r = await runAlerts({ nowMs, tz, organizerIds, send });
   for (const a of r.fresh) console.log(`  ${a.level === "now" ? "now   " : "digest"} ${a.kind}: ${a.what} (${a.source}). Why: ${a.why}`);
   for (const o of r.outbox) console.log(`  message (${o.level}, ${o.status}${o.error ? `: ${o.error}` : ""}):\n${o.body.replace(/^/gm, "    | ")}`);
@@ -618,7 +620,7 @@ function shipNow(entered: string[], nowMs = Date.now()): ShipList {
 /** The event's daily chat budget, from event.json (read per question, so an edit applies at once). */
 function budget(): ChatBudget {
   const e = existsSync(EVENT_PATH) ? readEvent() : null;
-  return new ChatBudget(e?.chat_daily_usd ?? CHAT_DAILY_USD, e?.timezone ?? "America/Los_Angeles");
+  return new ChatBudget(e?.chat_daily_usd ?? CHAT_DAILY_USD, e?.timezone ?? NO_TZ);
 }
 
 async function ask(args: string[]): Promise<number> {
@@ -972,7 +974,7 @@ function pool(args: string[]): number {
   }
   sel = withFlagged(sel, cands, flaggedIds);
   const workspace = new URL(messages[0]!.permalink).origin;
-  const { rows, orphans } = buildRows(sel, { sponsors, captured, workspace, existing });
+  const { rows, orphans } = buildRows(sel, { sponsors, captured, workspace, existing, tz: eventTimezone() });
   writeSheet(LABELS_PATH, [...rows, ...orphans]);
 
   const count = (f: (r: (typeof rows)[number]) => boolean) => rows.filter(f).length;
@@ -1144,6 +1146,7 @@ function gate(args: string[]): number {
   const judgeRun = readJsonFile<JudgeRun | null>(JUDGE_RUN_PATH, null);
   const randomIds = new Set(meta?.random_ids ?? rows.filter((r) => r.pool === "random").map((r) => r.message_id));
   const report = scoreGate({
+    tz: eventTimezone(),
     rows,
     items: readJsonFile<Item[]>(ITEMS_PATH, []),
     classified: new Set(run.classified),
@@ -2530,7 +2533,7 @@ function receiptPreview(args: string[]): number {
   const current = promptHash(systemPrompt(readEvent(), readRules()));
   const stale = run.prompt_hash !== current ? " (STALE: config now gives a different prompt; rerun hr classify)" : "";
   const basis = fresh ? `Opus grouping ${grouped.input_hash} (${grouped.posts} credit posts)` : `classifier prompt ${run.prompt_hash}${stale}, ${run.classified.length} messages classified`;
-  console.log(formatPreview(p, `${basis}, run ${last?.run_id ?? "none"}`));
+  console.log(formatPreview(p, `${basis}, run ${last?.run_id ?? "none"}`, eventTimezone()));
   return 0;
 }
 
