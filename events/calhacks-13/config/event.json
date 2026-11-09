@@ -41,6 +41,7 @@
     "platform": "Devpost",
     "page": "https://cal-hacks-13-0.devpost.com/"
   },
+  "slack_export": "~/projects/hackrecon-data/calhacks",
   "event_level_prizes": [
     "[MLH] Commit Fellowship"
   ],
