@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareThreads, threadTotals } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR } from "./event.ts";
+import { CALHACKS_EXPORT_DIR } from "./event.ts";
 import { loadExport, readChannel, type ExportMessage } from "./export.ts";
 import { messageId, parseThreadCaptureFile, type Message, type ThreadCaptureFile, type ThreadRun } from "./schema.ts";
 
@@ -112,9 +112,9 @@ describe("parseThreadCaptureFile", () => {
   });
 });
 
-describe.skipIf(!existsSync(DEFAULT_EXPORT_DIR))("thread baseline (real export)", () => {
+describe.skipIf(!existsSync(CALHACKS_EXPORT_DIR))("thread baseline (real export)", () => {
   test("the locked 25 hold 494 replies, the number the step-1 gate is measured on", () => {
-    const exp = loadExport();
+    const exp = loadExport(CALHACKS_EXPORT_DIR);
     const sponsors = JSON.parse(require("node:fs").readFileSync("events/calhacks-13/config/sponsors.json", "utf8")) as Record<string, { stretch?: boolean }>;
     const locked = Object.keys(sponsors).filter((k) => !sponsors[k]!.stretch);
     expect(locked).toHaveLength(25);

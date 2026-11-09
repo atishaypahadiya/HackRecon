@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareChannel } from "./compare.ts";
-import { DEFAULT_EXPORT_DIR } from "./event.ts";
+import { CALHACKS_EXPORT_DIR } from "./event.ts";
 import { expectedAuthorNames, isChannelVisible, loadExport, readChannel, rowClass, type ExportMessage } from "./export.ts";
 import { messageId, type CaptureFile, type Message } from "./schema.ts";
 
@@ -160,9 +160,9 @@ describe("compareChannel (synthetic export)", () => {
 });
 
 // Against the real baseline: a capture built from the export itself, minus two posts.
-describe.skipIf(!existsSync(DEFAULT_EXPORT_DIR))("compareChannel (real export, spons-convex)", () => {
+describe.skipIf(!existsSync(CALHACKS_EXPORT_DIR))("compareChannel (real export, spons-convex)", () => {
   test("recall and authors line up when the capture is the export minus two posts", () => {
-    const exp = loadExport();
+    const exp = loadExport(CALHACKS_EXPORT_DIR);
     const cid = [...exp.channelsById].find(([, n]) => n === "spons-convex")![0];
     const top = readChannel(exp, "spons-convex").filter(isChannelVisible).filter((m) => rowClass(m) !== "system");
     const keep = top.slice(2);

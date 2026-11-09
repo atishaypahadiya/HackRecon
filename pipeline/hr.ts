@@ -27,7 +27,7 @@ import {
   type ClassifyRun,
 } from "./classify.ts";
 import { compareChannel, compareThreads, threadTotals, AUTHOR_MIN, RECALL_MIN, TIME_MAX_S, type ChannelReport, type ThreadReport } from "./compare.ts";
-import { isTopLevel, loadExport, readChannel, rowClass } from "./export.ts";
+import { isTopLevel, loadExport, MissingExport, readChannel, resolveExportDir, rowClass } from "./export.ts";
 import { apiKeys, captureFromApi, compareKeys, exportKeys, type ApiChannelFile, type ApiUser, type KeyCompare } from "./apiconvert.ts";
 import { hackerOnlyChannels, selfIdFlags } from "./hackerchannels.ts";
 import { pageChanges as mergePageChanges, type PageChange } from "./merge.ts";
@@ -71,7 +71,7 @@ import {
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
-import { buildOrganizers, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
+import { buildOrganizers, eventOrganizerTag, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
 import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNotes, readTeam, repSource, teamLines, readTicks, setClaim, setEntered, setTick, shipItems, type TrackRef, type Told, type WriteRecord } from "./told.ts";
 import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
@@ -106,7 +106,6 @@ import {
   FIT_EVAL_PATH,
   FIT_EVAL_SET_PATH,
   EVENT_PATH,
-  DEFAULT_EXPORT_DIR,
   ERRORS_PATH,
   GROUP_PATH,
   ITEMS_PATH,
@@ -309,7 +308,8 @@ const USAGE = `usage:
       image CDN as users.json lists it, hashed, discarded; macOS sips), same real name + title + company. Never by
       name alone. Writes ${PERSON_LINKS_PATH} (ids and hashed evidence).
       One-time (A5): writes ${ORGANIZERS_PATH} from the baseline's users.json (admins, owners,
-      CAL HACKS tags, director/exec/organizer/logistics titles). Used for poster_role.
+      names tagged with the event's name, director/exec/organizer/logistics titles). Reads --export or event.json
+      slack_export (no default). Used for poster_role.
   bun run hr classify [--new] [--labeled-only] [--dry-run] [--yes] [--limit N] [--concurrency N] [--show MESSAGE_ID]
       Classifies captured messages with ${MODEL} (redacted text only). --labeled-only: just the messages
       in ${LABELS_PATH}. Cached in ${CACHE_PATH}; failures in ${ERRORS_PATH}; items in ${ITEMS_PATH}.
@@ -686,7 +686,7 @@ function compare(args: string[]): number {
     args,
     allowPositionals: true,
     options: {
-      export: { type: "string", default: DEFAULT_EXPORT_DIR },
+      export: { type: "string" },
       json: { type: "string" },
       cutoff: { type: "string", default: EXPORT_CUTOFF },
       sponsors: { type: "string", default: SPONSORS_PATH },
@@ -699,7 +699,7 @@ function compare(args: string[]): number {
     console.error("No capture files found. Pass paths, e.g. bun run hr compare ~/Downloads/C0C7TCNCR1N.json");
     return 2;
   }
-  const exp = loadExport(fromCaller(values.export!));
+  const exp = loadExport(exportDir(values.export));
   const cutoff = Date.parse(values.cutoff!) / 1000;
   const reports: ChannelReport[] = [];
   for (const f of files) {
@@ -923,7 +923,7 @@ function pool(args: string[]): number {
     args,
     options: {
       seed: { type: "string", default: String(DEFAULT_SEED) },
-      export: { type: "string", default: DEFAULT_EXPORT_DIR },
+      export: { type: "string" },
       sponsors: { type: "string", default: SPONSORS_PATH },
       check: { type: "boolean", default: false },
       "add-flagged": { type: "boolean", default: false },
@@ -934,7 +934,7 @@ function pool(args: string[]): number {
 
   const sponsors = readSponsors(values.sponsors!);
   const channels = lockedChannels(sponsors);
-  const cands = candidatesFromExport(loadExport(fromCaller(values.export!)), channels);
+  const cands = candidatesFromExport(loadExport(exportDir(values.export)), channels);
   const seed = Number(values.seed);
   const prev = readPoolMeta(POOL_META_PATH);
   // Sheets written before the miss checks were blinded marked random rows in the sheet itself.
@@ -1257,7 +1257,7 @@ async function board(args: string[]): Promise<number> {
     messages,
     sponsors,
     offers: withLabelAmounts(grouped.offers, new Map(labels.map((r) => [r.message_id, r]))),
-    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
+    role: rolesById(messages, sponsors, organizerIds, eventOrganizerTag(), person, reps.confirmed),
     person,
     reps,
     basis: { grouping: grouped.input_hash, model: grouped.model, written_at: grouped.written_at },
@@ -2148,7 +2148,7 @@ function shipListAt(entities: Entity[], event: EventConfig, entered: string[], n
   const sponsors = readSponsors(SPONSORS_PATH);
   const messages = existsSync(MESSAGES_PATH) ? readMessages() : [];
   const person = loadPersonKey();
-  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), person, loadRepIndex(person).confirmed);
+  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), eventOrganizerTag(), person, loadRepIndex(person).confirmed);
   // Merge §3: each page's first snapshot plus later edits, when canon has replaced a page; else today's canon.
   const t = canonTimeline();
   const list = shipList({ entities: t.changes.length ? t.baseline : entities, pageChanges: t.changes, event, messages, isOrganizer: (m) => role(m) === "organizer", shown: (m) => plainText(m.text), entered, nowSec: nowMs / 1000 });
@@ -2522,7 +2522,7 @@ function receiptPreview(args: string[]): number {
     messages,
     sponsors,
     channels: last?.channels ?? [],
-    role: rolesById(messages, sponsors, organizerIds, person, reps.confirmed),
+    role: rolesById(messages, sponsors, organizerIds, eventOrganizerTag(), person, reps.confirmed),
     person,
   });
   const current = promptHash(systemPrompt(readEvent(), readRules()));
@@ -2533,14 +2533,14 @@ function receiptPreview(args: string[]): number {
 }
 
 async function personLinks(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
-  const dir = fromCaller(values.export!);
+  const { values } = parseArgs({ args, options: { export: { type: "string" } } });
+  const dir = exportDir(values.export);
   const usersFile = join(dir, "users.json");
   const users = loadExport(dir).users;
   const sponsors = readSponsors(SPONSORS_PATH);
   const messages = readMessages();
   // Roles from each account's own posts (no links yet); a link only merges accounts already on one sponsor's side.
-  const role = rolesById(messages, sponsors, loadOrganizerIds());
+  const role = rolesById(messages, sponsors, loadOrganizerIds(), eventOrganizerTag());
   const sides = new Map<string, Set<string>>();
   for (const m of messages) {
     const s = sponsors[m.channel_name];
@@ -2609,14 +2609,18 @@ async function personLinks(args: string[]): Promise<number> {
   return 0;
 }
 
+const exportDir = (flag: string | undefined) => resolveExportDir(flag && fromCaller(flag), existsSync(EVENT_PATH) ? readEvent().slack_export : undefined);
+
 function organizers(args: string[]): number {
-  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
-  const orgs = buildOrganizers(loadExport(fromCaller(values.export!)));
+  const { values } = parseArgs({ args, options: { export: { type: "string" } } });
+  // The tag comes from the event's own name, as hr discover derives it; never another event's.
+  const tag = eventOrganizerTag();
+  const orgs = buildOrganizers(loadExport(exportDir(values.export)), tag);
   writeJsonFile(ORGANIZERS_PATH, orgs);
   const by = (w: string) => orgs.filter((o) => o.why.includes(w)).length;
   console.log(
     `wrote ${ORGANIZERS_PATH}: ${orgs.length} organizer accounts (admin ${by("admin")}, owner ${by("owner")}, ` +
-      `cal hacks tag ${by("cal hacks tag")}, title ${by("title")}; one account can match several)`,
+      `tagged ${tag ?? "(no tag: the event's name has no words)"} ${by("event-name tag")}, title ${by("title")}; one account can match several)`,
   );
   return 0;
 }
@@ -2905,7 +2909,7 @@ function convertApiBundle(apiDir: string, out: string, runId: string): number {
 /** The user's acceptance check for the API pull (2026-11-07): every config channel's posts and replies, by ts,
  *  against the Slack export. */
 function compareApi(args: string[]): number {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { export: { type: "string" } } });
   const dirs = positionals.length ? positionals.map(fromCaller) : existsSync(CAPTURES_DIR) ? readdirSync(CAPTURES_DIR).filter((d) => existsSync(join(CAPTURES_DIR, d, "pull"))).sort().map((d) => join(CAPTURES_DIR, d, "pull")) : [];
   if (!dirs.length) {
     console.error(`no API pull in ${CAPTURES_DIR}/sync-*/pull/: run hr sync-ingest after a pull`);
@@ -2913,7 +2917,7 @@ function compareApi(args: string[]): number {
   }
   const files = dirs.flatMap((d) => readdirSync(d).filter((f) => /^[CG][A-Z0-9]+\.json$/.test(f)).map((f) => JSON.parse(readFileSync(join(d, f), "utf8")) as ApiChannelFile));
   const api = apiKeys(files);
-  const exp = loadExport(fromCaller(values.export!));
+  const exp = loadExport(exportDir(values.export));
   const sponsors = readSponsors(SPONSORS_PATH);
   const channels = [...new Set([...Object.keys(sponsors), ...(readEvent().authority_channels ?? [])])];
   const locked = new Set(Object.entries(sponsors).filter(([, s]) => !s.stretch).map(([c]) => c));
@@ -3026,7 +3030,7 @@ try {
 process.exit(
   await main(args).catch((e) => {
     // The spend guard (costguard.ts): a refused call ends the command; what it already wrote stays.
-    if (!(e instanceof CostRefused)) throw e;
+    if (!(e instanceof CostRefused || e instanceof MissingExport)) throw e;
     console.error(e.message);
     return 2;
   }),
@@ -3042,7 +3046,7 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
   const byId = new Map(messages.map((m) => [m.id, m]));
   const person = loadPersonKey();
   const reps = loadRepIndex(person);
-  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), person, reps.confirmed);
+  const role = rolesById(messages, sponsors, existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>(), eventOrganizerTag(), person, reps.confirmed);
   const products = readProducts();
   const set = (tracks: PlanTrack[]) => joinSponsors(input, tracks, ctx.aliases, products);
   const nowSec = nowMs / 1000;
@@ -3071,8 +3075,8 @@ function planJoins(input: PlanInput, ctx: PlanContext, nowMs: number): NonNullab
  *  yet (emails; mention IDs before the parser kept them; who posted in hacker-only channels, which aren't synced
  *  because their posts would reach the classifier). Every source is written into the file. */
 async function repSignals(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { export: { type: "string", default: DEFAULT_EXPORT_DIR } } });
-  const dir = fromCaller(values.export!);
+  const { values } = parseArgs({ args, options: { export: { type: "string" } } });
+  const dir = exportDir(values.export);
   const exp = existsSync(join(dir, "users.json")) ? loadExport(dir) : null;
   const sponsors = readSponsors(SPONSORS_PATH);
   const event = readEvent();
@@ -3184,7 +3188,7 @@ async function repSignals(args: string[]): Promise<number> {
 
   const confirmedIds = new Map<string, Set<string>>();
   for (const x of [...email, ...mention.hits]) confirmedIds.set(person(x.id), (confirmedIds.get(person(x.id)) ?? new Set()).add(x.sponsor));
-  const role = rolesById(captured, sponsors, organizerIds, person, confirmedIds);
+  const role = rolesById(captured, sponsors, organizerIds, eventOrganizerTag(), person, confirmedIds);
   const selfIdentified = new Set(selfId.map((x) => `${x.person}|${x.sponsor}`));
   const likely = likelyReps({ messages, replies: [...replies.values()], items: readJsonFile<Item[]>(ITEMS_PATH, []), sponsors, role, person, hackerPosters, selfIdentified });
 
@@ -3199,7 +3203,7 @@ async function repSignals(args: string[]): Promise<number> {
   writeFileSync(REP_SIGNALS_PATH, JSON.stringify(file, null, 2) + "\n");
   for (const [k, v] of Object.entries(file.sources)) console.log(`${k}: ${v}`);
   for (const n of notes) console.log(n);
-  const base = rolesById(captured, sponsors, organizerIds, person);
+  const base = rolesById(captured, sponsors, organizerIds, eventOrganizerTag(), person);
   for (const e of file.reps) {
     const already = captured.some((m) => m.author_id && person(m.author_id) === e.person && sponsors[m.channel_name]?.sponsor === e.sponsor && base(m) === "sponsor-side");
     const name = [...captured].reverse().find((m) => m.author_id && person(m.author_id) === e.person)?.author_name ?? e.person;

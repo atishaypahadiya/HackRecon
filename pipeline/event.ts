@@ -120,8 +120,9 @@ export const DISCOVERED_PATH = "data/discovered.json";
 export const RULES_PATH = join(REPO_ROOT, "docs/labeling.md");
 
 // Machine-local paths (outside the repo).
-/** Cal Hacks 13.0's slackdump export (read-only baseline for `hr compare`). Other events pass --export. */
-export const DEFAULT_EXPORT_DIR = join(homedir(), "projects/hackrecon-data/calhacks");
+/** Cal Hacks 13.0's slackdump export: the baseline the real-export tests compare their fixtures with. Never a
+ *  command's default (audit 2026-11-08): a command reads the export `--export` or event.json's `slack_export` names. */
+export const CALHACKS_EXPORT_DIR = join(homedir(), "projects/hackrecon-data/calhacks");
 
 /** The directory for an event slug (or a path to one). Throws with the fix when it doesn't exist. */
 export function eventDir(slug = DEFAULT_EVENT): string {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Sponsors } from "./pool.ts";
 import { buildNameList, cleanName, compileRedactor } from "./redact.ts";
-import { posterRole, rolesById } from "./roles.ts";
+import { organizerTag, posterRole, rolesById } from "./roles.ts";
 import type { Message } from "./schema.ts";
 
 const sponsors: Sponsors = {
@@ -79,26 +79,35 @@ describe("posterRole (D17, A5 rules)", () => {
     ...extra,
   });
   const orgs = new Set(["UORG"]);
+  const tag = organizerTag("Cal Hacks 13.0");
   const all = Object.values(sponsors);
   const bd = sponsors["spons-bright-data"];
 
   test("organizer by id, tag or title, ahead of any sponsor match", () => {
-    expect(posterRole(m("Jessenia Chan", { author_id: "UORG" }), bd, orgs)).toBe("organizer");
-    expect(posterRole(m("Charlie [Cal Hacks]"), bd, orgs)).toBe("organizer");
-    expect(posterRole(m("Sam", { author_title: "Logistics Director" }), bd, orgs)).toBe("organizer");
+    expect(posterRole(m("Jessenia Chan", { author_id: "UORG" }), bd, orgs, tag)).toBe("organizer");
+    expect(posterRole(m("Charlie [Cal Hacks]"), bd, orgs, tag)).toBe("organizer");
+    expect(posterRole(m("Sam", { author_title: "Logistics Director" }), bd, orgs, tag)).toBe("organizer");
+  });
+
+  test("the tag is this event's name, never another event's (audit 2026-11-08)", () => {
+    const iterate = organizerTag("Iterate: AI Research Hackathon (Nov 14–15, 2026, San Francisco)");
+    expect(iterate?.source).toBe("\\bIterate\\b");
+    expect(posterRole(m("Dana (Iterate)"), bd, orgs, iterate)).toBe("organizer");
+    expect(posterRole(m("Charlie [Cal Hacks]"), bd, orgs, iterate)).toBe("other");
+    expect(posterRole(m("Charlie [Cal Hacks]"), bd, orgs, null)).toBe("other");
   });
 
   test("sponsor-side by tag, suffix or external badge in the sponsor's channel", () => {
-    expect(posterRole(m("Jeevi [Bright Data]"), bd, orgs)).toBe("sponsor-side");
-    expect(posterRole(m("Dana Kim, Bright Data"), bd, orgs)).toBe("sponsor-side");
-    expect(posterRole(m("sara", { author_external: true }), bd, orgs)).toBe("sponsor-side");
-    expect(posterRole(m("Jeevi [Bright Data]"), sponsors["spons-microsoft"], orgs)).toBe("other");
+    expect(posterRole(m("Jeevi [Bright Data]"), bd, orgs, tag)).toBe("sponsor-side");
+    expect(posterRole(m("Dana Kim, Bright Data"), bd, orgs, tag)).toBe("sponsor-side");
+    expect(posterRole(m("sara", { author_external: true }), bd, orgs, tag)).toBe("sponsor-side");
+    expect(posterRole(m("Jeevi [Bright Data]"), sponsors["spons-microsoft"], orgs, tag)).toBe("other");
   });
 
   test("event channels match any configured sponsor; hackers stay other", () => {
     const ev = sponsors["0-announcements"];
-    expect(posterRole(m("Sam Vega (Microsoft)", { channel_name: "2-opportunities" }), ev, orgs, all)).toBe("sponsor-side");
-    expect(posterRole(m("prabhavgoel"), bd, orgs, all)).toBe("other");
+    expect(posterRole(m("Sam Vega (Microsoft)", { channel_name: "2-opportunities" }), ev, orgs, tag, all)).toBe("sponsor-side");
+    expect(posterRole(m("prabhavgoel"), bd, orgs, tag, all)).toBe("other");
   });
 });
 
@@ -114,7 +123,7 @@ describe("rolesById (user 2026-11-06: reps and organizers keyed by Slack user ID
   test("a rep who renames mid-event keeps the role, in that sponsor's channels and event channels only", () => {
     const before = at("cohost-annapurna-labs", "LenaRose (Annapurna Labs)", { author_id: "U1" });
     const after = at("cohost-annapurna-labs", "LenaRose", { author_id: "U1" });
-    const role = rolesById([before, after], sponsors, new Set());
+    const role = rolesById([before, after], sponsors, new Set(), null);
     expect([role(before), role(after)]).toEqual(["sponsor-side", "sponsor-side"]);
     expect(role(at("0-announcements", "LenaRose", { author_id: "U1" }))).toBe("sponsor-side");
     expect(role(at("spons-microsoft", "LenaRose", { author_id: "U1" }))).toBe("other");
@@ -122,7 +131,7 @@ describe("rolesById (user 2026-11-06: reps and organizers keyed by Slack user ID
   test("an organizer tag seen once marks every post by that id; no id, no role, whatever the name says", () => {
     const tagged = at("spons-microsoft", "Charlie [Cal Hacks]", { author_id: "U2" });
     const plain = at("spons-microsoft", "Charlie", { author_id: "U2" });
-    const role = rolesById([tagged, plain], sponsors, new Set(["U3"]));
+    const role = rolesById([tagged, plain], sponsors, new Set(["U3"]), organizerTag("Cal Hacks 13.0"));
     expect([role(tagged), role(plain), role(at("spons-microsoft", "anyone", { author_id: "U3" }))]).toEqual(["organizer", "organizer", "organizer"]);
     expect(role(at("cohost-annapurna-labs", "Someone (Annapurna Labs)"))).toBe("other");
   });
