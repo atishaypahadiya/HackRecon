@@ -2127,8 +2127,8 @@ Global UI rule, patterns this plan uses: **mono fonts**, for metadata and codes 
       - **Credits (3):** Anthropic "$50 Claude API credits", Apify "$200 Apify credits" (code APIFY_CAL_HACKS) and Figma "Free Figma Edu Access", none with a stated limit. Left out by the rules: Factory's "$20 free credits" (closed Fri 7:00 PM), and Apify's "extend coupon 3 months" (posted Sun). No quote failed.
       - **Sessions (1), before "Devpost submission deadline extended" (Sun 9:30 AM):** Sat 1:00 PM, Anthropic, "Hey! A reminder that our Claude workshop, Building Multi-Agent Teams & Systems, is today from 1-2pm in the Theater…". Left out: Apify's workshop (11:00 AM, already started) and an Anthropic post from 1:08 PM (not yet posted at noon).
       - **People:**
-        - Anthropic: Tyler Lacroix [Anthropic Researcher], 1 post, first "Yes all hackers will get $50 of Claude API credits".
-        - Factory: David GU [Factory], 4 posts by noon, first "Hi!".
+        - Anthropic: Rowan Ellery [Anthropic Researcher], 1 post, first "Yes all hackers will get $50 of Claude API credits".
+        - Factory: Milo Varga [Factory], 4 posts by noon, first "Hi!".
         - Apify: none. Apify's posters in #spons-apify have no sponsor tag, title or external badge in the capture, so A5's role signals don't mark them sponsor-side. The coupon post's author says "DM me", so this is a miss in the role signals, not an absence (TODOS).
     - **At today's clock (Nov 7, after the event):** the same 3 credits (none states a limit), no sessions, and the same reps.
 - [x] **P6** State table (D4) and live updates with the urgent bypass (D5), and §3 Merge. Verify: tests on a synthetic sync diff (a deadline moved earlier, a session in 45 min, a new offer).

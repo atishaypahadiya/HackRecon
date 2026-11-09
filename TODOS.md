@@ -6,15 +6,11 @@
 
 The rule: no real person's name, handle, user ID or email from an event's Slack or Discord appears in committed code, tests, comments or docs. Fixtures, examples and design notes use invented names ("Dana Kim", "Pat at Apify") and invented IDs (`U0Z...`). Sponsor and company names are fine; the people who posted for them are not. The event data itself already stays out (gitignored `data/` and `hackrecon-data`).
 
-Still in the repo on 2026-11-08 (a scan of every tracked file against Cal Hacks' users.json and its 2,014 posts; the history rewrite before #35 missed these, and nothing since #35 added any):
-- `docs/designs/hackrecon-v2.md:2130` and `:2131`: two sponsor reps, named with their sponsor tag.
-- `pipeline/redact.test.ts:87`: an organizer's full name; `:110`: a hacker's Slack handle.
-- `pipeline/reps.test.ts:152`: a judge's full name in a judge-list example.
+**Checked by `pipeline/realnames.test.ts`** (part of `bun test`; alone, `bun run check:names`). It reads each local event's people: the users.json of the Slack export its config names, and the authors and emails in its data/messages.json, which holds Discord posts too. It fails on any tracked file that names one of them: a full name, a handle of six or more characters that isn't an English word or a sponsor's name, a Slack or Discord user ID, or an email. The failure lists file, line and kind, never the name. With no event data (CI) it skips. First names alone, and people named in posts who aren't members, aren't checked.
 
-To do:
-- Replace those five with invented names; the tests keep their shape.
-- Add a check that fails when a tracked file holds a name, handle, user ID or email from any local event's users.json or messages.json. It runs where the data exists (locally, before a push) and skips in CI, which has none. The scan used here: full names, handles of six or more letters that aren't dictionary words, `U0...` IDs and emails, which gave 12 matches, 5 of them the English word "founders".
-- The original commits from before the rewrite still hold the old names on GitHub (each PR's merge commit is fetchable by hash). Purging those is GitHub-side cleanup, outside this repo's code.
+Done 2026-11-08: the five real identities the history rewrite missed (two sponsor reps in the design doc, an organizer and a hacker's handle in `redact.test.ts`, a judge in `reps.test.ts`) are invented names now, and the check passes against Cal Hacks' 2,900 members and 2,014 posts.
+
+Still open: the original commits from before the rewrite hold the old names on GitHub (each PR's merge commit is fetchable by hash). Purging those is GitHub-side cleanup, outside this repo's code.
 
 ## Extension
 

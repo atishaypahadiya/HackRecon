@@ -6,7 +6,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "build:ext": "bun extension/build-config.ts && bun build extension/src/content.ts --outfile extension/dist/content.js --target browser --format iife && bun build extension/src/sync.ts --outfile extension/dist/sync.js --target browser --format iife && bun build extension/src/popup.ts --outfile extension/dist/popup.js --target browser --format iife && bun build extension/src/content-page.ts --outfile extension/dist/content-page.js --target browser --format iife && bun build extension/src/page-snap.ts --outfile extension/dist/page-snap.js --target browser --format iife && bun build extension/src/background.ts --outfile extension/dist/background.js --target browser --format iife && bun build extension/src/slack-session.ts --outfile extension/dist/slack-session.js --target browser --format iife && bun build extension/src/discord.ts --outfile extension/dist/discord.js --target browser --format iife",
-    "hr": "bun pipeline/hr.ts"
+    "hr": "bun pipeline/hr.ts",
+    "check:names": "bun test pipeline/realnames.test.ts"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.6",
