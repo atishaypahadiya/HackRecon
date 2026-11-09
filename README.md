@@ -6,7 +6,7 @@ The hacker meets it as **Donna**: the Telegram bot, the alert text, the extensio
 
 Built on Cal Hacks 13.0 (Oct 2026), the only event with captured Slack, a Slack export to check against and hand labels. The next live test is Iterate, Nov 14, on Discord.
 
-Private, single-user, local. It is not distributed.
+Single-user and local: it runs on the hacker's own machine, with their own sessions and keys. The code is public under MIT (see `LICENSE`); there is no hosted version and no packaged release.
 
 ## What it answers
 

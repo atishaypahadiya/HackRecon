@@ -21,3 +21,6 @@ events/*/config/organizers.json
 events/*/config/person_links.json
 events/*/config/rep_signals.json
 events/current
+
+# Third-party design screenshots used as references: kept locally, not ours to publish.
+docs/design-refs/
