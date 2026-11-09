@@ -1770,6 +1770,13 @@ None in this review. D16's label precondition was resolved by D23 (won tracks on
 - **D15 (2), new text:** "Every prize block on the page has exactly one track and at least one prize; the number of tracks equals the number of prize blocks. Within a block, the number of prizes equals the number of stated places (or 1 when none is stated)." `statedPlaces()` in coverage.ts counts places deterministically. A line with an ordinal is a place list: each ordinal is a place ("3rd, 4th & 5th Place" is 3), plus each segment that names a place without one ("Special Recognition: …"). Elsewhere, "top N" after N amounts is N places, and any other "top N" is one award. "Every entrant" prizes don't count. Measured: run 3 passes all 52 blocks. The 78-prize re-run fails exactly one, Hyphenate ("4 stated places, 2 prizes extracted"), which is the case this clause was meant to catch. Before the user picked, the review question said "run 3 passes it"; that was unverified at the time and is now measured.
 - D15 (3) is implemented as written (attached or listed); a listed figure doesn't fail.
 
+## Event-specific values out of code (audit, user 2026-11-08)
+
+An audit listed what code assumed about one event, platform or sponsor. Fixed before Iterate (user: items 1, 2, 5, 6, 7, 9, 13; Luma support in discovery and the extension, and the prompt examples, wait).
+
+- **No default Slack export (items 1, 2).** `hr compare`, `pool`, `person-links`, `organizers`, `compare-api` and `rep-signals` read `--export DIR`, else `event.json` `slack_export`; with neither they stop with a usage error (exit 2). Before, each read Cal Hacks' export, so `hr organizers` or `hr rep-signals` at a new event would have written Cal Hacks people into its files. Cal Hacks' export path is now only the real-export tests' fixture (`CALHACKS_EXPORT_DIR`).
+- **Organizer name tag from the event's name.** `organizerTag` (now in `roles.ts`, used by both `hr discover` and `hr organizers`, and by the poster-role hint on every classified post) takes the event's name up to its first separator, less its edition: "Cal Hacks 13.0" gives `/\bCal\s*Hacks\b/i` as before; "Iterate: AI Research Hackathon (Nov 14–15, …)" gives `/\bIterate\b/i`. With no `event.json` there is no tag. Re-running `hr organizers` on Cal Hacks' export gives the same 55 accounts.
+
 ## Completion summary
 - Step 0: Scope Challenge — scope reduced per recommendation (`hr init` deferred, D1; smaller module arrangement, D2)
 - Reality rows: 7/7 applicable rows emitted (`PLAN_REALITY`), 1 unverified premise (Hive schedule page)

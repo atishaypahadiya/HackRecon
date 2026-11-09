@@ -4,12 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import type { SlackExport } from "./export.ts";
 import type { SponsorEntry } from "./pool.ts";
 import type { Message } from "./schema.ts";
-import { ORGANIZERS_PATH } from "./event.ts";
+import { EVENT_PATH, ORGANIZERS_PATH } from "./event.ts";
 
 
 export type PosterRole = "organizer" | "sponsor-side" | "other";
 
-const ORG_TAG = /\bcal\s*hacks\b/i;
 const ORG_TITLE = /director|exec|organi[sz]er|logistics/i;
 
 /** organizers.json is Slack user IDs only (user 2026-11-06): names change mid-event and aren't needed to match. */
@@ -29,9 +28,24 @@ interface ExportUserFull {
   profile?: { display_name?: string; real_name?: string; title?: string };
 }
 
-/** A5, built once from the baseline's users.json (55 accounts measured): admins, owners,
- *  CAL HACKS-tagged names, director/exec/organizer/logistics titles. */
-export function buildOrganizers(exp: SlackExport): Organizer[] {
+/** The event's name tag in display names ("CAL HACKS | Dana", "Dana (Iterate)"): the event's name up to its first
+ *  separator (":", "(", " - ", " | ", a dash), less its edition ("13.0", "2026"). "Cal Hacks 13.0" → /\bCal\s*Hacks\b/i;
+ *  "Iterate: AI Research Hackathon (Nov 14–15, 2026, …)" → /\bIterate\b/i. hr discover and hr organizers both use it. */
+export function organizerTag(eventName: string): RegExp | null {
+  const head = eventName.split(/\s*[:(|]\s*|\s+[-–—]\s+/)[0]!;
+  const words = head.replace(/\b(\d+(\.\d+)*|20\d\d|'\d\d)\b/g, " ").trim().split(/\s+/).filter(Boolean);
+  return words.length ? new RegExp(`\\b${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*")}\\b`, "i") : null;
+}
+
+/** This event's organizer tag, from event.json's name; null with no event.json (no tag is ever borrowed). */
+export function eventOrganizerTag(path = EVENT_PATH): RegExp | null {
+  return existsSync(path) ? organizerTag((JSON.parse(readFileSync(path, "utf8")) as { event?: string }).event ?? "") : null;
+}
+
+/** A5, built once from the export's users.json: admins, owners, names tagged with the event's name (`tag`, from
+ *  autoconfig.ts organizerTag, as hr discover builds it: "Cal Hacks 13.0" → /\bCal\s*Hacks\b/i), and
+ *  director/exec/organizer/logistics titles. */
+export function buildOrganizers(exp: SlackExport, tag: RegExp | null): Organizer[] {
   return [...exp.users.values()].flatMap((raw) => {
     const u = raw as ExportUserFull;
     if (u.deleted || u.is_bot) return [];
@@ -39,7 +53,7 @@ export function buildOrganizers(exp: SlackExport): Organizer[] {
     const why = [
       u.is_admin && "admin",
       u.is_owner && "owner",
-      ORG_TAG.test(names) && "cal hacks tag",
+      !!tag && tag.test(names) && "event-name tag",
       ORG_TITLE.test(u.profile?.title ?? "") && "title",
     ].filter((w): w is string => !!w);
     return why.length ? [{ id: u.id, why }] : [];
@@ -68,8 +82,8 @@ export function sponsorSignals(m: Message, channel: SponsorEntry | undefined, al
 }
 
 /** Organizer wins over sponsor-side (sponsorSignals). */
-export function posterRole(m: Message, channel: SponsorEntry | undefined, organizerIds: Set<string>, all: SponsorEntry[] = []): PosterRole {
-  if ((m.author_id && organizerIds.has(m.author_id)) || ORG_TAG.test(m.author_name) || ORG_TITLE.test(m.author_title ?? "")) return "organizer";
+export function posterRole(m: Message, channel: SponsorEntry | undefined, organizerIds: Set<string>, tag: RegExp | null, all: SponsorEntry[] = []): PosterRole {
+  if ((m.author_id && organizerIds.has(m.author_id)) || !!tag?.test(m.author_name) || ORG_TITLE.test(m.author_title ?? "")) return "organizer";
   return sponsorSignals(m, channel, all).length ? "sponsor-side" : "other";
 }
 
@@ -83,7 +97,7 @@ export function posterRole(m: Message, channel: SponsorEntry | undefined, organi
  * `confirmed` adds reps.ts's confirmed reps (email domain, organizer mention), person → sponsors. Likely staff
  * (reps.ts signal 3) is never passed here: it grants no role, so no authority over links or offers.
  */
-export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>, person: (id: string) => string = (id) => id, confirmed: Map<string, Set<string>> = new Map()): (m: Message) => PosterRole {
+export function rolesById(messages: Message[], sponsors: Record<string, SponsorEntry>, organizerIds: Set<string>, tag: RegExp | null, person: (id: string) => string = (id) => id, confirmed: Map<string, Set<string>> = new Map()): (m: Message) => PosterRole {
   const all = Object.values(sponsors);
   const organizer = new Set([...organizerIds].map(person));
   const sponsorSide = new Set<string>();
@@ -95,7 +109,7 @@ export function rolesById(messages: Message[], sponsors: Record<string, SponsorE
   for (const m of messages) {
     if (!m.author_id || m.author_kind === "bot") continue;
     const ch = sponsors[m.channel_name];
-    const r = posterRole(m, ch, organizerIds, all);
+    const r = posterRole(m, ch, organizerIds, tag, all);
     const who = person(m.author_id);
     if (r === "organizer") organizer.add(who);
     if (r === "sponsor-side") {

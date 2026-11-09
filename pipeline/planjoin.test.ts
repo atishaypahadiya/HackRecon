@@ -128,7 +128,7 @@ describe("planPeople (P5)", () => {
   ];
   test("likely tracks' sponsors only; by person, sponsor-side, posted by now; the latest name, every account counted", () => {
     const person = personKeys([{ ids: ["UG", "UM"] }]);
-    const role = rolesById(messages, sponsors, new Set(), person);
+    const role = rolesById(messages, sponsors, new Set(), null, person);
     const p = planPeople(messages, S, sponsors, role, person, 1000, (m) => m.text);
     expect(p).toEqual([{ sponsor: "Factory", why: ["likely track: [Factory] Droid"], reps: [{ person: "UG", name: "David", accounts: 2, posts: 2, first: 100, quote: "post 100", source_url: "p/100", signals: ["name or title"], likely: false }] }]);
     const redacted = planPeople(messages, S, sponsors, role, person, 1000, (m) => (m.ts === "100" ? "post by [name]" : m.text));
@@ -136,7 +136,7 @@ describe("planPeople (P5)", () => {
   });
   test("likely staff is listed after the reps, labeled, with its evidence; it isn't sponsor-side", () => {
     const person = personKeys([{ ids: ["UG", "UM"] }]);
-    const role = rolesById(messages, sponsors, new Set(), person);
+    const role = rolesById(messages, sponsors, new Set(), null, person);
     const ix = repIndex({ built_at: "", sources: { emails: "", mentions: "", replies: "", hacker_only: "" }, hacker_only_channels: [], rule_notes: [], reps: [{ person: "UH", accounts: ["UH"], sponsor: "Factory", standing: "likely", signals: [{ kind: "likely staff", posts: [{ ts: 300, permalink: "p/300" }], answers: [{ ts: 310, permalink: "p/a" }, { ts: 2000, permalink: "p/b" }] }] }] }, person);
     const p = planPeople(messages, S, sponsors, role, person, 1000, (m) => m.text, ix)[0]!;
     expect(p.reps.map((r) => [r.name, r.likely, r.signals])).toEqual([

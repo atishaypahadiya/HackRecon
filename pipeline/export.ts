@@ -1,8 +1,8 @@
 // Read-only access to the slackdump baseline (Slack export format: <channel>/<YYYY-MM-DD>.json,
 // plus channels.json and users.json). Used by compare only; never imported into product tables.
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { DEFAULT_EXPORT_DIR } from "./event.ts";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 
 export interface ExportMessage {
@@ -35,7 +35,7 @@ export interface SlackExport {
   users: Map<string, ExportUser>;
 }
 
-export function loadExport(dir = DEFAULT_EXPORT_DIR): SlackExport {
+export function loadExport(dir: string): SlackExport {
   const channels = readJson<{ id: string; name: string }[]>(join(dir, "channels.json"));
   const users = readJson<ExportUser[]>(join(dir, "users.json"));
   return {
@@ -94,3 +94,15 @@ export function normName(s: string): string {
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
+/** A command needs a Slack export and none was named: a usage error, printed without a stack. */
+export class MissingExport extends Error {}
+
+/** The Slack export a command reads: the --export flag, else event.json's slack_export ("~/" is home; relative is
+ *  from the event's directory). No default: a missing one is an error, never another event's export read in its
+ *  place (audit 2026-11-08). */
+export function resolveExportDir(flag: string | undefined, configured: string | undefined): string {
+  if (flag) return flag;
+  if (configured) return resolve(configured.replace(/^~(?=\/|$)/, homedir()));
+  throw new MissingExport(`this command reads the event's Slack export: pass --export DIR, or set "slack_export" in config/event.json`);
+}
+

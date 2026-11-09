@@ -18,7 +18,7 @@ import {
   rowClass,
   type ExportMessage,
 } from "../../pipeline/export.ts";
-import { DEFAULT_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
+import { CALHACKS_EXPORT_DIR, EVENTS_DIR, SLACK_DOM_FIXTURES_DIR } from "../../pipeline/event.ts";
 
 const DIR = join(EVENTS_DIR, "calhacks-13", SLACK_DOM_FIXTURES_DIR);
 const CUTOFF = Date.parse("2026-10-27T03:17:00-07:00") / 1000;
@@ -34,7 +34,7 @@ test.skipIf(!!process.env.CI && !files.length)("calhacks-13 fixtures/slack-dom h
 
 type Parsed = { file: string; doc: Document; rows: RawRow[]; channelId: string; byTs: Map<string, ExportMessage> };
 
-const exp = files.length && existsSync(DEFAULT_EXPORT_DIR) ? loadExport() : null;
+const exp = files.length && existsSync(CALHACKS_EXPORT_DIR) ? loadExport(CALHACKS_EXPORT_DIR) : null;
 const parsed: Parsed[] = files.map((file) => {
   const { document } = parseHTML(readFileSync(join(DIR, file), "utf8"));
   const doc = document as unknown as Document;
