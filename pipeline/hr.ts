@@ -73,6 +73,8 @@ import {
   type Labels,
 } from "./prelabel.ts";
 import { outcomeSummary, type AlertOutcome } from "./alertlog.ts";
+import { codeWatcher, type CodeState } from "./codeversion.ts";
+import { logTo } from "./runlog.ts";
 import { NO_TZ } from "./time.ts";
 import { buildOrganizers, eventOrganizerTag, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
@@ -118,6 +120,8 @@ import {
   MESSAGES_PATH,
   ALERT_LOG_PATH,
   ALERT_OUTCOMES_PATH,
+  BOARD_LOG_PATH,
+  WATCH_LOG_PATH,
   ALERTS_LOG_PATH,
   DISCORD_UNREAD_PATH,
   PAGE_CHANGES_PATH,
@@ -232,7 +236,9 @@ const USAGE = `usage:
   bun run hr board [--build-only] [--port N] [--yes]
       Builds ${BOARD_DATA_PATH} from the Opus offers (hr group) and the capture, then serves the board on
       127.0.0.1. Needs a current ${GROUP_PATH}. Plan, Recheck gaps and repo drafts call models; each request is
-      estimated in the server log and refused over $1 unless the board was started with --yes.
+      estimated in the server log and refused over $1 unless the board was started with --yes. For working on
+      the board: at the event, hr watch runs it. It logs to ${BOARD_LOG_PATH}, and exits (code 3) when its code
+      on disk changes, so it is never left serving a page its routes don't match; start it again then.
   bun run hr pages [--from-html FILE --url URL --access public|authenticated]
       Lists the page snapshots in ${PAGES_DIR} (from the extension's "Capture this page"): url, when, access
       flag, blocks, hash, and any canon_pages / schedule_pages in ${EVENT_PATH} with no snapshot yet.
@@ -334,8 +340,12 @@ const USAGE = `usage:
       Every alert in every message goes to ${ALERT_LOG_PATH} with its category (deadline, workshop, credit, track,
       intro, other); --outcomes prints, per sent alert, whether you messaged Donna (or replied to it) and what you
       changed within 30 minutes, and the totals per category (${ALERT_OUTCOMES_PATH}, rebuilt each watch tick).
-  bun run hr watch [--every 2m] [--once] [--dry-run] [DIR]
-      discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
+  bun run hr watch [--every 2m] [--once] [--dry-run] [--board-port 4410] [--no-board] [DIR]
+      The one command for an event: it also serves the board (http://127.0.0.1:4410/ unless --board-port; not
+      with --once or --no-board), rebuilds its Claim data when posts arrive, and logs to ${WATCH_LOG_PATH}. If the
+      code on disk changes while it runs, it keeps going on the code it started with and says so in the log and
+      on the board; restart it to use the new code.
+      Each tick: discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
       the posts wait; watch never passes --yes), then alerts, every --every. Hourly it also fetches event.json's
       canon and schedule pages; a changed canon page is re-read (hr canon --unattended, under the same guard,
       retried next hour if refused), and new tracks or a canon_notes line gone from the page are re-ranked
@@ -531,7 +541,11 @@ async function pagesRun(nowMs: number): Promise<void> {
 }
 
 async function watch(args: string[]): Promise<number> {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { every: { type: "string", default: "2m" }, once: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false } } });
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { every: { type: "string", default: "2m" }, once: { type: "boolean", default: false }, "dry-run": { type: "boolean", default: false }, "board-port": { type: "string", default: "4410" }, "no-board": { type: "boolean", default: false } },
+  });
   const m = /^(\d+)(s|m)$/.exec(values.every!);
   if (!m || Number(m[1]) * (m[2] === "m" ? 60 : 1) < 30) {
     console.error(`--every ${values.every}: use 30s or more, e.g. 2m`);
@@ -540,6 +554,13 @@ async function watch(args: string[]): Promise<number> {
   const everyMs = Number(m[1]) * (m[2] === "m" ? 60_000 : 1000);
   const dir = positionals[0] ? fromCaller(positionals[0]) : DISCORD_DOWNLOADS;
   const dryRun = values["dry-run"]!;
+  if (!values.once) logTo(WATCH_LOG_PATH);
+  const code = codeWatcher();
+  // One command for the event (user 2026-11-08): the board runs inside watch, on the same code, and its Claim data is
+  // rebuilt when posts arrive. A board that can't start (port taken) is said once; alerts and chat go on without it.
+  const board = values["no-board"] || values.once ? null : await startBoard({ port: Number(values["board-port"]), yes: false, sponsorsPath: SPONSORS_PATH, strict: false, code: code.state });
+  if (board && "error" in board) console.error(`board: not started: ${board.error}. Alerts and chat go on without it`);
+  else if (board) console.log(`board: ${board.url}  (log in ${WATCH_LOG_PATH})`);
   const channel = dryRun ? null : userChannel();
   // One guard for the whole session's answers: they stop at COST_LIMIT_USD, and the user is told so in the chat.
   const guard = new CostGuard("chat", false);
@@ -548,7 +569,14 @@ async function watch(args: string[]): Promise<number> {
   for (;;) {
     console.log(`\nwatch ${new Date().toLocaleTimeString()}`);
     // classify --new only when posts arrived: it costs nothing otherwise, and a refused run isn't re-asked every tick.
-    if ((await discordIngestRun(dir)) > 0) await classify(["--new"]);
+    if ((await discordIngestRun(dir)) > 0) {
+      await classify(["--new"]);
+      if (board && !("error" in board)) board.refresh();
+    }
+    // The code on disk moved on (a pull, a branch switch): watch keeps alerting on the code it started with, which is
+    // consistent, says so once here, and the board shows it until the restart (codeversion.ts).
+    const was = code.state.changed_at;
+    if (!code.check() && !was) console.error(`watch: the code on disk changed at ${code.state.changed_at}; this watch and its board still run the code from ${code.state.started_at}. Restart to use it: bun run hr watch`);
     try {
       await pagesRun(Date.now());
     } catch (e) {
@@ -1258,15 +1286,41 @@ async function board(args: string[]): Promise<number> {
     args,
     options: { "build-only": { type: "boolean", default: false }, port: { type: "string", default: "0" }, yes: { type: "boolean", default: false }, sponsors: { type: "string", default: SPONSORS_PATH } },
   });
-  const sponsors = readSponsors(values.sponsors!);
-  // An event with no Slack or Discord posts yet (Iterate before it starts) gets the board from its pages alone: Plan
-  // and Ship from canon, an empty Claim tab.
-  const noPosts = !existsSync(MESSAGES_PATH);
-  const grouped = noPosts ? ({ offers: [], input_hash: "", model: "no posts yet", written_at: "" } as unknown as GroupResult) : readJsonFile<GroupResult | null>(GROUP_PATH, null);
-  if (!grouped || (!noPosts && grouped.input_hash !== groupInput(sponsors).input_hash)) {
-    console.error(`${GROUP_PATH} is ${grouped ? "stale" : "missing"}: run \`bun run hr group\` first (the board shows only Opus-grouped offers)`);
+  if (values["build-only"]) {
+    const r = buildBoardData(values.sponsors!, true);
+    if ("error" in r) console.error(r.error);
+    return "error" in r ? 2 : 0;
+  }
+  logTo(BOARD_LOG_PATH);
+  const code = codeWatcher();
+  const b = await startBoard({ port: Number(values.port), yes: values.yes!, sponsorsPath: values.sponsors!, strict: true, code: code.state });
+  if ("error" in b) {
+    console.error(b.error);
     return 2;
   }
+  console.log(`board: ${b.url}  (local only; Ctrl-C to stop; log in ${BOARD_LOG_PATH})`);
+  // Restart it knowingly (codeversion.ts): a board left on old code serves a page its routes don't match.
+  for (;;) {
+    await Bun.sleep(60_000);
+    if (code.check()) continue;
+    console.error(`board: its code changed on disk (${code.state.changed_at}) since it started (${code.state.started_at}); stopping rather than run old code. Start it again: bun run hr board${values.port !== "0" ? ` --port ${values.port}` : ""}`);
+    b.server.stop();
+    return 3;
+  }
+}
+
+/** data/board.json: the Claim tab's posts and offers. With no posts yet (Iterate before it starts) the board is its
+ *  pages alone. `strict` (hr board) refuses offers grouped before the latest posts, as before; watch, which can't stop
+ *  for a model call, uses the last grouping and says so, or none, and the Claim tab still shows every post. */
+function buildBoardData(sponsorsPath: string, strict: boolean): { data: BoardData } | { error: string } {
+  const sponsors = readSponsors(sponsorsPath);
+  const noPosts = !existsSync(MESSAGES_PATH);
+  const saved = noPosts ? null : readJsonFile<GroupResult | null>(GROUP_PATH, null);
+  const fresh = !!saved && saved.input_hash === groupInput(sponsors).input_hash;
+  if (strict && !noPosts && !fresh) return { error: `${GROUP_PATH} is ${saved ? "stale" : "missing"}: run \`bun run hr group\` first (the board shows only Opus-grouped offers)` };
+  const note = noPosts ? "no posts yet" : !saved ? "offers not grouped yet (run hr group)" : !fresh ? `${saved.model}, before the latest posts (run hr group)` : null;
+  if (note && !noPosts) console.log(`board: Claim offers: ${note}`);
+  const grouped = note ? ({ offers: saved?.offers ?? [], input_hash: saved?.input_hash ?? "", model: note, written_at: saved?.written_at ?? "" } as unknown as GroupResult) : saved!;
   const event = readEvent();
   const last = readRuns().at(-1);
   const organizerIds = existsSync(ORGANIZERS_PATH) ? loadOrganizerIds() : new Set<string>();
@@ -1292,188 +1346,220 @@ async function board(args: string[]): Promise<number> {
   data.v1_ids = v1Ids(readJsonFile<BoardData | null>(BOARD_DATA_PATH, null), data.offers);
   writeJsonFile(BOARD_DATA_PATH, data);
   console.log(`wrote ${BOARD_DATA_PATH}: ${data.offers.length} offers, ${data.posts.length} posts, ${data.frames.length} frames, ${data.reps.length} sponsor channels`);
-  if (values["build-only"]) return 0;
+  return { data };
+}
+
+interface BoardServer {
+  server: ReturnType<typeof Bun.serve>;
+  url: string;
+  /** Rebuilds data/board.json from the posts as they are now (watch, after new posts); the open page picks it up on reload. */
+  refresh(): void;
+}
+
+/** The board's server. Its page is read once, here, so the page and the routes it calls are always the same code;
+ *  /plan/meta carries `code` (codeversion.ts) so the page can say when the code on disk has moved on. */
+async function startBoard(o: { port: number; yes: boolean; sponsorsPath: string; strict: boolean; code: CodeState }): Promise<BoardServer | { error: string }> {
+  const built = buildBoardData(o.sponsorsPath, o.strict);
+  if ("error" in built) return built;
+  let data = built.data;
   const headers = { "Cache-Control": "no-store" };
   // D6: the one POST route answers only the board's own page: same Origin, and this run's token from the page.
   const token = crypto.randomUUID();
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...headers, "Content-Type": "application/json" } });
   const planContext = () => ({ entities: readJsonFile<CanonPage[]>(CANON_PATH, []).flatMap((p) => p.entities), event: readEvent(), aliases: sponsorAliases(readJsonFile<Sponsors>(SPONSORS_PATH, {})) });
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: Number(values.port),
-    async fetch(req) {
-      // DNS rebinding: a page on another site can resolve its own name to 127.0.0.1 and read this server. Only the
-      // board's own host names are answered, so the Plan, claims and posts stay with the page this server served.
-      if (!localHost(req.headers.get("host"), server.port)) return new Response("not found", { status: 404 });
-      const path = new URL(req.url).pathname;
-      if (req.method === "POST" && path === "/plan/stream") {
-        // P2: Plan's sections as NDJSON, one line per section as it's ready (planstream.ts), tracks first.
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const text = await req.text();
-        if (text.length > 16_000) return json({ error: "request too large" }, 413);
-        let body: unknown;
-        try {
-          body = JSON.parse(text);
-        } catch {
-          return json({ error: "not JSON" }, 400);
+  const page = readFileSync(BOARD_PAGE, "utf8")
+    .replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`)
+    .replace('<meta name="hr-build" content="">', `<meta name="hr-build" content="${o.code.build}">`)
+    .replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`)
+    .replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`);
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: o.port,
+      async fetch(req) {
+        // DNS rebinding: a page on another site can resolve its own name to 127.0.0.1 and read this server. Only the
+        // board's own host names are answered, so the Plan, claims and posts stay with the page this server served.
+        if (!localHost(req.headers.get("host"), server.port)) return new Response("not found", { status: 404 });
+        const path = new URL(req.url).pathname;
+        if (req.method === "POST" && path === "/plan/stream") {
+          // P2: Plan's sections as NDJSON, one line per section as it's ready (planstream.ts), tracks first.
+          if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+          const text = await req.text();
+          if (text.length > 16_000) return json({ error: "request too large" }, 413);
+          let body: unknown;
+          try {
+            body = JSON.parse(text);
+          } catch {
+            return json({ error: "not JSON" }, 400);
+          }
+          const input = parsePlanBody(body);
+          if ("error" in input) return json(input, 400);
+          // ?now: the board's review clock (as /ship/list), so P3–P5 join as of that moment; otherwise now.
+          const at = new URL(req.url).searchParams.get("now");
+          const nowMs = at ? Date.parse(at) : Date.now();
+          if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+          const ctx = planContext();
+          const enc = new TextEncoder();
+          let open = true;
+          const stream = new ReadableStream<Uint8Array>({
+            async start(ctrl) {
+              // Read to the end even if the page went away (it typed again): finished model calls are still cached.
+              await runPlanStream(input, ctx, { via: "board", nowMs, guard: new CostGuard("board plan", o.yes) }, (e) => {
+                if (!open) return;
+                // Errors stay in the server log; the page shows its own sentence.
+                const out =
+                  "error" in e
+                    ? { section: e.section, ms: e.ms, error: true }
+                    : e.section === "tracks"
+                      ? { section: e.section, ms: e.ms, from: e.from, tracks: e.tracks.map((t) => ({ ...t, detail: trackDetail(ctx.entities, t.track_id) })) }
+                      : e.section === "gaps"
+                        ? { section: e.section, ms: e.ms, from: e.from, gaps: e.gaps, checked: e.checked, repo_lines: e.facts.repo }
+                        : e;
+                try {
+                  ctrl.enqueue(enc.encode(JSON.stringify(out) + "\n"));
+                } catch {
+                  open = false;
+                }
+              });
+              if (open) ctrl.close();
+            },
+            cancel() {
+              open = false;
+            },
+          });
+          return new Response(stream, { headers: { ...headers, "Content-Type": "application/x-ndjson; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
         }
-        const input = parsePlanBody(body);
-        if ("error" in input) return json(input, 400);
-        // ?now: the board's review clock (as /ship/list), so P3–P5 join as of that moment; otherwise now.
-        const at = new URL(req.url).searchParams.get("now");
-        const nowMs = at ? Date.parse(at) : Date.now();
-        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
-        const ctx = planContext();
-        const enc = new TextEncoder();
-        let open = true;
-        const stream = new ReadableStream<Uint8Array>({
-          async start(ctrl) {
-            // Read to the end even if the page went away (it typed again): finished model calls are still cached.
-            await runPlanStream(input, ctx, { via: "board", nowMs, guard: new CostGuard("board plan", values.yes!) }, (e) => {
-              if (!open) return;
-              // Errors stay in the server log; the page shows its own sentence.
-              const out =
-                "error" in e
-                  ? { section: e.section, ms: e.ms, error: true }
-                  : e.section === "tracks"
-                    ? { section: e.section, ms: e.ms, from: e.from, tracks: e.tracks.map((t) => ({ ...t, detail: trackDetail(ctx.entities, t.track_id) })) }
-                    : e.section === "gaps"
-                      ? { section: e.section, ms: e.ms, from: e.from, gaps: e.gaps, checked: e.checked, repo_lines: e.facts.repo }
-                      : e;
-              try {
-                ctrl.enqueue(enc.encode(JSON.stringify(out) + "\n"));
-              } catch {
-                open = false;
-              }
-            });
-            if (open) ctrl.close();
-          },
-          cancel() {
-            open = false;
-          },
-        });
-        return new Response(stream, { headers: { ...headers, "Content-Type": "application/x-ndjson; charset=utf-8", "X-Content-Type-Options": "nosniff" } });
-      }
-      if (req.method === "POST" && path === "/ship/gaps") {
-        // Ship's Recheck gaps (P9 renders it): the entered tracks against the repo's latest commit.
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const text = await req.text();
-        if (text.length > 16_000) return json({ error: "request too large" }, 413);
-        let body: { entering?: unknown };
-        try {
-          body = JSON.parse(text);
-        } catch {
-          return json({ error: "not JSON" }, 400);
+        if (req.method === "POST" && path === "/ship/gaps") {
+          // Ship's Recheck gaps (P9 renders it): the entered tracks against the repo's latest commit.
+          if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+          const text = await req.text();
+          if (text.length > 16_000) return json({ error: "request too large" }, 413);
+          let body: { entering?: unknown };
+          try {
+            body = JSON.parse(text);
+          } catch {
+            return json({ error: "not JSON" }, 400);
+          }
+          const input = parsePlanBody(body);
+          if ("error" in input) return json(input, 400);
+          if (!input.repo) return json({ error: "link a repo to recheck gaps" }, 400);
+          const ids = Array.isArray(body.entering) ? body.entering.filter((x): x is string => typeof x === "string").slice(0, 60) : [];
+          if (!ids.length) return json({ error: "no tracks entered" }, 400);
+          const { entities, event, aliases } = planContext();
+          const { tracks, unknown } = shipTracks(entities, ids, event, aliases);
+          if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+          const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
+          const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
+          const r = await recheckGaps(anthropicClient(new CostGuard("board ship", o.yes)), { ...input, repo: input.repo }, tracks, entities, gcache, store);
+          if ("error" in r) {
+            console.error(`ship: couldn't recheck gaps: ${r.error}`);
+            return json({ error: "couldn't recheck gaps" }, 503);
+          }
+          writeJsonFile(GAPS_CACHE_PATH, gcache);
+          writeJsonFile(SHIP_GAPS_PATH, store);
+          console.log(`ship: gaps ${r.from} at ${r.commit.slice(0, 7)}`);
+          return json(r);
         }
-        const input = parsePlanBody(body);
-        if ("error" in input) return json(input, 400);
-        if (!input.repo) return json({ error: "link a repo to recheck gaps" }, 400);
-        const ids = Array.isArray(body.entering) ? body.entering.filter((x): x is string => typeof x === "string").slice(0, 60) : [];
-        if (!ids.length) return json({ error: "no tracks entered" }, 400);
-        const { entities, event, aliases } = planContext();
-        const { tracks, unknown } = shipTracks(entities, ids, event, aliases);
-        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
-        const gcache = readJsonFile<GapCache>(GAPS_CACHE_PATH, {});
-        const store = readJsonFile<ShipGapStore>(SHIP_GAPS_PATH, {});
-        const r = await recheckGaps(anthropicClient(new CostGuard("board ship", values.yes!)), { ...input, repo: input.repo }, tracks, entities, gcache, store);
-        if ("error" in r) {
-          console.error(`ship: couldn't recheck gaps: ${r.error}`);
-          return json({ error: "couldn't recheck gaps" }, 503);
+        if (req.method === "POST" && path === "/plan/prefill") {
+          // P1b: drafts from a repo link, each with its source lines. Nothing is saved here: the page shows each draft
+          // and fills the input only with the ones the user picks.
+          if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+          const text = await req.text();
+          if (text.length > 1_000) return json({ error: "request too large" }, 413);
+          let body: { repo?: unknown };
+          try {
+            body = JSON.parse(text);
+          } catch {
+            return json({ error: "not JSON" }, 400);
+          }
+          const url = typeof body.repo === "string" ? body.repo.trim() : "";
+          const repo = checkoutRepo(url);
+          if ("error" in repo) return json({ error: repo.error.startsWith("only public") ? repo.error : "couldn't read that repo: is it public?" }, 400);
+          const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
+          const t0 = Date.now();
+          const r = await prefillDraft(anthropicClient(new CostGuard("board prefill", o.yes)), repo, repoTexts(repo), cache, readProducts());
+          if ("error" in r) {
+            console.error(`plan: prefill failed: ${r.error}`);
+            return json({ error: "couldn't draft from that repo" }, 503);
+          }
+          writeJsonFile(PREFILL_CACHE_PATH, cache);
+          console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
+          return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
         }
-        writeJsonFile(GAPS_CACHE_PATH, gcache);
-        writeJsonFile(SHIP_GAPS_PATH, store);
-        console.log(`ship: gaps ${r.from} at ${r.commit.slice(0, 7)}`);
-        return json(r);
-      }
-      if (req.method === "POST" && path === "/plan/prefill") {
-        // P1b: drafts from a repo link, each with its source lines. Nothing is saved here: the page shows each draft
-        // and fills the input only with the ones the user picks.
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const text = await req.text();
-        if (text.length > 1_000) return json({ error: "request too large" }, 413);
-        let body: { repo?: unknown };
-        try {
-          body = JSON.parse(text);
-        } catch {
-          return json({ error: "not JSON" }, 400);
+        if (req.method === "POST" && path === "/claims") {
+          // The board's claimed box: the same store chat writes (told.ts), source "board".
+          if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+          const b = (await req.json().catch(() => null)) as { id?: unknown; claimed?: unknown } | null;
+          const { entities } = planContext();
+          const known = new Set([...pageCredits(entities).map((c) => c.id), ...data.offers.map((o) => o.id)]);
+          if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.claimed !== "boolean") return json({ error: "not a credit on this board" }, 400);
+          const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
+          setClaim(b.id, b.claimed, told);
+          logWrite({ ...told, op: "mark_claimed", input: { credit_id: b.id, claimed: b.claimed }, result: b.claimed ? "claimed" : "not claimed" });
+          return json({ claims: readClaims() });
         }
-        const url = typeof body.repo === "string" ? body.repo.trim() : "";
-        const repo = checkoutRepo(url);
-        if ("error" in repo) return json({ error: repo.error.startsWith("only public") ? repo.error : "couldn't read that repo: is it public?" }, 400);
-        const cache = readJsonFile<PrefillCache>(PREFILL_CACHE_PATH, {});
-        const t0 = Date.now();
-        const r = await prefillDraft(anthropicClient(new CostGuard("board prefill", values.yes!)), repo, repoTexts(repo), cache, readProducts());
-        if ("error" in r) {
-          console.error(`plan: prefill failed: ${r.error}`);
-          return json({ error: "couldn't draft from that repo" }, 503);
+        if (req.method === "POST" && (path === "/entered" || path === "/ticks")) {
+          // Slice 2: the board's "Tracks you're entering" boxes and checklist ticks, into the store chat writes.
+          if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
+          const b = (await req.json().catch(() => null)) as { id?: unknown; on?: unknown } | null;
+          const tracks = eventTracks().map((t) => t.track_id);
+          const known = new Set(path === "/entered" ? tracks : shipItems(shipNow(tracks)).map((x) => x.id));
+          if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.on !== "boolean") return json({ error: path === "/entered" ? "not a track on this event" : "not a checklist item on this event" }, 400);
+          const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
+          (path === "/entered" ? setEntered : setTick)(b.id, b.on, told);
+          logWrite({ ...told, op: path === "/entered" ? "set_entered" : "tick_ship_item", input: { id: b.id, on: b.on }, result: b.on ? "on" : "off" });
+          return json({ entered: readEntered(), ticks: readTicks() });
         }
-        writeJsonFile(PREFILL_CACHE_PATH, cache);
-        console.log(`plan: prefill ${repo.url} @ ${repo.sha.slice(0, 7)} in ${Date.now() - t0} ms (${r.from}; ${r.added.length} sponsor products added)`);
-        return json({ repo: repo.url, commit: repo.sha, draft: r.draft });
-      }
-      if (req.method === "POST" && path === "/claims") {
-        // The board's claimed box: the same store chat writes (told.ts), source "board".
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const b = (await req.json().catch(() => null)) as { id?: unknown; claimed?: unknown } | null;
-        const { entities } = planContext();
-        const known = new Set([...pageCredits(entities).map((c) => c.id), ...data.offers.map((o) => o.id)]);
-        if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.claimed !== "boolean") return json({ error: "not a credit on this board" }, 400);
-        const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
-        setClaim(b.id, b.claimed, told);
-        logWrite({ ...told, op: "mark_claimed", input: { credit_id: b.id, claimed: b.claimed }, result: b.claimed ? "claimed" : "not claimed" });
-        return json({ claims: readClaims() });
-      }
-      if (req.method === "POST" && (path === "/entered" || path === "/ticks")) {
-        // Slice 2: the board's "Tracks you're entering" boxes and checklist ticks, into the store chat writes.
-        if (req.headers.get("origin") !== `http://127.0.0.1:${server.port}` || req.headers.get("x-hr-token") !== token) return json({ error: "not from this board" }, 403);
-        const b = (await req.json().catch(() => null)) as { id?: unknown; on?: unknown } | null;
-        const tracks = eventTracks().map((t) => t.track_id);
-        const known = new Set(path === "/entered" ? tracks : shipItems(shipNow(tracks)).map((x) => x.id));
-        if (typeof b?.id !== "string" || !known.has(b.id) || typeof b.on !== "boolean") return json({ error: path === "/entered" ? "not a track on this event" : "not a checklist item on this event" }, 400);
-        const told: Told = { source: "board", at: new Date().toISOString(), quote: null };
-        (path === "/entered" ? setEntered : setTick)(b.id, b.on, told);
-        logWrite({ ...told, op: path === "/entered" ? "set_entered" : "tick_ship_item", input: { id: b.id, on: b.on }, result: b.on ? "on" : "off" });
-        return json({ entered: readEntered(), ticks: readTicks() });
-      }
-      if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
-      if (path === "/ship/list") {
-        // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
-        const q = new URL(req.url).searchParams;
-        const { entities, event } = planContext();
-        const trackIds = new Set(entities.filter((x) => x.kind === "track").map((x) => x.id));
-        const entered = (q.get("entered") ?? "").split(",").filter(Boolean).slice(0, 60);
-        const unknown = entered.filter((id) => !trackIds.has(id));
-        if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
-        const nowMs = q.get("now") ? Date.parse(q.get("now")!) : Date.now();
-        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
-        return json(shipListAt(entities, event, entered, nowMs));
-      }
-      if (path === "/plan/meta") {
-        const { entities, event } = planContext();
-        // ?now: the board's review clock, as /ship/list; a replay never shows a time before its post.
-        const at = new URL(req.url).searchParams.get("now");
-        const nowMs = at ? Date.parse(at) : undefined;
-        if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
-        // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
-        const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
-        return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks(), rep_notes: readRepNotes(), team: readTeam() });
-      }
-      if (path === "/")
-        return new Response(readFileSync(BOARD_PAGE, "utf8").replace('<meta name="hr-token" content="">', `<meta name="hr-token" content="${token}">`).replace("<!-- prefill.js -->", () => `<script>${readFileSync(BOARD_PREFILL_JS, "utf8")}</script>`).replace("<!-- live.js -->", () => `<script>${readFileSync(BOARD_LIVE_JS, "utf8")}</script>`), {
-          headers: {
-            ...headers,
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'",
-          },
-        });
-      if (path === "/board.json") return new Response(readFileSync(BOARD_DATA_PATH, "utf8"), { headers: { ...headers, "Content-Type": "application/json" } });
-      const font = BOARD_FONTS.find((f) => path === `/fonts/${f}`);
-      if (font) return new Response(readFileSync(BOARD_FONT_DIR + font), { headers: { "Content-Type": "font/woff2", "Cache-Control": "max-age=86400" } });
-      return new Response("not found", { status: 404 });
+        if (req.method !== "GET") return new Response("method not allowed", { status: 405 });
+        if (path === "/ship/list") {
+          // Ship's checklist (P9) for the tracks the viewer entered, as of ?now (the board's review clock) or now.
+          const q = new URL(req.url).searchParams;
+          const { entities, event } = planContext();
+          const trackIds = new Set(entities.filter((x) => x.kind === "track").map((x) => x.id));
+          const entered = (q.get("entered") ?? "").split(",").filter(Boolean).slice(0, 60);
+          const unknown = entered.filter((id) => !trackIds.has(id));
+          if (unknown.length) return json({ error: `not tracks on this event: ${unknown.join(", ")}` }, 400);
+          const nowMs = q.get("now") ? Date.parse(q.get("now")!) : Date.now();
+          if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+          return json(shipListAt(entities, event, entered, nowMs));
+        }
+        if (path === "/plan/meta") {
+          const { entities, event } = planContext();
+          // ?now: the board's review clock, as /ship/list; a replay never shows a time before its post.
+          const at = new URL(req.url).searchParams.get("now");
+          const nowMs = at ? Date.parse(at) : undefined;
+          if (Number.isNaN(nowMs)) return json({ error: "now: not a date" }, 400);
+          // Chat writes (told.ts): the stored Plan input and claims, so an open board picks up what was told to Donna.
+          const stored = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
+          return json({ ...planMeta(entities, event, nowMs), version: dataVersion(), stale: stalePages(), input: stored?.input ?? null, told_at: lastStackTold(), page_credits: pageCredits(entities), claims: readClaims(), entered: readEntered(), ticks: readTicks(), rep_notes: readRepNotes(), team: readTeam(), code: o.code });
+        }
+        if (path === "/")
+          return new Response(page, {
+            headers: {
+              ...headers,
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'",
+            },
+          });
+        if (path === "/board.json") return new Response(readFileSync(BOARD_DATA_PATH, "utf8"), { headers: { ...headers, "Content-Type": "application/json" } });
+        const font = BOARD_FONTS.find((f) => path === `/fonts/${f}`);
+        if (font) return new Response(readFileSync(BOARD_FONT_DIR + font), { headers: { "Content-Type": "font/woff2", "Cache-Control": "max-age=86400" } });
+        return new Response("not found", { status: 404 });
+      },
+    });
+  } catch (e) {
+    const busy = (e as { code?: string }).code === "EADDRINUSE";
+    return { error: busy ? `port ${o.port} is in use: is another board or hr watch already running? Stop it, or pass another port` : `board: ${(e as Error).message}` };
+  }
+  return {
+    server,
+    url: `http://127.0.0.1:${server.port}/`,
+    refresh() {
+      const r = buildBoardData(o.sponsorsPath, false);
+      if ("data" in r) data = r.data;
     },
-  });
-  console.log(`board: http://127.0.0.1:${server.port}/  (local only; Ctrl-C to stop)`);
-  return await new Promise<number>(() => {});
+  };
 }
 
 async function pages(args: string[]): Promise<number> {

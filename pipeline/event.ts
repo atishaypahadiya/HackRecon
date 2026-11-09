@@ -72,6 +72,10 @@ export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";
 /** Every alert each time a message carrying it goes out, with its category (alertlog.ts, user 2026-11-08). */
 export const ALERT_LOG_PATH = "data/alert_log.jsonl";
+/** What `hr watch` printed, timestamped (runlog.ts, user 2026-11-08): beside the event's data, never in a temp folder. */
+export const WATCH_LOG_PATH = "data/watch.log";
+/** What a standalone `hr board` printed, timestamped. Under watch the board's lines go to WATCH_LOG_PATH. */
+export const BOARD_LOG_PATH = "data/board.log";
 /** Per sent alert: did the user message Donna, or change anything, within 30 minutes (rebuilt each watch tick). */
 export const ALERT_OUTCOMES_PATH = "data/alert_outcomes.json";
 /** The user's questions from their chat and the agent's answers (agent.ts). */
