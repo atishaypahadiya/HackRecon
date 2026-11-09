@@ -149,7 +149,7 @@ describe("signal 2b: says they work there, in four phrasings anchored on the wri
       ["We're Apify fans", ["Apify"]],
       ["We're building with Apify", ["Apify"]],
       ["Hi! Some news first. We're Apify", ["Apify"]], // not the first sentence
-      ["Jaroslav Hejlek <https://linkedin.com/in/j> - Founding Engineer at Apify", ["Apify"]], // a judge list
+      ["Tomasz Brecker <https://linkedin.com/in/j> - Founding Engineer at Apify", ["Apify"]], // a judge list
       ["an exclusive session with an Early Career Recruiter at Figma", ["Figma"]],
       ["I talked to an engineer at Apify", ["Apify"]],
       ["Is anyone here an engineer at Apify?", ["Apify"]],

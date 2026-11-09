@@ -84,7 +84,7 @@ describe("posterRole (D17, A5 rules)", () => {
   const bd = sponsors["spons-bright-data"];
 
   test("organizer by id, tag or title, ahead of any sponsor match", () => {
-    expect(posterRole(m("Jessenia Chan", { author_id: "UORG" }), bd, orgs, tag)).toBe("organizer");
+    expect(posterRole(m("Nora Quill", { author_id: "UORG" }), bd, orgs, tag)).toBe("organizer");
     expect(posterRole(m("Charlie [Cal Hacks]"), bd, orgs, tag)).toBe("organizer");
     expect(posterRole(m("Sam", { author_title: "Logistics Director" }), bd, orgs, tag)).toBe("organizer");
   });
@@ -107,7 +107,7 @@ describe("posterRole (D17, A5 rules)", () => {
   test("event channels match any configured sponsor; hackers stay other", () => {
     const ev = sponsors["0-announcements"];
     expect(posterRole(m("Sam Vega (Microsoft)", { channel_name: "2-opportunities" }), ev, orgs, tag, all)).toBe("sponsor-side");
-    expect(posterRole(m("prabhavgoel"), bd, orgs, tag, all)).toBe("other");
+    expect(posterRole(m("quinnbuilds7"), bd, orgs, tag, all)).toBe("other");
   });
 });
 
