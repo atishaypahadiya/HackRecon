@@ -74,6 +74,15 @@ describe("Required to submit", () => {
     expect(r("2026-10-25T09:27:00-07:00")[0]).toMatchObject({ from: "slack", quote: "There are still 113 draft submissions as of now! Please make sure you fully click through to Submit by 9:30 AM.", source_url: link(t.drafts) });
     expect(r("2026-10-25T09:27:00-07:00").slice(1).map((x) => x.id)).toEqual(["r:submit", "r:image"]);
   });
+  test("the label names event.json's submission platform; drafts only once an organizer post says so (audit 2026-11-08)", () => {
+    const on = (submission: EventConfig["submission"], iso: string) =>
+      shipList({ entities, event: { ...event, submission }, messages, isOrganizer: (m) => m.author_id === "UORG", shown: (m) => m.text, entered: [], nowSec: sec(iso) }).required[0]!;
+    const luma = { platform: "Luma", page: "https://luma.com/sht6n8du" };
+    expect(on(luma, "2026-10-25T08:00:00-07:00")).toMatchObject({ label: "Submit on Luma", from: "standing", source_url: luma.page });
+    expect(on(luma, "2026-10-25T09:05:00-07:00")).toMatchObject({ label: "Submit on Luma, not just save a draft", from: "slack" });
+    expect(on({ platform: "Devpost", page: "https://e.devpost.com/" }, "2026-10-25T09:05:00-07:00").label).toBe("Submit on Devpost, not just save a draft");
+    expect(on(undefined, "2026-10-25T08:00:00-07:00").label).toBe("Submit the project");
+  });
 });
 
 describe("For the tracks you entered", () => {
