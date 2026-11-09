@@ -5,10 +5,13 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { alertFor, deliver, isFresh, EMPTY_NOTIFY, pageChangeAlert, unreadAlert, unsend, type Alert, type NotifyState, type TrackChange, type PlanFacts, type Notice } from "./alerts.ts";
+import { alertOutcomes, alertSends, type AlertSend } from "./alertlog.ts";
+import { readLines } from "./agent.ts";
 import { readEvent, readJsonFile, writeJsonFile } from "./classify.ts";
+import type { WriteRecord } from "./told.ts";
 import { channelKey, channelRole, toMessage, type DiscordDomFile, type DiscordPost } from "./discord.ts";
 import { pollBot, type BotState, type DiscordBot, type BotPollLog } from "./discordbot.ts";
-import { ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PAGE_CHANGES_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
+import { ALERT_LOG_PATH, ALERT_OUTCOMES_PATH, CHAT_LOG_PATH, WRITES_LOG_PATH, ALERTS_LOG_PATH, ALERTS_STATE_PATH, CAPTURES_DIR, EVENT_PATH, DISCORD_STATE_PATH, DISCORD_UNREAD_PATH, ITEMS_PATH, MESSAGES_PATH, ORGANIZERS_PATH, PAGE_CHANGES_PATH, PLAN_PATH, OUTBOX_PATH } from "./event.ts";
 import { readMessages, saveRun } from "./runs.ts";
 import type { Entity, Item, Message } from "./schema.ts";
 
@@ -105,6 +108,13 @@ export interface OutboxLine {
   error?: string;
 }
 
+/** data/alert_outcomes.json from the alert log, the chat log and the write log, as of `nowMs`. */
+export function writeAlertOutcomes(nowMs: number): void {
+  const sends = readLines<AlertSend>(ALERT_LOG_PATH);
+  if (!sends.length) return;
+  writeJsonFile(ALERT_OUTCOMES_PATH, { as_of: new Date(nowMs).toISOString(), window_minutes: 30, alerts: alertOutcomes(sends, readLines(CHAT_LOG_PATH), readLines<WriteRecord>(WRITES_LOG_PATH), nowMs) });
+}
+
 /** Alerts for posts from the last ALERT_MAX_AGE_MS, new unread badges, and the texts due now. */
 export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Set<string>; send: { channel: string; send: (body: string) => Promise<{ id: string } | { error: string }> } | null }): Promise<{ fresh: Alert[]; outbox: OutboxLine[]; queued: { now: number; digest: number } }> {
   const plan = readJsonFile<PlanFacts | null>(PLAN_PATH, null);
@@ -140,6 +150,11 @@ export async function runAlerts(o: { nowMs: number; tz: string; organizerIds: Se
     }
   }
   for (const line of outbox) appendFileSync(OUTBOX_PATH, JSON.stringify(line) + "\n");
+  // The alert log (alertlog.ts): each alert in each message, then what the user did within 30 minutes of each.
+  notices.forEach((s, i) => {
+    for (const a of alertSends(s, outbox[i]!)) appendFileSync(ALERT_LOG_PATH, JSON.stringify(a) + "\n");
+  });
+  writeAlertOutcomes(o.nowMs);
   writeJsonFile(ALERTS_STATE_PATH, state);
   return { fresh: fresh.filter((a) => !known.has(a.key)), outbox, queued: { now: state.queue_now.length, digest: state.queue_digest.length } };
 }

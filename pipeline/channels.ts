@@ -13,6 +13,8 @@ export interface Inbound {
   id: string;
   text: string;
   at: string;
+  /** Telegram: the id of our message this one replies to (the alert log matches it to an alert). */
+  reply_to?: string;
 }
 
 export interface MessageChannel {

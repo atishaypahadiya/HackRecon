@@ -70,6 +70,10 @@ export const GAP_CHECKED_PATH = "data/gap_checked.json";
 export const ALERTS_STATE_PATH = "data/alerts_state.json";
 export const ALERTS_LOG_PATH = "data/alerts.jsonl";
 export const OUTBOX_PATH = "data/outbox.jsonl";
+/** Every alert each time a message carrying it goes out, with its category (alertlog.ts, user 2026-11-08). */
+export const ALERT_LOG_PATH = "data/alert_log.jsonl";
+/** Per sent alert: did the user message Donna, or change anything, within 30 minutes (rebuilt each watch tick). */
+export const ALERT_OUTCOMES_PATH = "data/alert_outcomes.json";
 /** The user's questions from their chat and the agent's answers (agent.ts). */
 export const CHAT_LOG_PATH = "data/chat.jsonl";
 /** Where each two-way channel left off reading (Telegram's update offset). */

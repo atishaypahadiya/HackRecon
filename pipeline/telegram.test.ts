@@ -80,6 +80,12 @@ describe("TelegramChannel", () => {
     expect(calls[0]!.params).toEqual({ offset: 1, timeout: 25, allowed_updates: ["message"] });
     expect(JSON.stringify(r)).not.toContain("hi bot");
   });
+  test("a reply keeps which of our messages it answers (the alert log matches it to an alert)", async () => {
+    const reply = msg(6, Number(ME), "claimed, thanks");
+    const { deps } = fake(() => ok([{ ...reply, message: { ...reply.message, reply_to_message: { message_id: 42 } } }, msg(7, Number(ME), "what's next?")]));
+    const r = await new TelegramChannel({ token: TOKEN, chatId: ME }, deps).receive("6", 25);
+    expect(r.messages.map((m) => [m.text, m.reply_to])).toEqual([["claimed, thanks", "42"], ["what's next?", undefined]]);
+  });
   test("chat-id helper lists private senders without confirming their messages", async () => {
     const { calls, deps } = fake((m) => (m === "getMe" ? ok({ username: "hr_bot" }) : ok([msg(7, Number(ME), "/start"), msg(8, 1, "x", "group", -5)])));
     expect(await telegramSenders(new TelegramApi(TOKEN, deps))).toEqual({ bot: "hr_bot", senders: [{ chat_id: ME, name: "A" }] });
