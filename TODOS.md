@@ -1,5 +1,21 @@
 # TODOS
 
+## Privacy
+
+### No real people from an event's Slack or Discord in the repo (user 2026-11-08)
+
+The rule: no real person's name, handle, user ID or email from an event's Slack or Discord appears in committed code, tests, comments or docs. Fixtures, examples and design notes use invented names ("Dana Kim", "Pat at Apify") and invented IDs (`U0Z...`). Sponsor and company names are fine; the people who posted for them are not. The event data itself already stays out (gitignored `data/` and `hackrecon-data`).
+
+Still in the repo on 2026-11-08 (a scan of every tracked file against Cal Hacks' users.json and its 2,014 posts; the history rewrite before #35 missed these, and nothing since #35 added any):
+- `docs/designs/hackrecon-v2.md:2130` and `:2131`: two sponsor reps, named with their sponsor tag.
+- `pipeline/redact.test.ts:87`: an organizer's full name; `:110`: a hacker's Slack handle.
+- `pipeline/reps.test.ts:152`: a judge's full name in a judge-list example.
+
+To do:
+- Replace those five with invented names; the tests keep their shape.
+- Add a check that fails when a tracked file holds a name, handle, user ID or email from any local event's users.json or messages.json. It runs where the data exists (locally, before a push) and skips in CI, which has none. The scan used here: full names, handles of six or more letters that aren't dictionary words, `U0...` IDs and emails, which gave 12 matches, 5 of them the English word "founders".
+- The original commits from before the rewrite still hold the old names on GitHub (each PR's merge commit is fetchable by hash). Purging those is GitHub-side cleanup, outside this repo's code.
+
 ## Extension
 
 ### Approach B: live extension
