@@ -37,6 +37,10 @@
     "https://cal-hacks-13-0.devpost.com/rules"
   ],
   "schedule_pages": [],
+  "submission": {
+    "platform": "Devpost",
+    "page": "https://cal-hacks-13-0.devpost.com/"
+  },
   "event_level_prizes": [
     "[MLH] Commit Fellowship"
   ],

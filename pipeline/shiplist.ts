@@ -31,7 +31,8 @@ export interface ShipDeadline {
   from: "page" | "slack";
   source_url: string;
   channel?: string;
-  /** What the page said, when a post moved it (D13's merge line: "Sun 9:30 · Devpost said 9:00"). */
+  /** What the page said, when a post moved it (D13's merge line: "Sun 9:30 · Devpost said 9:00", the platform from
+   *  event.json `submission`). */
   was?: { at: string; quote: string; source_url: string };
   /** Merge rule 4: a post landed inside a page edit's window, so no winner is picked ("Page and Slack disagree…"). */
   disagree?: string;
@@ -135,15 +136,17 @@ export function shipList(o: {
     deadline = { at: slackDl!.at, quote: postQuote, from: "slack", source_url: post.permalink, channel: post.channel_name };
   }
 
-  // 1. Required: "Submit on Devpost, not just save a draft", from the latest organizer post about drafts, then the rules.
+  // 1. Required: "Submit on <platform>", from event.json `submission` (audit 2026-11-08); "not just save a draft" only
+  // when the latest organizer post about drafts says so (its lines are the quote). Then the rules.
   const drafts = o.messages
     .filter((m) => Number(m.ts) <= o.nowSec && !m.thread_ts && o.isOrganizer(m) && /\bdrafts?\b/i.test(m.text) && /\bsubmit\b/i.test(m.text))
     .sort((a, b) => Number(b.ts) - Number(a.ts))[0];
   const draftLines = drafts ? sentences(o.shown(drafts)).filter((s) => /\bdrafts?\b|\bsubmit\b/i.test(s)).slice(0, 2) : [];
+  const where = o.event.submission?.platform ? `Submit on ${o.event.submission.platform}` : "Submit the project";
   const required: ShipItem[] = [
     drafts && draftLines.length
-      ? { id: "ship:submit", label: "Submit on Devpost, not just save a draft", quote: draftLines.join(" "), from: "slack", source_url: drafts.permalink, channel: drafts.channel_name }
-      : { id: "ship:submit", label: "Submit on Devpost, not just save a draft", from: "standing", source_url: "" },
+      ? { id: "ship:submit", label: `${where}, not just save a draft`, quote: draftLines.join(" "), from: "slack", source_url: drafts.permalink, channel: drafts.channel_name }
+      : { id: "ship:submit", label: where, from: "standing", source_url: o.event.submission?.page ?? "" },
     ...rules
       .filter((x) => x.fields.rule_kind?.value === "submission" && typeof x.fields.text?.value === "string")
       .map((x): ShipItem => ({ id: x.id, label: String(x.fields.text!.value), from: "page", source_url: x.fields.text!.source.url })),
