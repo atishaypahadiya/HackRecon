@@ -464,7 +464,8 @@ export interface PlanMeta {
   event: string;
   timezone: string;
   track_count: number;
-  devpost_url: string | null;
+  /** event.json `submission`: the platform the board names ("On Luma", "Luma as of …"), and its page. */
+  submission: { platform: string; page: string } | null;
   as_of: string | null;
   hacking_start: string | null;
   deadlines: PlanDeadline[];
@@ -481,7 +482,7 @@ export function planMeta(entities: Entity[], e: EventConfig, nowMs?: number): Pl
     .filter((x) => x.kind === "rule" && typeof x.fields.deadline?.value === "string")
     .map((x) => ({ id: x.id, name: x.name.value ?? "", at: String(x.fields.deadline!.value), quote: x.fields.deadline!.source.quote, url: x.fields.deadline!.source.url }));
   const deadlines = (schedule.length ? schedule : canon).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  return { event: e.event, timezone: e.timezone, track_count: tracks.length, devpost_url: tracks[0]?.name.source.url ?? null, as_of: captured.at(-1) ?? null, hacking_start: e.hacking_start, deadlines };
+  return { event: e.event, timezone: e.timezone, track_count: tracks.length, submission: e.submission ?? null, as_of: captured.at(-1) ?? null, hacking_start: e.hacking_start, deadlines };
 }
 
 /** Everything canon says about one track, for its drawer: requirements, judging criteria, the rest of the block's

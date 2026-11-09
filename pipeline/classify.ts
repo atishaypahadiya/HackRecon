@@ -38,6 +38,9 @@ export interface ClassifyRun {
 
 export interface EventConfig {
   event: string;
+  /** Where hackers submit and where the event's page lives (audit 2026-11-08): every user-facing "Submit on X",
+   *  "X said" and "On X" reads `platform`. Unset: those lines say "the event's page" and name no platform. */
+  submission?: { platform: string; page: string };
   /** This event's Slack export (slackdump), for the commands that read one when --export isn't given. "~/" is the
    *  home directory; relative paths are from the event's directory. Unset: those commands stop and say so. */
   slack_export?: string;

@@ -566,6 +566,7 @@ async function chatLoop(channel: MessageChannel, guard: CostGuard, once: boolean
       tz: budget().tz,
       history: readChatLog(),
       dailyCapUsd: budget().capUsd,
+      platform: existsSync(EVENT_PATH) ? (readEvent().submission?.platform ?? null) : null,
       ask: async (question, history, at) => {
         if (!client) return { error: "answers are off (no ANTHROPIC_API_KEY in .env)" };
         const d = readAgentData(Date.now(), shipNow);
@@ -2185,13 +2186,14 @@ async function shipCli(args: string[]): Promise<number> {
   const at = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: event.timezone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   const out = (line: string) => console.log(wrapText(line, cliWidth()));
   const list = shipListAt(entities, event, m.ids, nowMs);
+  const page = event.submission?.platform ?? "the event's page";
   const left = list.deadline ? Date.parse(list.deadline.at) - nowMs : null;
   out(`Ship at ${at(new Date(nowMs).toISOString())}: ${m.ids.length} tracks you plan to enter`);
   if (list.deadline) {
     const d = list.deadline;
-    out(`${left! > 0 ? "Submissions close" : "Submissions closed"} ${at(d.at)}${left! > 0 ? ` · in ${durationText(left!)}` : ""}${d.was ? ` · Devpost said ${at(d.was.at)}` : ""}`);
+    out(`${left! > 0 ? "Submissions close" : "Submissions closed"} ${at(d.at)}${left! > 0 ? ` · in ${durationText(left!)}` : ""}${d.was ? ` · ${page} said ${at(d.was.at)}` : ""}`);
     out(`  "${d.quote}"  ${d.from === "slack" ? `#${d.channel} ` : ""}${d.source_url}`);
-    if (d.was) out(`  Devpost: "${d.was.quote}"  ${d.was.source_url}`);
+    if (d.was) out(`  ${page}: "${d.was.quote}"  ${d.was.source_url}`);
   } else out("No submission deadline found on the pages or in the posts read.");
   const lastHour = left !== null && left > 0 && left < 3_600_000;
   if (lastHour) out("Last hour: Ship shows the countdown and the unticked Required items; the other groups fold to one line each.");

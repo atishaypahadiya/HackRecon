@@ -2,7 +2,7 @@
 // redacted, no tools, under the cost guard and an hourly cap; /help without a model call.
 import { describe, expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { answer, budgetedAnswer, budgetReply, buildContext, CHAT_DAILY_USD, CHAT_MAX_PER_HOUR, ChatBudget, DailyCapReached, dailyCapReply, CHAT_MODEL, CONTEXT_MAX_CHARS, handleInbound, HELP, type AgentData, type ChatTurn } from "./agent.ts";
+import { answer, budgetedAnswer, budgetReply, buildContext, CHAT_DAILY_USD, CHAT_MAX_PER_HOUR, ChatBudget, DailyCapReached, dailyCapReply, CHAT_MODEL, CONTEXT_MAX_CHARS, handleInbound, help, type AgentData, type ChatTurn } from "./agent.ts";
 import type { PlanFacts } from "./alerts.ts";
 import type { MessageChannel } from "./channels.ts";
 import { CostGuard, CostRefused, guardClient } from "./costguard.ts";
@@ -92,13 +92,21 @@ function fakeChannel() {
 }
 const at = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
 
+describe("help names the event's own submission platform (audit 2026-11-08)", () => {
+  test("Luma when event.json says Luma; no platform named when it's unset", () => {
+    expect(help("Luma")).toContain('"I submitted on Luma"');
+    expect(help(null)).toContain('"we submitted"');
+    expect(`${help("Luma")}${help(null)}`).not.toContain("Devpost");
+  });
+});
+
 describe("handleInbound", () => {
   test("/help with no model call; questions answered; stale ones skipped", async () => {
     const { ch, sent } = fakeChannel();
     const asked: string[] = [];
     const r = await handleInbound({ channel: ch, nowMs: NOW, tz: TZ, history: [], inbound: [{ id: "1", text: "/start", at: at(1) }, { id: "2", text: "when is dinner?", at: at(0) }, { id: "3", text: "old one", at: at(20) }], ask: async (q) => (asked.push(q), { text: "6:00 PM Sat" }) });
     expect(asked).toEqual(["when is dinner?"]);
-    expect(sent).toEqual([HELP, "6:00 PM Sat"]);
+    expect(sent).toEqual([help(), "6:00 PM Sat"]);
     expect([r.turns.map((t) => t.status), r.stale]).toEqual([["help", "answered"], 1]);
   });
   test("over the hourly cap or the budget, the user is told why instead", async () => {

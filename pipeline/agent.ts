@@ -447,8 +447,9 @@ export async function budgetedAnswer(client: Anthropic, guard: CostGuard, b: Cha
   }
 }
 
-export const HELP =
-  "Donna here. Ask me anything about the event: what's next on the schedule, deadlines, rooms, workshops or credits that fit your stack, which tracks your Plan fits, what organizers posted. I answer from your Plan and the event's posts, and I send alerts here when something relevant lands. Tell me what changed and I'll update your Plan: \"add Modal to my stack for the training runs\", \"I claimed the Modal credits\", \"I'm entering the Modal track\", \"I submitted on Devpost\", \"Sam at the Modal booth said the project has to use Modal Sandboxes\", \"Priya joined, she does React and Figma\".";
+/** /help and /start. The submit example names the event's platform (event.json `submission`), never a default one. */
+export const help = (platform: string | null = null) =>
+  `Donna here. Ask me anything about the event: what's next on the schedule, deadlines, rooms, workshops or credits that fit your stack, which tracks your Plan fits, what organizers posted. I answer from your Plan and the event's posts, and I send alerts here when something relevant lands. Tell me what changed and I'll update your Plan: "add Modal to my stack for the training runs", "I claimed the Modal credits", "I'm entering the Modal track", ${platform ? `"I submitted on ${platform}"` : `"we submitted"`}, "Sam at the Modal booth said the project has to use Modal Sandboxes", "Priya joined, she does React and Figma".`;
 
 export class DailyCapReached extends Error {}
 
@@ -495,6 +496,8 @@ export async function handleInbound(o: {
   confirm?: (text: string, at: string) => Promise<string | null>;
   /** For the daily-cap reply. */
   dailyCapUsd?: number;
+  /** event.json `submission.platform`, for /help's submit example. */
+  platform?: string | null;
   log?: (line: string) => void;
 }): Promise<{ turns: ChatTurn[]; stale: number }> {
   const log = o.log ?? console.log;
@@ -511,7 +514,7 @@ export async function handleInbound(o: {
     let turn: ChatTurn;
     const settled = o.confirm ? await o.confirm(q, m.at) : null;
     if (settled !== null) turn = { at: m.at, q, a: settled, status: "answered" };
-    else if (/^\/(start|help)\b/i.test(q)) turn = { at: m.at, q, a: HELP, status: "help" };
+    else if (/^\/(start|help)\b/i.test(q)) turn = { at: m.at, q, a: help(o.platform), status: "help" };
     else if (hour.length >= CHAT_MAX_PER_HOUR) {
       const again = new Date(Math.min(...hour.map((t) => Date.parse(t.at))) + 3600_000);
       turn = { at: m.at, q, a: `That's ${CHAT_MAX_PER_HOUR} answers this hour, my limit. Ask again after ${again.toLocaleTimeString("en-US", { timeZone: o.tz, hour: "numeric", minute: "2-digit" })}.`, status: "limited" };
