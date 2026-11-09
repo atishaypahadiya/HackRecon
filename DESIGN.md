@@ -102,7 +102,7 @@ components:
 **Creative North Star:** Daylight glass, after Flux (Orbix Studio, `docs/design-refs/flux-3.png`): a warm, sunlit field behind near-opaque white tiles. The material is soft; the content is exact. It fits first-time hackers in bright venue halls and an MLH projector because every tile stays legible while the page still feels like a real product.
 **Product context:** HackRecon's board: a hackathon's sponsor offers (credits, codes, claim links, deadlines) found in its Slack, for first-time hackers on laptop and phone, plus a replay of the week for an MLH screen-share. Local single page on 127.0.0.1 under a strict CSP.
 **Mode per surface:** Board: Operate (grab offers, mark them done). Replay: a short Experience moment. Drawer: Read (evidence, Slack links).
-**Reference sites:** docs/design-refs/flux-1..5.png; https://superdesign.dev/library/premium-glassmorphism-dashboard-with-smooth-edge-to-edge-line-charts; https://www.shadcnblocks.com/block/dashboard3; https://dribbble.com/orbixstudiodashboard.
+**Reference sites:** docs/design-refs/flux-1..5.png (Orbix Studio's screenshots, kept locally and git-ignored: not ours to publish); https://superdesign.dev/library/premium-glassmorphism-dashboard-with-smooth-edge-to-edge-line-charts; https://www.shadcnblocks.com/block/dashboard3; https://dribbble.com/orbixstudiodashboard.
 **Memorable thing (user):** there's free stuff here; it read 977 posts so I didn't have to; it feels precise and real; and the ease of mind of knowing I've taken everything relevant to me.
 **Key characteristics:**
 - One huge count ("20 offers") over a field of 977 dots with the offer posts lit.
