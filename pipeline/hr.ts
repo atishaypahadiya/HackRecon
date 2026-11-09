@@ -72,6 +72,7 @@ import {
   type JudgeRun,
   type Labels,
 } from "./prelabel.ts";
+import { outcomeSummary, type AlertOutcome } from "./alertlog.ts";
 import { NO_TZ } from "./time.ts";
 import { buildOrganizers, eventOrganizerTag, loadOrganizerIds, rolesById, type Organizer } from "./roles.ts";
 import { DiscordBot } from "./discordbot.ts";
@@ -79,7 +80,7 @@ import { logWrite, makeWrites, pageCredits, readClaims, readEntered, readRepNote
 import { budgetedAnswer, buildContext, readLines, CHAT_DAILY_USD, CHAT_DEEP_MODEL, CHAT_MODEL, routeQuestion, ChatBudget, DailyCapReached, handleInbound, readAgentData, readChatLog, type ChatTurn } from "./agent.ts";
 import { channelFromEnv, isChannel, whyNoChannel, type MessageChannel } from "./channels.ts";
 import { TelegramApi, telegramSenders } from "./telegram.ts";
-import { canonTrackDiff, ingestDiscord, runAlerts } from "./watch.ts";
+import { canonTrackDiff, ingestDiscord, runAlerts, writeAlertOutcomes } from "./watch.ts";
 import type { PlanFacts, TrackChange } from "./alerts.ts";
 import { AVATAR_MAX_BITS, avatarHashes, hammingHex, linkEvidence, loadPersonKey, profileEvidence, type AccountEvidence, type PersonLink, type PersonLinksFile, type SnapshotUser } from "./people.ts";
 import { buildRun, readMessages, readRuns, saveRun } from "./runs.ts";
@@ -115,6 +116,8 @@ import {
   JUDGE_RUN_PATH,
   LABELS_PATH,
   MESSAGES_PATH,
+  ALERT_LOG_PATH,
+  ALERT_OUTCOMES_PATH,
   ALERTS_LOG_PATH,
   DISCORD_UNREAD_PATH,
   PAGE_CHANGES_PATH,
@@ -322,12 +325,15 @@ const USAGE = `usage:
       Discord (read-only): what the extension saved from your open Discord tabs (DIR, default
       ~/Downloads/hackrecon/discord), and, with DISCORD_BOT_TOKEN in .env, the crossposts the Donna bot reads
       in your own server (docs/discord-bot.md). New posts go to ${MESSAGES_PATH}; unread badges to ${DISCORD_UNREAD_PATH}.
-  bun run hr alerts [--dry-run] [--at ISO] [--list]
+  bun run hr alerts [--dry-run] [--at ISO] [--list] [--outcomes]
       Alerts for fresh posts: tracks or judging posted, a deadline or room change, a workshop or sponsor offer
       that matches your Plan (${PLAN_PATH}, saved by \`hr plan\`), unread badges. Important ones at once (one per 10
       minutes, four an hour), the rest in a digest every 2 hours. Sent to your channel (HACKRECON_CHANNEL in .env,
       default telegram: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID; sms: the four TWILIO_* / HACKRECON_SMS_TO keys);
       --dry-run, or a channel not set up, writes them to ${OUTBOX_PATH} only. --list prints every alert found so far.
+      Every alert in every message goes to ${ALERT_LOG_PATH} with its category (deadline, workshop, credit, track,
+      intro, other); --outcomes prints, per sent alert, whether you messaged Donna (or replied to it) and what you
+      changed within 30 minutes, and the totals per category (${ALERT_OUTCOMES_PATH}, rebuilt each watch tick).
   bun run hr watch [--every 2m] [--once] [--dry-run] [DIR]
       discord-ingest, then classify --new on new posts (the cost guard applies: a run over $1 is refused and
       the posts wait; watch never passes --yes), then alerts, every --every. Hourly it also fetches event.json's
@@ -441,7 +447,23 @@ async function alertsRun(dryRun: boolean, nowMs: number, channel: MessageChannel
 }
 
 async function alerts(args: string[]): Promise<number> {
-  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, at: { type: "string" }, list: { type: "boolean", default: false } } });
+  const { values } = parseArgs({ args, options: { "dry-run": { type: "boolean", default: false }, at: { type: "string" }, list: { type: "boolean", default: false }, outcomes: { type: "boolean", default: false } } });
+  if (values.outcomes) {
+    // The alert log (alertlog.ts, user 2026-11-08): recomputed now, so windows that closed since the last tick count.
+    writeAlertOutcomes(Date.now());
+    const o = readJsonFile<{ alerts: AlertOutcome[] } | null>(ALERT_OUTCOMES_PATH, null)?.alerts ?? [];
+    if (!o.length) {
+      console.log(`no alert sent yet (${ALERT_LOG_PATH} is empty)`);
+      return 0;
+    }
+    for (const a of o) {
+      const r = !a.window_closed && !a.responded && !a.acted.length ? "window open" : [a.responded ? `${a.responded.reply ? "replied" : "messaged"} at +${a.responded.minutes} min` : "no message", a.acted.length ? `acted: ${a.acted.map((w) => `${w.op} +${w.minutes} min`).join(", ")}` : "no action"].join("; ");
+      console.log(`${a.sent_at}  ${a.category.padEnd(8)} ${a.via.padEnd(6)} ${a.kind}: ${a.what}  -> ${r}`);
+    }
+    console.log("\ncategory  sent  closed  responded  replied  acted   (within 30 minutes; closed windows only)");
+    for (const s of outcomeSummary(o)) console.log(`${s.category.padEnd(9)} ${String(s.sent).padStart(4)}  ${String(s.closed).padStart(6)}  ${String(s.responded).padStart(9)}  ${String(s.replied).padStart(7)}  ${String(s.acted).padStart(5)}`);
+    return 0;
+  }
   if (values.list) {
     for (const l of existsSync(ALERTS_LOG_PATH) ? readFileSync(ALERTS_LOG_PATH, "utf8").trim().split("\n").filter(Boolean) : []) {
       const a = JSON.parse(l) as { found_at: string; level: string; kind: string; what: string; source: string; why: string };

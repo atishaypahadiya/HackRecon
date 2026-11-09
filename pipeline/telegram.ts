@@ -37,7 +37,7 @@ interface TgUser {
 }
 interface TgUpdate {
   update_id: number;
-  message?: { message_id: number; date: number; text?: string; from?: TgUser; chat: { id: number; type: string } };
+  message?: { message_id: number; date: number; text?: string; from?: TgUser; chat: { id: number; type: string }; reply_to_message?: { message_id: number } };
 }
 
 /** The Bot API with the method allowlist, retries on 429, and the token kept out of errors. */
@@ -136,7 +136,7 @@ export class TelegramChannel implements MessageChannel {
         ignored++;
         continue;
       }
-      messages.push({ id: String(m.message_id), text: m.text, at: new Date(m.date * 1000).toISOString() });
+      messages.push({ id: String(m.message_id), text: m.text, at: new Date(m.date * 1000).toISOString(), ...(m.reply_to_message ? { reply_to: String(m.reply_to_message.message_id) } : {}) });
     }
     return { messages, ignored, cursor: next };
   }

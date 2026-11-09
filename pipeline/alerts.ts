@@ -41,6 +41,8 @@ export interface Alert {
   source: string;
   link: string;
   posted_at: string;
+  /** Offers only: the classifier item's kind (credit, prize, job, other), for the alert log's category. */
+  offer_kind?: Item["kind"];
 }
 
 /** Only fresh posts alert: the first read of a channel shows its history, which is old news. */
@@ -148,7 +150,7 @@ export function alertFor(
     const amount = offer.amount_text;
     const named = offer.sponsor !== "event" && !mentions(amount, offer.sponsor) ? `${offer.sponsor}: ` : "";
     const what = !amount || offer.kind === "job" || offer.kind === "other" ? base.what : `${named}${amount}${offer.kind === "credit" && !/credit/i.test(amount) ? " in credits" : offer.kind === "prize" && !/prize/i.test(amount) ? " prize" : ""}`;
-    return { ...base, kind: "offer", what, level: h.length ? "now" : "digest", why: h.length ? h.join("; ") : offer.kind === "job" ? "A job or internship, not tied to your project" : "Not tied to your stack or tracks" };
+    return { ...base, kind: "offer", offer_kind: offer.kind, what, level: h.length ? "now" : "digest", why: h.length ? h.join("; ") : offer.kind === "job" ? "A job or internship, not tied to your project" : "Not tied to your stack or tracks" };
   }
   return null;
 }
